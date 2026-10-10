@@ -49,7 +49,7 @@
   #cam[hidden] { display: none; }
   #cam .row { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
   #cam .row b { color: var(--fg); font-variant-numeric: tabular-nums; }
-  #tilt { width: 100%; accent-color: var(--chip-on); height: 28px; }
+  #tilt, #zoom { width: 100%; accent-color: var(--chip-on); height: 28px; }
   #diag label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
   #diag .fps { color: var(--muted); font-variant-numeric: tabular-nums; }
   #log { position: absolute; top: calc(8px + env(safe-area-inset-top, 0px)); left: 8px; right: 8px; z-index: 30;
@@ -72,9 +72,12 @@
 </div>
 
 <div id="cam" hidden>
-  <div class="row"><span>Наклон камеры к горизонту</span><b id="tiltVal">—</b></div>
-  <input type="range" id="tilt" min="15" max="85" step="1" value="35">
-  <div class="row"><span>почти горизонтально</span><span>сверху</span></div>
+  <div class="row"><span>Наклон к горизонту (от вершины)</span><b id="tiltVal">—</b></div>
+  <input type="range" id="tilt" min="0" max="1000" step="1" value="400">
+  <div class="row"><span>0° — сбоку</span><span>85° — сверху</span></div>
+  <div class="row" style="margin-top:4px"><span>Расстояние до вершины</span><b id="zoomVal">—</b></div>
+  <input type="range" id="zoom" min="0" max="1000" step="1" value="500">
+  <div class="row"><span>ближе</span><span>дальше</span></div>
 </div>
 
 <div id="bar">
@@ -83,7 +86,7 @@
   <div id="ctrls">
     <button id="bMode">Телепорт</button>
     <button id="bOrbit">Облёт ⟳</button>
-    <button id="bCam">Наклон</button>
+    <button id="bCam">Камера</button>
     <button id="bDiag" style="flex:0 0 44px">⚙</button>
   </div>
 </div>
@@ -270,8 +273,9 @@ async function drapeRoute(m) {
   }
 }
 
-// Камера стоит позади начала маршрута и чуть сбоку, смотрит в его середину:
-// на вертикальном экране телефона путь идёт снизу вверх — от базового лагеря к вершине.
+// Камера стоит позади начала маршрута и чуть сбоку и смотрит на вершину:
+// на вертикальном экране путь идёт снизу вверх к вершине в центре кадра.
+// Облёт, наклон и приближение работают относительно вершины, поэтому она сразу в центре.
 function cameraFor(m) {
   const r = m.route, s0 = r[0], top = r[r.length - 1];
   const kx = 111320 * Math.cos(m.lat * Math.PI / 180), ky = 111320;
@@ -284,7 +288,7 @@ function cameraFor(m) {
   const ex = -ux * back + uy * side, ey = -uy * back - ux * side;
   return {
     eye: new LonLat(cLon + ex / kx, cLat + ey / ky, top[2] + Math.max(3000, len * 0.55)),
-    look: new LonLat(cLon, cLat, cH),
+    look: new LonLat(top[0], top[1], top[2]),
     center: new LonLat(cLon, cLat, cH)
   };
 }
@@ -374,52 +378,69 @@ document.getElementById("bOrbit").onclick = function () {
 // Пользователь трогает глобус — облёт выключается, чтобы не мешать
 document.getElementById("globus").addEventListener("pointerdown", () => { if (orbiting) stopOrbit(); });
 
-// ---- Наклон камеры ----
-// Камера поворачивается вверх-вниз вокруг точки, в которую смотрит (центр экрана на рельефе).
-// Угол — это насколько камера поднята над горизонтом, если смотреть из этой точки:
-// 15° — почти вдоль земли, 85° — почти строго сверху. Расстояние до точки не меняется.
-let tiltPivot = null;
-function screenCenterPoint() {
-  const c = planet.renderer.handler.canvas;
-  const px = { x: c.clientWidth / 2, y: c.clientHeight / 2 };
-  return planet.getCartesianFromPixelTerrain(px) || planet.getCartesianFromPixelEllipsoid(px) || orbitCenter;
-}
-function elevationDeg(pivot) {
-  const v = planet.camera.eye.sub(pivot), n = pivot.getNormal();
+// ---- Наклон и расстояние камеры относительно вершины ----
+// Обе ручки работают от вершины (конечной точки маршрута), а не от центра экрана:
+//  • наклон — камера поворачивается вверх-вниз вокруг вершины, расстояние до неё не меняется;
+//  • расстояние — камера едет прямо к вершине или от неё, угол не меняется.
+// Ориентация камеры при этом не перестраивается, поэтому картинка не дёргается.
+const TILT_MAX = 85, TILT_POW = 1.8;        // у ползунка наклона больше хода в диапазоне 0–30°
+const tiltFromSlider = t => TILT_MAX * Math.pow(t / 1000, TILT_POW);
+const sliderFromTilt = e => 1000 * Math.pow(Math.max(0, e) / TILT_MAX, 1 / TILT_POW);
+const Z_MIN = 1000, Z_MAX = 120000;          // м, логарифмическая шкала
+const zoomFromSlider = t => Z_MIN * Math.pow(Z_MAX / Z_MIN, t / 1000);
+const sliderFromZoom = d => 1000 * Math.log(d / Z_MIN) / Math.log(Z_MAX / Z_MIN);
+
+function elevationDeg() {
+  const v = planet.camera.eye.sub(orbitCenter), n = orbitCenter.getNormal();
   return Math.asin(Math.max(-1, Math.min(1, v.dot(n) / v.length()))) * 180 / Math.PI;
 }
-function syncTilt() {
-  const p = screenCenterPoint(); if (!p) return;
-  const e = Math.round(elevationDeg(p));
-  document.getElementById("tilt").value = e;
-  document.getElementById("tiltVal").textContent = e + "°";
+const distToTop = () => planet.camera.eye.sub(orbitCenter).length();
+const fmtDist = d => d >= 10000 ? Math.round(d / 1000) + " км" : (d / 1000).toFixed(1).replace(".", ",") + " км";
+
+function showCamVals() {
+  document.getElementById("tiltVal").textContent = Math.round(elevationDeg()) + "°";
+  document.getElementById("zoomVal").textContent = fmtDist(distToTop());
+}
+function syncCam() {
+  if (!orbitCenter) return;
+  document.getElementById("tilt").value = sliderFromTilt(elevationDeg());
+  document.getElementById("zoom").value = sliderFromZoom(Math.min(Z_MAX, Math.max(Z_MIN, distToTop())));
+  showCamVals();
 }
 function applyTilt(targetDeg) {
-  if (!tiltPivot) tiltPivot = screenCenterPoint();
-  if (!tiltPivot) return;
   const cam = planet.camera;
-  const delta = (targetDeg - elevationDeg(tiltPivot)) * Math.PI / 180;
-  if (Math.abs(delta) < 1e-4) return;
-  const before = elevationDeg(tiltPivot);
-  cam.rotateVertical(delta, tiltPivot);
-  cam.update();
-  // направление поворота зависит от ориентации камеры — если ушли не туда, поворачиваем обратно вдвое
-  if (Math.sign(elevationDeg(tiltPivot) - before) !== Math.sign(delta)) {
-    cam.rotateVertical(-2 * delta, tiltPivot);
-    cam.update();
+  // поворачиваем вокруг вершины; пару шагов — чтобы точно прийти к нужному углу при любой ориентации
+  for (let k = 0; k < 3; k++) {
+    const before = elevationDeg(), delta = (targetDeg - before) * Math.PI / 180;
+    if (Math.abs(delta) < 0.002) break;
+    cam.rotateVertical(delta, orbitCenter); cam.update();
+    if (Math.sign(elevationDeg() - before) !== Math.sign(delta)) { cam.rotateVertical(-2 * delta, orbitCenter); cam.update(); }
   }
-  document.getElementById("tiltVal").textContent = Math.round(elevationDeg(tiltPivot)) + "°";
 }
-const tiltEl = document.getElementById("tilt");
-tiltEl.addEventListener("pointerdown", () => { planet.stopFlying(); tiltPivot = screenCenterPoint(); });
-tiltEl.addEventListener("input", () => applyTilt(+tiltEl.value));
-tiltEl.addEventListener("change", () => { tiltPivot = null; });
+function applyZoom(d) {
+  const cam = planet.camera, v = cam.eye.sub(orbitCenter);
+  cam.eye = orbitCenter.add(v.scale(d / v.length()));
+  cam.update();
+}
+const tiltEl = document.getElementById("tilt"), zoomEl = document.getElementById("zoom");
+let dragging = false;
+[tiltEl, zoomEl].forEach(el => {
+  el.addEventListener("pointerdown", () => { dragging = true; planet.stopFlying(); });
+  el.addEventListener("change", () => { dragging = false; });
+});
+window.addEventListener("pointerup", () => { dragging = false; });
+tiltEl.addEventListener("input", () => { if (orbitCenter) { applyTilt(tiltFromSlider(+tiltEl.value)); showCamVals(); } });
+zoomEl.addEventListener("input", () => { if (orbitCenter) { applyZoom(zoomFromSlider(+zoomEl.value)); showCamVals(); } });
 document.getElementById("bCam").onclick = function () {
   const p = document.getElementById("cam");
   p.hidden = !p.hidden;
   this.classList.toggle("on", !p.hidden);
-  if (!p.hidden) syncTilt();
+  if (!p.hidden) syncCam();
 };
+// если камеру сдвинули пальцем или облётом — ползунки подстраиваются под неё
+planet.camera.events.on("viewchange", () => {
+  if (!dragging && !document.getElementById("cam").hidden) syncCam();
+});
 
 // ---- Диагностика: включаем/выключаем части сцены, чтобы найти источник мерцания ----
 document.getElementById("bDiag").onclick = () => {
