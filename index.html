@@ -109,9 +109,11 @@ const globus = new Globe({
   resourcesSrc: OG_RES,
   fontsSrc: OG_RES + "/fonts",
   atmosphereEnabled: true,
+  transitionOpacityEnabled: false,   // без плавной подмены тайлов — она даёт мигание при движении камеры
   viewExtent: [first.lon - first.r, first.lat - first.r, first.lon + first.r, first.lat + first.r]
 });
 const planet = globus.planet;
+window.planet = planet;   // для отладки из консоли браузера
 
 // Камера: отступаем от вершины на юг и вверх, смотрим на вершину — получается вид в 3D, а не сверху.
 function cameraFor(m) {
@@ -144,12 +146,22 @@ function goTo(i) {
   document.querySelectorAll(".chip").forEach((c, k) => c.classList.toggle("on", k === i));
 }
 
-// Облёт: камера вращается вокруг вертикальной оси через вершину
-function orbitStep() {
+// Облёт: камера вращается вокруг вертикальной оси через вершину.
+// Шаг делается внутри цикла отрисовки движка (событие postdraw), а не в отдельном таймере,
+// и после поворота обязательно вызывается camera.update(): rotateAround сам матрицы
+// камеры не пересчитывает, из-за чего кадры рисовались то по старой, то по новой позиции — это и было мерцание.
+const ORBIT_SPEED = 0.15;   // рад/с, полный круг ≈ 42 с
+let lastT = 0;
+planet.renderer.events.on("postdraw", () => {
   if (!orbiting) return;
-  planet.camera.rotateAround(0.0035, false, orbitCenter, orbitUp);
-  requestAnimationFrame(orbitStep);
-}
+  const now = performance.now();
+  const dt = lastT ? Math.min((now - lastT) / 1000, 0.05) : 0;
+  lastT = now;
+  if (dt === 0) return;
+  planet.camera.rotateAround(ORBIT_SPEED * dt, false, orbitCenter, orbitUp);
+  planet.camera.update();
+});
+function orbitStep() { lastT = 0; }
 function stopOrbit() {
   orbiting = false;
   document.getElementById("bOrbit").classList.remove("on");
