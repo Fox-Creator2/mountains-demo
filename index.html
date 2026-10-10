@@ -44,6 +44,12 @@
     background: var(--panel); border-radius: 10px; padding: 10px 12px; font-size: 13px;
     display: flex; flex-direction: column; gap: 6px; min-width: 200px; }
   #diag[hidden] { display: none; }
+  #cam { position: absolute; left: 12px; right: 12px; bottom: calc(136px + env(safe-area-inset-bottom, 0px)); z-index: 25;
+    background: var(--panel); border-radius: 12px; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
+  #cam[hidden] { display: none; }
+  #cam .row { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+  #cam .row b { color: var(--fg); font-variant-numeric: tabular-nums; }
+  #tilt { width: 100%; accent-color: var(--chip-on); height: 28px; }
   #diag label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
   #diag .fps { color: var(--muted); font-variant-numeric: tabular-nums; }
   #log { position: absolute; top: calc(8px + env(safe-area-inset-top, 0px)); left: 8px; right: 8px; z-index: 30;
@@ -65,12 +71,19 @@
   <span class="fps" id="fps">FPS: —</span>
 </div>
 
+<div id="cam" hidden>
+  <div class="row"><span>Наклон камеры к горизонту</span><b id="tiltVal">—</b></div>
+  <input type="range" id="tilt" min="15" max="85" step="1" value="35">
+  <div class="row"><span>почти горизонтально</span><span>сверху</span></div>
+</div>
+
 <div id="bar">
   <div id="info"><b id="mName">Загрузка…</b><span id="mMeta"></span></div>
   <div id="chips"></div>
   <div id="ctrls">
-    <button id="bMode">Режим: телепорт</button>
+    <button id="bMode">Телепорт</button>
     <button id="bOrbit">Облёт ⟳</button>
+    <button id="bCam">Наклон</button>
     <button id="bDiag" style="flex:0 0 44px">⚙</button>
   </div>
 </div>
@@ -343,7 +356,7 @@ MOUNTAINS.forEach((m, i) => {
 
 document.getElementById("bMode").onclick = function () {
   flyMode = !flyMode;
-  this.textContent = flyMode ? "Режим: пролёт" : "Режим: телепорт";
+  this.textContent = flyMode ? "Пролёт" : "Телепорт";
 };
 // Облёт начинается прямо с текущего положения и масштаба камеры — никаких перелётов.
 // Камера вращается вокруг вертикальной оси, проходящей через вершину (конечную точку маршрута).
@@ -360,6 +373,53 @@ document.getElementById("bOrbit").onclick = function () {
 };
 // Пользователь трогает глобус — облёт выключается, чтобы не мешать
 document.getElementById("globus").addEventListener("pointerdown", () => { if (orbiting) stopOrbit(); });
+
+// ---- Наклон камеры ----
+// Камера поворачивается вверх-вниз вокруг точки, в которую смотрит (центр экрана на рельефе).
+// Угол — это насколько камера поднята над горизонтом, если смотреть из этой точки:
+// 15° — почти вдоль земли, 85° — почти строго сверху. Расстояние до точки не меняется.
+let tiltPivot = null;
+function screenCenterPoint() {
+  const c = planet.renderer.handler.canvas;
+  const px = { x: c.clientWidth / 2, y: c.clientHeight / 2 };
+  return planet.getCartesianFromPixelTerrain(px) || planet.getCartesianFromPixelEllipsoid(px) || orbitCenter;
+}
+function elevationDeg(pivot) {
+  const v = planet.camera.eye.sub(pivot), n = pivot.getNormal();
+  return Math.asin(Math.max(-1, Math.min(1, v.dot(n) / v.length()))) * 180 / Math.PI;
+}
+function syncTilt() {
+  const p = screenCenterPoint(); if (!p) return;
+  const e = Math.round(elevationDeg(p));
+  document.getElementById("tilt").value = e;
+  document.getElementById("tiltVal").textContent = e + "°";
+}
+function applyTilt(targetDeg) {
+  if (!tiltPivot) tiltPivot = screenCenterPoint();
+  if (!tiltPivot) return;
+  const cam = planet.camera;
+  const delta = (targetDeg - elevationDeg(tiltPivot)) * Math.PI / 180;
+  if (Math.abs(delta) < 1e-4) return;
+  const before = elevationDeg(tiltPivot);
+  cam.rotateVertical(delta, tiltPivot);
+  cam.update();
+  // направление поворота зависит от ориентации камеры — если ушли не туда, поворачиваем обратно вдвое
+  if (Math.sign(elevationDeg(tiltPivot) - before) !== Math.sign(delta)) {
+    cam.rotateVertical(-2 * delta, tiltPivot);
+    cam.update();
+  }
+  document.getElementById("tiltVal").textContent = Math.round(elevationDeg(tiltPivot)) + "°";
+}
+const tiltEl = document.getElementById("tilt");
+tiltEl.addEventListener("pointerdown", () => { planet.stopFlying(); tiltPivot = screenCenterPoint(); });
+tiltEl.addEventListener("input", () => applyTilt(+tiltEl.value));
+tiltEl.addEventListener("change", () => { tiltPivot = null; });
+document.getElementById("bCam").onclick = function () {
+  const p = document.getElementById("cam");
+  p.hidden = !p.hidden;
+  this.classList.toggle("on", !p.hidden);
+  if (!p.hidden) syncTilt();
+};
 
 // ---- Диагностика: включаем/выключаем части сцены, чтобы найти источник мерцания ----
 document.getElementById("bDiag").onclick = () => {
