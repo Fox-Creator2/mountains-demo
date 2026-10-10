@@ -385,22 +385,73 @@ function setRouteVisible(rt, on) {
 }
 
 // Уточняем высоты по настоящему рельефу — для маршрутов выбранной горы и только один раз
+async function heightsAt(points) {
+  const out = [];
+  for (let i = 0; i < points.length; i += 40) {
+    out.push(...await Promise.all(points.slice(i, i + 40).map(p => planet.getHeightAboveELL(new LonLat(p[0], p[1])))));
+  }
+  return out;
+}
+// точки отрезка через каждые ~50 м, но не больше 60 (без концов) — чтобы перебор на длинных отрезках не тормозил
+function sampleLine(a, b, kx, ky) {
+  const L = Math.hypot((b[0] - a[0]) * kx, (b[1] - a[1]) * ky), n = Math.min(60, Math.max(2, Math.round(L / 50))), out = [];
+  for (let k = 1; k < n; k++) out.push([a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n]);
+  return { pts: out, L };
+}
+
+// Автообход провалов на пеших отрезках.
+// Ключевые точки маршрутов грубые, и прямая между двумя соседними точками иногда срезает угол через ущелье
+// или обрыв, которые настоящая тропа обходит (так было у Ай-Петри между верхней станцией и зубцами).
+// Если линия проваливается глубже DIP_LIMIT ниже нижнего из концов, перебираем промежуточные точки сбоку
+// от прямой и берём ту, через которую путь идёт ровнее (без провала и без лишнего подъёма на гребни).
+const DIP_LIMIT = 80;
+async function findDetours(rt) {
+  const air = new Set(rt.air || []);
+  const kx = 111320 * Math.cos(rt.pts[0][1] * Math.PI / 180), ky = 111320;
+  const ends = await heightsAt(rt.pts);
+  const pts = [], orig = [], airEff = [];
+  for (let s = 0; s < rt.pts.length; s++) {
+    if (air.has(s)) airEff.push(pts.length);
+    pts.push(rt.pts[s]); orig.push(s);
+    if (s === rt.pts.length - 1 || air.has(s)) continue;
+    const A = rt.pts[s], B = rt.pts[s + 1], ha = ends[s], hb = ends[s + 1];
+    if (!(isFinite(ha) && isFinite(hb))) continue;
+    const base = Math.min(ha, hb), top = Math.max(ha, hb);
+    const straight = sampleLine(A, B, kx, ky);
+    const hsS = await heightsAt(straight.pts);
+    const dip0 = base - Math.min(...hsS);
+    if (!(dip0 > DIP_LIMIT)) continue;
+    // перебор: точка на 35/50/65% пути, сдвиг вбок до 1,2 км
+    const ux = (B[0] - A[0]) * kx / straight.L, uy = (B[1] - A[1]) * ky / straight.L;
+    let best = null;
+    for (const t of [0.35, 0.5, 0.65]) for (const d of [-1200, -800, -500, -300, -150, 150, 300, 500, 800, 1200]) {
+      const C = [A[0] + (B[0] - A[0]) * t + (-uy * d) / kx, A[1] + (B[1] - A[1]) * t + (ux * d) / ky];
+      const s1 = sampleLine(A, C, kx, ky), s2 = sampleLine(C, B, kx, ky);
+      const hh = await heightsAt([...s1.pts, C, ...s2.pts]);
+      if (hh.some(h => !isFinite(h))) continue;
+      const dip = Math.max(0, base - Math.min(...hh)), over = Math.max(0, Math.max(...hh) - top - 30);
+      const cost = dip + over + 0.03 * (s1.L + s2.L - straight.L);
+      if (!best || cost < best.cost) best = { cost, C, h: hh[s1.pts.length] };
+    }
+    if (best && best.cost < dip0 * 0.5) { pts.push([best.C[0], best.C[1], best.h, ""]); orig.push(-1); }
+  }
+  return { pts, orig, air: airEff };
+}
+
 async function drapeRoute(rt, mountainName) {
   if (rt.draped || rt.draping) return;
   rt.draping = true;
   try {
-    const hs = [];
-    for (let i = 0; i < rt.dense.length; i += 30) {
-      const batch = rt.dense.slice(i, i + 30).map(p => planet.getHeightAboveELL(new LonLat(p[0], p[1])));
-      hs.push(...await Promise.all(batch));
-    }
+    const eff = await findDetours(rt);
+    const pts = eff.pts, dense = densify(pts);
+    const hs = await heightsAt(dense);
     // Высота каждой точки линии — по рельефу. Высоты ключевых точек в данных грубые, поэтому им не верим:
     //  • пешие отрезки и все станции/точки маршрута лежат на поверхности (если линия «задрана», она прижимается);
     //  • отрезки по воздуху (канатная дорога) — прямая между станциями, а станции стоят на рельефе;
     //    если такая прямая где-то ушла под землю — поднимаем её над поверхностью;
     //  • если рельеф в точке не загрузился (вернул 0 или мусор) — берём расчётную высоту.
-    const air = new Set(rt.air || []);
-    const ground = rt.dense.map((p, i) => {
+    const air = new Set(eff.air);
+    const ground = dense.map((p, i) => {
       const h = hs[i];
       return (isFinite(h) && h > Math.min(p[2] * 0.5, p[2] - 300)) ? h : p[2];
     });
@@ -411,15 +462,15 @@ async function drapeRoute(rt, mountainName) {
     //  2) добавляем провисание по параболе: до 4% длины пролёта, но не больше, чем позволяет рельеф под тросом.
     const CLEAR = 15, SAG = 0.04;
     const fixed = ground.slice();
-    const kx = 111320 * Math.cos(rt.pts[0][1] * Math.PI / 180), ky = 111320;
+    const kx = 111320 * Math.cos(pts[0][1] * Math.PI / 180), ky = 111320;
     for (const seg of air) {
       const idx = [];
-      rt.dense.forEach((p, i) => { if (p[4] === seg || (p[3] === seg + 1)) idx.push(i); });
+      dense.forEach((p, i) => { if (p[4] === seg || (p[3] === seg + 1)) idx.push(i); });
       if (idx.length < 2) continue;
       const i0 = idx[0], i1 = idx[idx.length - 1];
-      const [lo1, la1] = rt.pts[seg], [lo2, la2] = rt.pts[seg + 1];
+      const [lo1, la1] = pts[seg], [lo2, la2] = pts[seg + 1];
       const L = Math.hypot((lo2 - lo1) * kx, (la2 - la1) * ky) || 1;
-      const tt = idx.map(i => Math.hypot((rt.dense[i][0] - lo1) * kx, (rt.dense[i][1] - la1) * ky) / L);
+      const tt = idx.map(i => Math.hypot((dense[i][0] - lo1) * kx, (dense[i][1] - la1) * ky) / L);
       const g0 = ground[i0], g1 = ground[i1];
       // Если склон у верхней станции встаёт круче, чем прямая к ней (станция стоит за краем обрыва),
       // трос заканчиваем на краю — там, куда «смотрит» самый крутой луч от нижней станции, —
@@ -449,9 +500,10 @@ async function drapeRoute(rt, mountainName) {
         fixed[i] = Math.max(h0 + (hEnd - h0) * u - 4 * sag * u * (1 - u), ground[i] + clr(u));
       });
     }
-    rt.line.polyline.setPathLonLat([rt.dense.map((p, i) => [p[0], p[1], fixed[i] + ROUTE_LIFT])]);
-    rt.dense.forEach((p, i) => {
-      if (p[3] >= 0 && rt.points[p[3]]) rt.points[p[3]].setLonLat(new LonLat(p[0], p[1], fixed[i] + LABEL_LIFT));
+    rt.line.polyline.setPathLonLat([dense.map((p, i) => [p[0], p[1], fixed[i] + ROUTE_LIFT])]);
+    dense.forEach((p, i) => {
+      const o = p[3] >= 0 ? eff.orig[p[3]] : -1;
+      if (o >= 0 && rt.points[o]) rt.points[o].setLonLat(new LonLat(p[0], p[1], fixed[i] + LABEL_LIFT));
     });
     rt.draped = true;
   } catch (e) {
