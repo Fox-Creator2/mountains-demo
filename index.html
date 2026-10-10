@@ -60,7 +60,7 @@
   <b>Диагностика мерцания</b>
   <label><input type="checkbox" id="dFrames" checked> Грубая подложка + рамки гор</label>
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
-  <label><input type="checkbox" id="dAtmos" checked> Атмосфера</label>
+  <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
 </div>
 
@@ -128,7 +128,7 @@ const globus = new Globe({
   layers: [base, fullBase, ...mountainLayers],
   resourcesSrc: OG_RES,
   fontsSrc: OG_RES + "/fonts",
-  atmosphereEnabled: true,
+  atmosphereEnabled: false,          // атмосфера давала мерцание при облёте на телефоне
   transitionOpacityEnabled: false,   // без плавной подмены тайлов — она даёт мигание при движении камеры
   viewExtent: [first.lon - first.r, first.lat - first.r, first.lon + first.r, first.lat + first.r]
 });
