@@ -84,24 +84,58 @@
 </script>
 
 <script type="module">
-import { Globe, XYZ, GlobusRgbTerrain, EmptyTerrain, LonLat } from
+import { Globe, XYZ, Vector, Entity, GlobusRgbTerrain, EmptyTerrain, LonLat } from
   "https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/og.es.js";
 
 const OG_RES = "https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/res";
 const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 
 // Вершины: долгота, широта, высота (м). r — полуразмер рамки в градусах.
+// route — классический маршрут восхождения по ключевым точкам [долгота, широта, высота, название].
+// Точки нанесены по известным хижинам и лагерям, точность — порядка сотен метров (это схема, не GPS-трек).
 const MOUNTAINS = [
-  { name: "Эльбрус",      lon: 42.4392,  lat: 43.3499,  h: 5642, r: 0.12 },
-  { name: "Казбек",       lon: 44.5180,  lat: 42.6997,  h: 5054, r: 0.10 },
-  { name: "Эверест",      lon: 86.9250,  lat: 27.9881,  h: 8849, r: 0.15 },
-  { name: "Фудзи",        lon: 138.7274, lat: 35.3606,  h: 3776, r: 0.12 },
-  { name: "Килиманджаро", lon: 37.3556,  lat: -3.0674,  h: 5895, r: 0.15 },
-  { name: "Маттерхорн",   lon: 7.6586,   lat: 45.9763,  h: 4478, r: 0.08 },
-  { name: "Монблан",      lon: 6.8652,   lat: 45.8326,  h: 4806, r: 0.10 },
-  { name: "Денали",       lon: -151.0074,lat: 63.0695,  h: 6190, r: 0.15 },
-  { name: "Аконкагуа",    lon: -70.0109, lat: -32.6532, h: 6961, r: 0.15 },
-  { name: "Килауэа",      lon: -155.2867,lat: 19.4069,  h: 1247, r: 0.10 },
+  { name: "Эльбрус", lon: 42.4392, lat: 43.3499, h: 5642, r: 0.12, routeName: "Южный (классика)", route: [
+    [42.4740, 43.2645, 2350, "Азау"], [42.4600, 43.2890, 3500, "Мир"], [42.4660, 43.3015, 3800, "Гара-Баши"],
+    [42.4640, 43.3130, 4100, "Приют 11"], [42.4605, 43.3290, 4700, "Скалы Пастухова"],
+    [42.4560, 43.3400, 5100, "Косая полка"], [42.4470, 43.3488, 5416, "Седловина"], [42.4392, 43.3499, 5642, "Западная вершина"] ] },
+  { name: "Казбек", lon: 44.5180, lat: 42.6997, h: 5054, r: 0.13, routeName: "Через Гергети", route: [
+    [44.6205, 42.6625, 2170, "Церковь Гергети"], [44.6000, 42.6745, 2950, "Перевал Арша"],
+    [44.5735, 42.6845, 3650, "Метеостанция"], [44.5470, 42.6915, 4400, "Плато"],
+    [44.5265, 42.6975, 4900, "Седловина"], [44.5180, 42.6997, 5054, "Вершина"] ] },
+  { name: "Эверест", lon: 86.9250, lat: 27.9881, h: 8849, r: 0.15, routeName: "Через Южное седло", route: [
+    [86.8530, 28.0025, 5364, "Базовый лагерь"], [86.8700, 27.9965, 5600, "Ледопад Кхумбу"],
+    [86.8880, 27.9900, 6065, "Лагерь I"], [86.9010, 27.9840, 6400, "Лагерь II"], [86.9170, 27.9785, 7160, "Лагерь III"],
+    [86.9300, 27.9735, 7906, "Южное седло"], [86.9290, 27.9800, 8400, "Балкон"],
+    [86.9262, 27.9852, 8749, "Южная вершина"], [86.9250, 27.9881, 8849, "Вершина"] ] },
+  { name: "Фудзи", lon: 138.7274, lat: 35.3606, h: 3776, r: 0.12, routeName: "Тропа Ёсида", route: [
+    [138.7330, 35.3955, 2305, "5-я станция"], [138.7375, 35.3880, 2390, "6-я станция"],
+    [138.7365, 35.3790, 2700, "7-я станция"], [138.7340, 35.3710, 3100, "8-я станция"],
+    [138.7320, 35.3650, 3710, "Край кратера"], [138.7274, 35.3606, 3776, "Кэнгаминэ"] ] },
+  { name: "Килиманджаро", lon: 37.3556, lat: -3.0674, h: 5895, r: 0.20, routeName: "Марангу", route: [
+    [37.5215, -3.2325, 1860, "Ворота Марангу"], [37.5170, -3.1960, 2720, "Хижина Мандара"],
+    [37.4660, -3.1050, 3720, "Хижина Хоромбо"], [37.3920, -3.0835, 4720, "Хижина Кибо"],
+    [37.3684, -3.0753, 5685, "Гиллманс-Пойнт"], [37.3610, -3.0710, 5756, "Стелла-Пойнт"],
+    [37.3556, -3.0674, 5895, "Ухуру"] ] },
+  { name: "Маттерхорн", lon: 7.6586, lat: 45.9763, h: 4478, r: 0.08, routeName: "Гребень Хёрнли", route: [
+    [7.7080, 45.9908, 2583, "Шварцзее"], [7.6806, 45.9822, 3260, "Хижина Хёрнли"],
+    [7.6672, 45.9795, 4003, "Хижина Сольве"], [7.6620, 45.9776, 4250, "Плечо"], [7.6586, 45.9763, 4478, "Вершина"] ] },
+  { name: "Монблан", lon: 6.8652, lat: 45.8326, h: 4806, r: 0.10, routeName: "Маршрут Гуте", route: [
+    [6.8130, 45.8810, 2372, "Ни-д’Эгль"], [6.8185, 45.8600, 3167, "Тет-Русс"], [6.8325, 45.8505, 3835, "Хижина Гуте"],
+    [6.8410, 45.8433, 4304, "Дом-дю-Гуте"], [6.8485, 45.8390, 4362, "Валло"], [6.8580, 45.8350, 4550, "Боссы"],
+    [6.8652, 45.8326, 4806, "Вершина"] ] },
+  { name: "Денали", lon: -151.0074, lat: 63.0695, h: 6190, r: 0.20, routeName: "Вест-Баттресс", route: [
+    [-151.1760, 62.9690, 2200, "Базовый лагерь"], [-151.1350, 62.9950, 2400, "Лагерь 7800"],
+    [-151.1150, 63.0240, 3350, "Лагерь 11 000"], [-151.0900, 63.0450, 4330, "Лагерь 14 000"],
+    [-151.0560, 63.0575, 5240, "Хай-кэмп 17 000"], [-151.0310, 63.0630, 5550, "Перевал Денали"],
+    [-151.0074, 63.0695, 6190, "Вершина"] ] },
+  { name: "Аконкагуа", lon: -70.0109, lat: -32.6532, h: 6961, r: 0.15, routeName: "Нормальный", route: [
+    [-70.0640, -32.6510, 4300, "Пласа-де-Мулас"], [-70.0400, -32.6420, 5050, "Канада"],
+    [-70.0270, -32.6340, 5560, "Нидо-де-Кондорес"], [-70.0170, -32.6420, 5940, "Колера"],
+    [-70.0140, -32.6460, 6380, "Индепенденсия"], [-70.0120, -32.6510, 6700, "Каналета"],
+    [-70.0109, -32.6532, 6961, "Вершина"] ] },
+  { name: "Арарат", lon: 44.2983, lat: 39.7017, h: 5137, r: 0.10, routeName: "Южный", route: [
+    [44.2950, 39.6440, 2200, "Эли"], [44.2960, 39.6700, 3200, "Лагерь 1"],
+    [44.2985, 39.6875, 4200, "Лагерь 2"], [44.2983, 39.7017, 5137, "Вершина"] ] },
 ];
 
 // 1) Глобальная подложка — только грубые тайлы (максимум 5-й зум), это «вид с орбиты».
@@ -136,13 +170,109 @@ const globus = new Globe({
 const planet = globus.planet;
 window.planet = planet;   // для отладки из консоли браузера
 
-// Камера: отступаем от вершины на юг и вверх, смотрим на вершину — получается вид в 3D, а не сверху.
+// ---------------- Маршруты восхождения ----------------
+const ROUTE_LIFT = 12;     // на сколько метров поднять линию над рельефом, чтобы она не тонула в склоне
+const LABEL_LIFT = 70;     // подписи точек — чуть выше
+
+// Сгущаем маршрут: точка каждые ~50 м, высота сначала линейная между ключевыми точками
+function densify(route) {
+  const out = [];
+  for (let i = 0; i < route.length - 1; i++) {
+    const [lo1, la1, h1] = route[i], [lo2, la2, h2] = route[i + 1];
+    const dx = (lo2 - lo1) * 111320 * Math.cos(la1 * Math.PI / 180), dy = (la2 - la1) * 111320;
+    const n = Math.max(1, Math.round(Math.hypot(dx, dy) / 50));
+    for (let k = 0; k < n; k++) {
+      const t = k / n;
+      out.push([lo1 + (lo2 - lo1) * t, la1 + (la2 - la1) * t, h1 + (h2 - h1) * t, k === 0 ? i : -1]);
+    }
+  }
+  const last = route[route.length - 1];
+  out.push([last[0], last[1], last[2], route.length - 1]);
+  return out;   // [lon, lat, h, индекс ключевой точки или -1]
+}
+
+// Кружок для отметки точки маршрута
+function dot(color) {
+  const c = document.createElement("canvas"); c.width = c.height = 32;
+  const g = c.getContext("2d");
+  g.beginPath(); g.arc(16, 16, 12, 0, Math.PI * 2);
+  g.fillStyle = color; g.fill(); g.lineWidth = 4; g.strokeStyle = "#ffffff"; g.stroke();
+  return c.toDataURL();
+}
+const DOT_WAY = dot("#ff5a2e"), DOT_TOP = dot("#ffc533");
+
+const routeLayer = new Vector("Маршруты", {
+  pickingEnabled: false, hideInLayerSwitcher: true, polygonOffsetUnits: -4
+});
+planet.addLayer(routeLayer);
+
+MOUNTAINS.forEach(m => {
+  m.dense = densify(m.route);
+  m.line = new Entity({
+    polyline: {
+      pathLonLat: [m.dense.map(p => [p[0], p[1], p[2] + ROUTE_LIFT])],
+      thickness: 4, color: "#ff5a2e"
+    }
+  });
+  m.points = m.route.map((p, i) => {
+    const top = i === m.route.length - 1;
+    return new Entity({
+      lonlat: [p[0], p[1], p[2] + LABEL_LIFT],
+      billboard: { src: top ? DOT_TOP : DOT_WAY, size: [14, 14] },
+      label: {
+        text: p[3] + ", " + p[2] + " м",
+        size: top ? 15 : 13, color: "#ffffff", outline: 0.28, outlineColor: "rgba(0,0,0,0.85)",
+        offset: [10, -4]
+      }
+    });
+  });
+  routeLayer.add(m.line);
+  m.points.forEach(e => routeLayer.add(e));
+});
+
+// Уточняем высоты по настоящему рельефу — только для выбранной горы и только один раз
+async function drapeRoute(m) {
+  if (m.draped || m.draping) return;
+  m.draping = true;
+  try {
+    const hs = [];
+    for (let i = 0; i < m.dense.length; i += 30) {
+      const batch = m.dense.slice(i, i + 30).map(p => planet.getHeightAboveELL(new LonLat(p[0], p[1])));
+      hs.push(...await Promise.all(batch));
+    }
+    // если рельеф вернул пустоту (0 или мусор) — оставляем расчётную высоту
+    const fixed = m.dense.map((p, i) => {
+      const h = hs[i];
+      return (isFinite(h) && h > p[2] * 0.5) ? h : p[2];
+    });
+    m.line.polyline.setPathLonLat([m.dense.map((p, i) => [p[0], p[1], fixed[i] + ROUTE_LIFT])]);
+    m.dense.forEach((p, i) => {
+      if (p[3] >= 0) m.points[p[3]].setLonLat(new LonLat(p[0], p[1], fixed[i] + LABEL_LIFT));
+    });
+    m.draped = true;
+  } catch (e) {
+    log("Маршрут " + m.name + ": не удалось уточнить высоты (" + e.message + ")");
+  } finally {
+    m.draping = false;
+  }
+}
+
+// Камера стоит позади начала маршрута и чуть сбоку, смотрит в его середину:
+// на вертикальном экране телефона путь идёт снизу вверх — от базового лагеря к вершине.
 function cameraFor(m) {
-  const dist = Math.max(9000, m.h * 2.2);          // горизонтальный отступ, м
-  const dLat = dist / 111320;
+  const r = m.route, s0 = r[0], top = r[r.length - 1];
+  const kx = 111320 * Math.cos(m.lat * Math.PI / 180), ky = 111320;
+  const dx = (top[0] - s0[0]) * kx, dy = (top[1] - s0[1]) * ky;
+  const len = Math.max(Math.hypot(dx, dy), 1500);
+  const ux = dx / len, uy = dy / len;                 // направление «старт → вершина»
+  const cLon = (s0[0] + top[0]) / 2, cLat = (s0[1] + top[1]) / 2, cH = (s0[2] + top[2]) / 2;
+  const back = len * 0.5 + Math.max(4000, len * 0.55);   // насколько отойти назад от середины
+  const side = len * 0.25;                               // небольшой сдвиг вбок для объёма
+  const ex = -ux * back + uy * side, ey = -uy * back - ux * side;
   return {
-    eye: new LonLat(m.lon, m.lat - dLat, m.h + dist * 0.55),
-    look: new LonLat(m.lon, m.lat, m.h * 0.8)
+    eye: new LonLat(cLon + ex / kx, cLat + ey / ky, top[2] + Math.max(3000, len * 0.55)),
+    look: new LonLat(cLon, cLat, cH),
+    center: new LonLat(cLon, cLat, cH)
   };
 }
 
@@ -159,11 +289,12 @@ function goTo(i) {
   } else {
     planet.viewLonLat(eye, look);                  // мгновенно, без анимации
   }
-  orbitCenter = planet.ellipsoid.lonLatToCartesian(new LonLat(m.lon, m.lat, m.h * 0.8));
+  orbitCenter = planet.ellipsoid.lonLatToCartesian(cameraFor(m).center);   // облёт вокруг середины маршрута
   orbitUp = orbitCenter.normal();
   document.getElementById("mName").textContent = m.name;
   document.getElementById("mMeta").textContent =
-    m.h.toLocaleString("ru-RU") + " м · " + m.lat.toFixed(3) + "°, " + m.lon.toFixed(3) + "°";
+    m.h.toLocaleString("ru-RU") + " м · маршрут: " + m.routeName;
+  setTimeout(() => drapeRoute(m), 400);
   document.querySelectorAll(".chip").forEach((c, k) => c.classList.toggle("on", k === i));
 }
 
