@@ -276,6 +276,13 @@ function cameraFor(m) {
   };
 }
 
+// «Верх» для камеры — местная вертикаль (нормаль к поверхности в точке камеры).
+// Без этого движок в полёте берёт за верх ось Земли, и камера заваливается на бок,
+// если смотрит на восток или запад.
+function localUp(lonlat) {
+  return planet.ellipsoid.lonLatToCartesian(new LonLat(lonlat.lon, lonlat.lat, 0)).normal();
+}
+
 let current = null, flyMode = false, orbiting = false, orbitCenter = null, orbitUp = null;
 
 function goTo(i) {
@@ -285,7 +292,7 @@ function goTo(i) {
   const { eye, look } = cameraFor(m);
   planet.stopFlying();
   if (flyMode) {
-    planet.flyLonLat(eye, { look, duration: 2500 });
+    planet.flyLonLat(eye, { look, up: localUp(eye), duration: 2500 });
   } else {
     planet.viewLonLat(eye, look);                  // мгновенно, без анимации
   }
@@ -353,7 +360,7 @@ function startOrbit() {
   btn.classList.add("on"); btn.textContent = "Стоп ■";
   aiming = true;
   planet.stopFlying();
-  planet.flyLonLat(eye, { look, duration: 1000, completeCallback: () => {
+  planet.flyLonLat(eye, { look, up: localUp(eye), duration: 1000, completeCallback: () => {
     if (!aiming) return;            // облёт успели отменить во время подлёта
     aiming = false; orbiting = true; orbitStep();
   }});
