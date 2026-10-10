@@ -308,7 +308,6 @@ window.planet = planet;   // для отладки из консоли брау�
 // ---------------- Маршруты восхождения ----------------
 const ROUTE_LIFT = 12;     // на сколько метров поднять линию над рельефом, чтобы она не тонула в склоне
 const LABEL_LIFT = 70;     // подписи точек — чуть выше
-const MAX_DIP = 60;        // м — насколько пешая линия может опуститься ниже прямой между ключевыми точками
 
 // Сгущаем маршрут: точка каждые ~50 м, высота сначала линейная между ключевыми точками
 function densify(route) {
@@ -395,19 +394,29 @@ async function drapeRoute(rt, mountainName) {
       const batch = rt.dense.slice(i, i + 30).map(p => planet.getHeightAboveELL(new LonLat(p[0], p[1])));
       hs.push(...await Promise.all(batch));
     }
-    // Высота каждой точки линии:
-    //  • на отрезках по воздуху (канатная дорога) — прямая между станциями, рельеф не учитываем;
-    //  • на пеших отрезках — по рельефу, но не глубже чем на MAX_DIP ниже прямой между ключевыми точками:
-    //    точки маршрута грубые, и прямая между ними может пересечь ущелье, которое настоящая тропа обходит —
-    //    без ограничения линия «ныряла» бы в него и выскакивала обратно;
-    //  • если рельеф вернул пустоту (0 или мусор) — расчётная высота.
+    // Высота каждой точки линии — по рельефу. Высоты ключевых точек в данных грубые, поэтому им не верим:
+    //  • пешие отрезки и все станции/точки маршрута лежат на поверхности (если линия «задрана», она прижимается);
+    //  • отрезки по воздуху (канатная дорога) — прямая между станциями, а станции стоят на рельефе;
+    //    если такая прямая где-то ушла под землю — поднимаем её над поверхностью;
+    //  • если рельеф в точке не загрузился (вернул 0 или мусор) — берём расчётную высоту.
     const air = new Set(rt.air || []);
-    const fixed = rt.dense.map((p, i) => {
-      const k = p[3];
-      if (air.has(p[4]) || (k >= 0 && air.has(k - 1))) return p[2];
+    const ground = rt.dense.map((p, i) => {
       const h = hs[i];
-      if (!(isFinite(h) && h > p[2] * 0.5)) return p[2];
-      return Math.max(h, p[2] - MAX_DIP);
+      return (isFinite(h) && h > Math.min(p[2] * 0.5, p[2] - 300)) ? h : p[2];
+    });
+    // высоты станций по рельефу — по ним строятся воздушные отрезки
+    const keyH = {};
+    rt.dense.forEach((p, i) => { if (p[3] >= 0) keyH[p[3]] = ground[i]; });
+    keyH[rt.pts.length - 1] = ground[ground.length - 1];
+    const fixed = rt.dense.map((p, i) => {
+      const seg = p[4];
+      if (!air.has(seg) || p[3] === seg + 1) return ground[i];
+      // доля пути вдоль воздушного отрезка
+      const [lo1, la1] = rt.pts[seg], [lo2, la2] = rt.pts[seg + 1];
+      const L = Math.hypot(lo2 - lo1, la2 - la1) || 1;
+      const t = Math.hypot(p[0] - lo1, p[1] - la1) / L;
+      const line = keyH[seg] + (keyH[seg + 1] - keyH[seg]) * t;
+      return Math.max(line, ground[i] + 15);   // трос не может идти сквозь склон
     });
     rt.line.polyline.setPathLonLat([rt.dense.map((p, i) => [p[0], p[1], fixed[i] + ROUTE_LIFT])]);
     rt.dense.forEach((p, i) => {
