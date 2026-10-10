@@ -45,11 +45,11 @@
     display: flex; flex-direction: column; gap: 6px; min-width: 200px; }
   #diag[hidden] { display: none; }
   #cam { position: absolute; left: 12px; right: 12px; bottom: calc(136px + env(safe-area-inset-bottom, 0px)); z-index: 25;
-    background: var(--panel); border-radius: 12px; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
+    background: var(--panel); border-radius: 12px; padding: 8px 14px; display: flex; flex-direction: column; gap: 0; }
   #cam[hidden] { display: none; }
   #cam .row { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
   #cam .row b { color: var(--fg); font-variant-numeric: tabular-nums; }
-  #tilt, #zoom { width: 100%; accent-color: var(--chip-on); height: 28px; }
+  #tilt, #zoom, #speed { width: 100%; accent-color: var(--chip-on); height: 26px; margin: 0 0 4px; }
   #diag label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
   #diag .fps { color: var(--muted); font-variant-numeric: tabular-nums; }
   #log { position: absolute; top: calc(8px + env(safe-area-inset-top, 0px)); left: 8px; right: 8px; z-index: 30;
@@ -72,12 +72,12 @@
 </div>
 
 <div id="cam" hidden>
-  <div class="row"><span>Наклон к горизонту (от вершины)</span><b id="tiltVal">—</b></div>
+  <div class="row"><span>Наклон к горизонту · 0° сбоку, 85° сверху</span><b id="tiltVal">—</b></div>
   <input type="range" id="tilt" min="0" max="1000" step="1" value="400">
-  <div class="row"><span>0° — сбоку</span><span>85° — сверху</span></div>
-  <div class="row" style="margin-top:4px"><span>Расстояние до вершины</span><b id="zoomVal">—</b></div>
+  <div class="row"><span>Расстояние до вершины</span><b id="zoomVal">—</b></div>
   <input type="range" id="zoom" min="0" max="1000" step="1" value="500">
-  <div class="row"><span>ближе</span><span>дальше</span></div>
+  <div class="row"><span>Скорость облёта</span><b id="speedVal">—</b></div>
+  <input type="range" id="speed" min="0" max="1000" step="1" value="500">
 </div>
 
 <div id="bar">
@@ -276,6 +276,7 @@ async function drapeRoute(m) {
 // Камера стоит позади начала маршрута и чуть сбоку и смотрит на вершину:
 // на вертикальном экране путь идёт снизу вверх к вершине в центре кадра.
 // Облёт, наклон и приближение работают относительно вершины, поэтому она сразу в центре.
+const DEFAULT_TILT = 7;   // угол камеры над горизонтом (от вершины) при выборе горы, °
 function cameraFor(m) {
   const r = m.route, s0 = r[0], top = r[r.length - 1];
   const kx = 111320 * Math.cos(m.lat * Math.PI / 180), ky = 111320;
@@ -286,8 +287,12 @@ function cameraFor(m) {
   const back = len * 0.5 + Math.max(4000, len * 0.55);   // насколько отойти назад от середины
   const side = len * 0.25;                               // небольшой сдвиг вбок для объёма
   const ex = -ux * back + uy * side, ey = -uy * back - ux * side;
+  // направление от вершины к камере берём из расчёта выше, а угол над горизонтом — DEFAULT_TILT
+  const ox = cLon * kx + ex - top[0] * kx, oy = cLat * ky + ey - top[1] * ky;   // смещение камеры от вершины, м
+  const hd0 = Math.hypot(ox, oy), D = Math.hypot(hd0, Math.max(3000, len * 0.55));
+  const el = DEFAULT_TILT * Math.PI / 180, hd = D * Math.cos(el);
   return {
-    eye: new LonLat(cLon + ex / kx, cLat + ey / ky, top[2] + Math.max(3000, len * 0.55)),
+    eye: new LonLat(top[0] + ox / hd0 * hd / kx, top[1] + oy / hd0 * hd / ky, top[2] + D * Math.sin(el)),
     look: new LonLat(top[0], top[1], top[2]),
     center: new LonLat(cLon, cLat, cH)
   };
@@ -328,7 +333,7 @@ function goTo(i) {
 // Шаг делается внутри цикла отрисовки движка (событие postdraw), а не в отдельном таймере,
 // и после поворота обязательно вызывается camera.update(): rotateAround сам матрицы
 // камеры не пересчитывает, из-за чего кадры рисовались то по старой, то по новой позиции — это и было мерцание.
-const ORBIT_SPEED = 0.15;   // рад/с, полный круг ≈ 42 с
+let orbitSpeed = 0.15;      // рад/с, полный круг ≈ 42 с; меняется ползунком в панели «Камера»
 const ORBIT_RAMP = 1.5;     // с — плавный разгон, чтобы облёт не начинался рывком
 let lastT = 0, orbitT = 0;
 planet.renderer.events.on("postdraw", () => {
@@ -339,7 +344,7 @@ planet.renderer.events.on("postdraw", () => {
   if (dt === 0) return;
   orbitT += dt;
   const k = Math.min(1, orbitT / ORBIT_RAMP), ease = k * k * (3 - 2 * k);
-  planet.camera.rotateAround(ORBIT_SPEED * ease * dt, false, orbitCenter, orbitUp);
+  planet.camera.rotateAround(orbitSpeed * ease * dt, false, orbitCenter, orbitUp);
   planet.camera.update();
 });
 function orbitStep() { lastT = 0; orbitT = 0; }
@@ -431,6 +436,20 @@ let dragging = false;
 window.addEventListener("pointerup", () => { dragging = false; });
 tiltEl.addEventListener("input", () => { if (orbitCenter) { applyTilt(tiltFromSlider(+tiltEl.value)); showCamVals(); } });
 zoomEl.addEventListener("input", () => { if (orbitCenter) { applyZoom(zoomFromSlider(+zoomEl.value)); showCamVals(); } });
+// Скорость облёта: логарифмическая шкала, показываем, за сколько секунд камера делает полный круг
+const S_MIN = 0.03, S_MAX = 0.8;             // рад/с: круг за ~3,5 мин … ~8 с
+const speedFromSlider = t => S_MIN * Math.pow(S_MAX / S_MIN, t / 1000);
+const sliderFromSpeed = v => 1000 * Math.log(v / S_MIN) / Math.log(S_MAX / S_MIN);
+const speedEl = document.getElementById("speed");
+function showSpeed() {
+  const sec = Math.round(2 * Math.PI / orbitSpeed);
+  document.getElementById("speedVal").textContent = sec >= 120
+    ? "круг за " + Math.floor(sec / 60) + " мин " + (sec % 60 ? sec % 60 + " с" : "")
+    : "круг за " + sec + " с";
+}
+speedEl.value = sliderFromSpeed(orbitSpeed); showSpeed();
+speedEl.addEventListener("input", () => { orbitSpeed = speedFromSlider(+speedEl.value); showSpeed(); });
+
 document.getElementById("bCam").onclick = function () {
   const p = document.getElementById("cam");
   p.hidden = !p.hidden;
