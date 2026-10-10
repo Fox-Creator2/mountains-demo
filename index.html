@@ -326,9 +326,7 @@ planet.renderer.events.on("postdraw", () => {
   planet.camera.update();
 });
 function orbitStep() { lastT = 0; orbitT = 0; }
-let aiming = false;   // идёт короткий подлёт к вершине перед началом облёта
 function stopOrbit() {
-  if (aiming) { planet.stopFlying(); aiming = false; }
   orbiting = false;
   document.getElementById("bOrbit").classList.remove("on");
   document.getElementById("bOrbit").textContent = "Облёт ⟳";
@@ -347,72 +345,21 @@ document.getElementById("bMode").onclick = function () {
   flyMode = !flyMode;
   this.textContent = flyMode ? "Режим: пролёт" : "Режим: телепорт";
 };
-// Радиус облёта подбирается так, чтобы весь маршрут помещался в кадр с любой стороны облёта.
-// Считаем по настоящему углу обзора камеры и пропорциям экрана: на вертикальном телефоне
-// кадр узкий, поэтому камере приходится отходить дальше, чем на компьютере.
-const ORBIT_PITCH = 32 * Math.PI / 180;   // камера смотрит на вершину сверху под таким углом
-function orbitRadius(m) {
-  const top = m.route[m.route.length - 1];
-  const kx = 111320 * Math.cos(top[1] * Math.PI / 180), ky = 111320;
-  const pts = m.route.map(p => [(p[0] - top[0]) * kx, (p[1] - top[1]) * ky, p[2] - top[2]]);
-  const tv = Math.tan(planet.camera.verticalViewAngle * Math.PI / 360) * 0.92;  // небольшой запас по краям
-  const th = tv * planet.camera.getAspectRatio();
-  const fits = (R) => {
-    const H = R * Math.tan(ORBIT_PITCH);
-    for (let a = 0; a < 360; a += 15) {
-      const c = Math.cos(a * Math.PI / 180), sn = Math.sin(a * Math.PI / 180);
-      const C = [R * c, R * sn, H];
-      const f = [-C[0], -C[1], -C[2]], fl = Math.hypot(...f); f[0] /= fl; f[1] /= fl; f[2] /= fl;
-      const r = [f[1], -f[0], 0], rl = Math.hypot(r[0], r[1]); r[0] /= rl; r[1] /= rl;   // вправо
-      const u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
-      for (const P of pts) {
-        const v = [P[0] - C[0], P[1] - C[1], P[2] - C[2]];
-        const z = v[0] * f[0] + v[1] * f[1] + v[2] * f[2];
-        if (z <= 0) return false;
-        const x = v[0] * r[0] + v[1] * r[1], y = v[0] * u[0] + v[1] * u[1] + v[2] * u[2];
-        if (Math.abs(x / z) > th || Math.abs(y / z) > tv) return false;
-      }
-    }
-    return true;
-  };
-  let R = 3000;
-  while (!fits(R) && R < 300000) R *= 1.04;
-  return R;
-}
-
-// Перед облётом камера плавно (без «подпрыгивания») переходит на орбиту и наводится на вершину,
-// сохраняя сторону, с которой смотрели. Потом облёт плавно разгоняется.
+// Облёт начинается прямо с текущего положения и масштаба камеры — никаких перелётов.
+// Камера вращается вокруг вертикальной оси, проходящей через вершину (конечную точку маршрута).
 function startOrbit() {
-  const m = current; if (!m) return;
-  const top = m.route[m.route.length - 1];
-  const kx = 111320 * Math.cos(top[1] * Math.PI / 180), ky = 111320;
-  const cam = planet.camera.getLonLat();
-  let bx = (cam.lon - top[0]) * kx, by = (cam.lat - top[1]) * ky;
-  const bl = Math.hypot(bx, by) || 1; bx /= bl; by /= bl;   // направление «вершина → камера»
-  const R = orbitRadius(m);                                 // радиус облёта, м
-  const eye = new LonLat(top[0] + bx * R / kx, top[1] + by * R / ky, top[2] + R * Math.tan(ORBIT_PITCH));
-  const look = new LonLat(top[0], top[1], top[2]);
   const btn = document.getElementById("bOrbit");
   btn.classList.add("on"); btn.textContent = "Стоп ■";
-  aiming = true;
   planet.stopFlying();
-  planet.flyLonLat(eye, {
-    look, up: localUp(eye), duration: 1600,
-    amplitude: 0,        // без дуги вверх — иначе камера «подпрыгивает» по пути
-    preventLock: true,   // не замораживать подгрузку тайлов во время перелёта, чтобы в конце не было скачка картинки
-    completeCallback: () => {
-      if (!aiming) return;            // облёт успели отменить во время перелёта
-      aiming = false; orbiting = true; orbitStep();
-    }
-  });
+  orbiting = true; orbitStep();
 }
 document.getElementById("bOrbit").onclick = function () {
-  if (orbiting || aiming) { stopOrbit(); return; }
+  if (orbiting) { stopOrbit(); return; }
   if (!orbitCenter) return;
   startOrbit();
 };
 // Пользователь трогает глобус — облёт выключается, чтобы не мешать
-document.getElementById("globus").addEventListener("pointerdown", () => { if (orbiting || aiming) stopOrbit(); });
+document.getElementById("globus").addEventListener("pointerdown", () => { if (orbiting) stopOrbit(); });
 
 // ---- Диагностика: включаем/выключаем части сцены, чтобы найти источник мерцания ----
 document.getElementById("bDiag").onclick = () => {
