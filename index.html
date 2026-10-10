@@ -77,6 +77,7 @@
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
+  <span class="fps">Версия: 11.10, 03:05</span>
 </div>
 
 <div id="cam" hidden>
@@ -382,6 +383,7 @@ function setRouteVisible(rt, on) {
   rt.visible = on;
   rt.line.setVisibility(on);
   rt.points.forEach(e => e && e.setVisibility(on));
+  (rt.pylons || []).forEach(e => e.setVisibility(on));
 }
 
 // Уточняем высоты по настоящему рельефу — для маршрутов выбранной горы и только один раз
@@ -409,7 +411,7 @@ async function findDetours(rt) {
   const air = new Set(rt.air || []);
   const kx = 111320 * Math.cos(rt.pts[0][1] * Math.PI / 180), ky = 111320;
   const ends = await heightsAt(rt.pts);
-  const pts = [], orig = [], airEff = [];
+  const pts = [], orig = [], airEff = [], bridges = [];
   for (let s = 0; s < rt.pts.length; s++) {
     if (air.has(s)) airEff.push(pts.length);
     pts.push(rt.pts[s]); orig.push(s);
@@ -434,8 +436,9 @@ async function findDetours(rt) {
       if (!best || cost < best.cost) best = { cost, C, h: hh[s1.pts.length] };
     }
     if (best && best.cost < dip0 * 0.5) { pts.push([best.C[0], best.C[1], best.h, ""]); orig.push(-1); }
+    else bridges.push(pts.length - 1);   // обойти не удалось — этот отрезок проведём поверху, не ныряя в провал
   }
-  return { pts, orig, air: airEff };
+  return { pts, orig, air: airEff, bridges };
 }
 
 async function drapeRoute(rt, mountainName) {
@@ -461,8 +464,16 @@ async function drapeRoute(rt, mountainName) {
     //     так не получается «невидимого столба», когда линия карабкается по склону, а потом уходит в пропасть;
     //  2) добавляем провисание по параболе: до 4% длины пролёта, но не больше, чем позволяет рельеф под тросом.
     const CLEAR = 15, SAG = 0.04;
-    const fixed = ground.slice();
+    const PYL_MAX = 60, PYL_H = 35;   // трос не выше 60 м над склоном — иначе опора высотой 35 м
+    const fixed = ground.slice(), pylons = [];
     const kx = 111320 * Math.cos(pts[0][1] * Math.PI / 180), ky = 111320;
+    // отрезки, которые не удалось обойти: линия не опускается ниже прямой между концами (на 10 м)
+    for (const seg of eff.bridges) {
+      const idx = [];
+      dense.forEach((p, i) => { if (p[4] === seg || (p[3] === seg + 1)) idx.push(i); });
+      const hA = ground[idx[0]], hB = ground[idx[idx.length - 1]];
+      idx.forEach((i, k) => { const u = k / (idx.length - 1); fixed[i] = Math.max(ground[i], hA + (hB - hA) * u - 10); });
+    }
     for (const seg of air) {
       const idx = [];
       dense.forEach((p, i) => { if (p[4] === seg || (p[3] === seg + 1)) idx.push(i); });
@@ -483,23 +494,51 @@ async function drapeRoute(rt, mountainName) {
         const sl = (ground[i] + CLEAR - g0) / (t * L);
         if (sl > bestS) { bestS = sl; jEnd = k; hEnd = ground[i] + CLEAR; }
       });
-      const tEnd = tt[jEnd];
-      // запас над склоном: у концов трос касается земли, к середине пролёта — не меньше CLEAR
+      // Трос делим на пролёты опорами: если где-то он поднимается над склоном выше PYL_MAX, в самом высоком
+      // месте ставим опору высотой PYL_H и считаем оба пролёта заново (рекурсивно). У каждого пролёта —
+      // провисание до 4% его длины, но не ниже запаса над склоном.
       const clr = u => CLEAR * Math.min(1, u / 0.1, (1 - u) / 0.1);
-      const h0 = g0;
-      let sag = SAG * L * tEnd;
-      idx.forEach((i, k) => {
-        if (k > jEnd) return;
-        const u = tt[k] / tEnd, w = 4 * u * (1 - u);
-        if (w > 0.05) sag = Math.min(sag, Math.max(0, (h0 + (hEnd - h0) * u - ground[i] - clr(u)) / w));
-      });
-      idx.forEach((i, k) => {
-        if (k > jEnd) { fixed[i] = ground[i]; return; }        // после края обрыва — по земле до станции
-        const u = tt[k] / tEnd;
-        // небольшие бугры под тросом, если они есть, он просто перешагивает с запасом
-        fixed[i] = Math.max(h0 + (hEnd - h0) * u - 4 * sag * u * (1 - u), ground[i] + clr(u));
-      });
+      const span = (kA, kB, hA, hB, depth) => {
+        const tA = tt[kA], tB = tt[kB], dt = (tB - tA) || 1;
+        let sag = SAG * L * dt;
+        for (let k = kA + 1; k < kB; k++) {
+          const u = (tt[k] - tA) / dt, w = 4 * u * (1 - u);
+          if (w > 0.05) sag = Math.min(sag, Math.max(0, (hA + (hB - hA) * u - ground[idx[k]] - clr(u)) / w));
+        }
+        let worst = -1, worstE = PYL_MAX;
+        const curve = [];
+        for (let k = kA + 1; k < kB; k++) {
+          const u = (tt[k] - tA) / dt;
+          const h = Math.max(hA + (hB - hA) * u - 4 * sag * u * (1 - u), ground[idx[k]] + clr(u));
+          curve.push(h);
+          const e = h - ground[idx[k]];
+          if (e > worstE && k - kA > 2 && kB - k > 2) { worstE = e; worst = k; }
+        }
+        if (worst > 0 && depth < 8) {
+          const hp = ground[idx[worst]] + PYL_H;
+          pylons.push(idx[worst]);
+          span(kA, worst, hA, hp, depth + 1);
+          fixed[idx[worst]] = hp;
+          span(worst, kB, hp, hB, depth + 1);
+          return;
+        }
+        for (let k = kA + 1; k < kB; k++) fixed[idx[k]] = curve[k - kA - 1];
+      };
+      fixed[i0] = g0;
+      span(0, jEnd, g0, hEnd, 0);
+      fixed[idx[jEnd]] = hEnd;
+      for (let k = jEnd + 1; k < idx.length; k++) fixed[idx[k]] = ground[idx[k]];   // после бровки — по земле
     }
+    // вертикальные отрезки — опоры
+    (rt.pylons || []).forEach(e => routeLayer.removeEntity(e));
+    rt.pylons = pylons.map(i => {
+      const p = dense[i];
+      const e = new Entity({ polyline: { pathLonLat: [[[p[0], p[1], ground[i]], [p[0], p[1], fixed[i] + ROUTE_LIFT]]],
+        thickness: 3, color: "#d7dde4" } });
+      e.setVisibility(rt.visible);
+      routeLayer.add(e);
+      return e;
+    });
     rt.line.polyline.setPathLonLat([dense.map((p, i) => [p[0], p[1], fixed[i] + ROUTE_LIFT])]);
     dense.forEach((p, i) => {
       const o = p[3] >= 0 ? eff.orig[p[3]] : -1;
