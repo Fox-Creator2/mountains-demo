@@ -40,6 +40,11 @@
     background: var(--chip); color: var(--fg); font-size: 13px; cursor: pointer; }
   #ctrls button.on { background: #3b6e4f; }
 
+  #diag { position: absolute; left: 8px; top: calc(8px + env(safe-area-inset-top, 0px)); z-index: 25;
+    background: var(--panel); border-radius: 10px; padding: 10px 12px; font-size: 13px;
+    display: flex; flex-direction: column; gap: 6px; min-width: 200px; }
+  #diag label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+  #diag .fps { color: var(--muted); font-variant-numeric: tabular-nums; }
   #log { position: absolute; top: calc(8px + env(safe-area-inset-top, 0px)); left: 8px; right: 8px; z-index: 30;
     font: 12px/1.4 ui-monospace, monospace; color: var(--err); background: rgba(0,0,0,0.75);
     border-radius: 8px; padding: 6px 8px; white-space: pre-wrap; }
@@ -51,12 +56,21 @@
 <div id="globus"></div>
 <div id="log"></div>
 
+<div id="diag" hidden>
+  <b>Диагностика мерцания</b>
+  <label><input type="checkbox" id="dFrames" checked> Грубая подложка + рамки гор</label>
+  <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
+  <label><input type="checkbox" id="dAtmos" checked> Атмосфера</label>
+  <span class="fps" id="fps">FPS: —</span>
+</div>
+
 <div id="bar">
   <div id="info"><b id="mName">Загрузка…</b><span id="mMeta"></span></div>
   <div id="chips"></div>
   <div id="ctrls">
     <button id="bMode">Режим: телепорт</button>
     <button id="bOrbit">Облёт ⟳</button>
+    <button id="bDiag" style="flex:0 0 44px">⚙</button>
   </div>
 </div>
 
@@ -69,7 +83,7 @@
 </script>
 
 <script type="module">
-import { Globe, XYZ, GlobusRgbTerrain, LonLat } from
+import { Globe, XYZ, GlobusRgbTerrain, EmptyTerrain, LonLat } from
   "https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/og.es.js";
 
 const OG_RES = "https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/res";
@@ -100,12 +114,18 @@ const mountainLayers = MOUNTAINS.map(m => new XYZ("Гора " + m.name, {
   extent: [[m.lon - m.r, m.lat - m.r], [m.lon + m.r, m.lat + m.r]]
 }));
 
+// Обычная подложка без ограничений — для сравнения в диагностике
+const fullBase = new XYZ("Esri полная", {
+  isBaseLayer: true, url: ESRI, maxNativeZoom: 17, visibility: false, attribution: "Esri World Imagery"
+});
+const terrain = new GlobusRgbTerrain();
+
 const first = MOUNTAINS[0];
 const globus = new Globe({
   target: "globus",
   name: "Earth",
-  terrain: new GlobusRgbTerrain(),
-  layers: [base, ...mountainLayers],
+  terrain: terrain,
+  layers: [base, fullBase, ...mountainLayers],
   resourcesSrc: OG_RES,
   fontsSrc: OG_RES + "/fonts",
   atmosphereEnabled: true,
@@ -191,6 +211,32 @@ document.getElementById("bOrbit").onclick = function () {
 };
 // Пользователь трогает глобус — облёт выключается, чтобы не мешать
 document.getElementById("globus").addEventListener("pointerdown", () => { if (orbiting) stopOrbit(); });
+
+// ---- Диагностика: включаем/выключаем части сцены, чтобы найти источник мерцания ----
+document.getElementById("bDiag").onclick = () => {
+  const d = document.getElementById("diag"); d.hidden = !d.hidden;
+};
+document.getElementById("dFrames").onchange = (e) => {
+  const on = e.target.checked;
+  planet.setBaseLayer(on ? base : fullBase);
+  mountainLayers.forEach(l => l.setVisibility(on));
+};
+document.getElementById("dTerrain").onchange = (e) => {
+  planet.setTerrain(e.target.checked ? terrain : new EmptyTerrain());
+};
+document.getElementById("dAtmos").onchange = (e) => {
+  planet.atmosphereEnabled = e.target.checked;
+};
+// Счётчик кадров в секунду
+let frames = 0, fpsT = performance.now();
+planet.renderer.events.on("postdraw", () => {
+  frames++;
+  const now = performance.now();
+  if (now - fpsT > 1000) {
+    document.getElementById("fps").textContent = "FPS: " + Math.round(frames * 1000 / (now - fpsT));
+    frames = 0; fpsT = now;
+  }
+});
 
 // Старт на Эльбрусе, после того как движок готов
 setTimeout(() => goTo(0), 300);
