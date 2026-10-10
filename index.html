@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Горы мира</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/og.css">
+<style>
+  /* Полноэкранный глобус, снизу панель с горами */
+  :root {
+    --panel: rgba(16, 20, 26, 0.86);
+    --chip: #262d36;
+    --chip-on: #d9a441;
+    --fg: #eef1f4;
+    --muted: #9aa5b1;
+    --err: #ff7a6b;
+  }
+  html, body { margin: 0; height: 100%; background: #0b0e12; color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #globus { position: absolute; top: 0; left: 0; right: 0; bottom: calc(128px + env(safe-area-inset-bottom, 0px)); }
+
+  #bar {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 20;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: var(--panel); backdrop-filter: blur(6px);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  #info { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 14px; }
+  #info b { font-size: 16px; }
+  #info span { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  #chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  #chips::-webkit-scrollbar { display: none; }
+  .chip { flex: 0 0 auto; border: 0; border-radius: 999px; padding: 9px 14px;
+    background: var(--chip); color: var(--fg); font-size: 14px; cursor: pointer; }
+  .chip.on { background: var(--chip-on); color: #1a1407; font-weight: 600; }
+
+  #ctrls { display: flex; gap: 6px; }
+  #ctrls button { flex: 1; border: 0; border-radius: 10px; padding: 9px 6px;
+    background: var(--chip); color: var(--fg); font-size: 13px; cursor: pointer; }
+  #ctrls button.on { background: #3b6e4f; }
+
+  #log { position: absolute; top: calc(8px + env(safe-area-inset-top, 0px)); left: 8px; right: 8px; z-index: 30;
+    font: 12px/1.4 ui-monospace, monospace; color: var(--err); background: rgba(0,0,0,0.75);
+    border-radius: 8px; padding: 6px 8px; white-space: pre-wrap; }
+  #log:empty { display: none; }
+
+</style>
+</head>
+<body>
+<div id="globus"></div>
+<div id="log"></div>
+
+<div id="bar">
+  <div id="info"><b id="mName">Загрузка…</b><span id="mMeta"></span></div>
+  <div id="chips"></div>
+  <div id="ctrls">
+    <button id="bMode">Режим: телепорт</button>
+    <button id="bOrbit">Облёт ⟳</button>
+  </div>
+</div>
+
+<script>
+  // Любая ошибка видна прямо на экране — удобно на телефоне без консоли
+  const logEl = document.getElementById("log");
+  const log = (m) => { logEl.textContent += m + "\n"; };
+  window.addEventListener("error", e => log("Ошибка: " + e.message));
+  window.addEventListener("unhandledrejection", e => log("Ошибка: " + (e.reason && e.reason.message || e.reason)));
+</script>
+
+<script type="module">
+import { Globe, XYZ, GlobusRgbTerrain, LonLat } from
+  "https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/og.es.js";
+
+const OG_RES = "https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/res";
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+
+// Вершины: долгота, широта, высота (м). r — полуразмер рамки в градусах.
+const MOUNTAINS = [
+  { name: "Эльбрус",      lon: 42.4392,  lat: 43.3499,  h: 5642, r: 0.12 },
+  { name: "Казбек",       lon: 44.5180,  lat: 42.6997,  h: 5054, r: 0.10 },
+  { name: "Эверест",      lon: 86.9250,  lat: 27.9881,  h: 8849, r: 0.15 },
+  { name: "Фудзи",        lon: 138.7274, lat: 35.3606,  h: 3776, r: 0.12 },
+  { name: "Килиманджаро", lon: 37.3556,  lat: -3.0674,  h: 5895, r: 0.15 },
+  { name: "Маттерхорн",   lon: 7.6586,   lat: 45.9763,  h: 4478, r: 0.08 },
+  { name: "Монблан",      lon: 6.8652,   lat: 45.8326,  h: 4806, r: 0.10 },
+  { name: "Денали",       lon: -151.0074,lat: 63.0695,  h: 6190, r: 0.15 },
+  { name: "Аконкагуа",    lon: -70.0109, lat: -32.6532, h: 6961, r: 0.15 },
+  { name: "Килауэа",      lon: -155.2867,lat: 19.4069,  h: 1247, r: 0.10 },
+];
+
+// 1) Глобальная подложка — только грубые тайлы (максимум 5-й зум), это «вид с орбиты».
+const base = new XYZ("Esri низкое", {
+  isBaseLayer: true, url: ESRI, maxNativeZoom: 5, visibility: true, attribution: "Esri World Imagery"
+});
+
+// 2) Для каждой горы — свой слой с extent. За пределами рамки он ничего не грузит.
+const mountainLayers = MOUNTAINS.map(m => new XYZ("Гора " + m.name, {
+  isBaseLayer: false, url: ESRI, maxNativeZoom: 17, visibility: true, hideInLayerSwitcher: true,
+  extent: [[m.lon - m.r, m.lat - m.r], [m.lon + m.r, m.lat + m.r]]
+}));
+
+const first = MOUNTAINS[0];
+const globus = new Globe({
+  target: "globus",
+  name: "Earth",
+  terrain: new GlobusRgbTerrain(),
+  layers: [base, ...mountainLayers],
+  resourcesSrc: OG_RES,
+  fontsSrc: OG_RES + "/fonts",
+  atmosphereEnabled: true,
+  viewExtent: [first.lon - first.r, first.lat - first.r, first.lon + first.r, first.lat + first.r]
+});
+const planet = globus.planet;
+
+// Камера: отступаем от вершины на юг и вверх, смотрим на вершину — получается вид в 3D, а не сверху.
+function cameraFor(m) {
+  const dist = Math.max(9000, m.h * 2.2);          // горизонтальный отступ, м
+  const dLat = dist / 111320;
+  return {
+    eye: new LonLat(m.lon, m.lat - dLat, m.h + dist * 0.55),
+    look: new LonLat(m.lon, m.lat, m.h * 0.8)
+  };
+}
+
+let current = null, flyMode = false, orbiting = false, orbitCenter = null, orbitUp = null;
+
+function goTo(i) {
+  const m = MOUNTAINS[i];
+  current = m;
+  stopOrbit();
+  const { eye, look } = cameraFor(m);
+  planet.stopFlying();
+  if (flyMode) {
+    planet.flyLonLat(eye, { look, duration: 2500 });
+  } else {
+    planet.viewLonLat(eye, look);                  // мгновенно, без анимации
+  }
+  orbitCenter = planet.ellipsoid.lonLatToCartesian(new LonLat(m.lon, m.lat, m.h * 0.8));
+  orbitUp = orbitCenter.normal();
+  document.getElementById("mName").textContent = m.name;
+  document.getElementById("mMeta").textContent =
+    m.h.toLocaleString("ru-RU") + " м · " + m.lat.toFixed(3) + "°, " + m.lon.toFixed(3) + "°";
+  document.querySelectorAll(".chip").forEach((c, k) => c.classList.toggle("on", k === i));
+}
+
+// Облёт: камера вращается вокруг вертикальной оси через вершину
+function orbitStep() {
+  if (!orbiting) return;
+  planet.camera.rotateAround(0.0035, false, orbitCenter, orbitUp);
+  requestAnimationFrame(orbitStep);
+}
+function stopOrbit() {
+  orbiting = false;
+  document.getElementById("bOrbit").classList.remove("on");
+  document.getElementById("bOrbit").textContent = "Облёт ⟳";
+}
+
+const chips = document.getElementById("chips");
+MOUNTAINS.forEach((m, i) => {
+  const b = document.createElement("button");
+  b.className = "chip";
+  b.textContent = m.name;
+  b.onclick = () => goTo(i);
+  chips.appendChild(b);
+});
+
+document.getElementById("bMode").onclick = function () {
+  flyMode = !flyMode;
+  this.textContent = flyMode ? "Режим: пролёт" : "Режим: телепорт";
+};
+document.getElementById("bOrbit").onclick = function () {
+  if (orbiting) { stopOrbit(); return; }
+  if (!orbitCenter) return;
+  orbiting = true;
+  this.classList.add("on");
+  this.textContent = "Стоп ■";
+  orbitStep();
+};
+// Пользователь трогает глобус — облёт выключается, чтобы не мешать
+document.getElementById("globus").addEventListener("pointerdown", () => { if (orbiting) stopOrbit(); });
+
+// Старт на Эльбрусе, после того как движок готов
+setTimeout(() => goTo(0), 300);
+</script>
+</body>
+</html>
