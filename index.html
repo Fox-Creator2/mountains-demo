@@ -404,20 +404,51 @@ async function drapeRoute(rt, mountainName) {
       const h = hs[i];
       return (isFinite(h) && h > Math.min(p[2] * 0.5, p[2] - 300)) ? h : p[2];
     });
-    // высоты станций по рельефу — по ним строятся воздушные отрезки
-    const keyH = {};
-    rt.dense.forEach((p, i) => { if (p[3] >= 0) keyH[p[3]] = ground[i]; });
-    keyH[rt.pts.length - 1] = ground[ground.length - 1];
-    const fixed = rt.dense.map((p, i) => {
-      const seg = p[4];
-      if (!air.has(seg) || p[3] === seg + 1) return ground[i];
-      // доля пути вдоль воздушного отрезка
+    // Воздушные отрезки (канатная дорога): трос — плавная кривая от станции к станции.
+    //  1) концы ставим на рельеф, но если прямая между ними задевает склон (например, перегиб у края
+    //     обрыва), приподнимаем конец ровно настолько, чтобы трос прошёл над склоном с запасом CLEAR —
+    //     так не получается «невидимого столба», когда линия карабкается по склону, а потом уходит в пропасть;
+    //  2) добавляем провисание по параболе: до 4% длины пролёта, но не больше, чем позволяет рельеф под тросом.
+    const CLEAR = 15, SAG = 0.04;
+    const fixed = ground.slice();
+    const kx = 111320 * Math.cos(rt.pts[0][1] * Math.PI / 180), ky = 111320;
+    for (const seg of air) {
+      const idx = [];
+      rt.dense.forEach((p, i) => { if (p[4] === seg || (p[3] === seg + 1)) idx.push(i); });
+      if (idx.length < 2) continue;
+      const i0 = idx[0], i1 = idx[idx.length - 1];
       const [lo1, la1] = rt.pts[seg], [lo2, la2] = rt.pts[seg + 1];
-      const L = Math.hypot(lo2 - lo1, la2 - la1) || 1;
-      const t = Math.hypot(p[0] - lo1, p[1] - la1) / L;
-      const line = keyH[seg] + (keyH[seg + 1] - keyH[seg]) * t;
-      return Math.max(line, ground[i] + 15);   // трос не может идти сквозь склон
-    });
+      const L = Math.hypot((lo2 - lo1) * kx, (la2 - la1) * ky) || 1;
+      const tt = idx.map(i => Math.hypot((rt.dense[i][0] - lo1) * kx, (rt.dense[i][1] - la1) * ky) / L);
+      const g0 = ground[i0], g1 = ground[i1];
+      // Если склон у верхней станции встаёт круче, чем прямая к ней (станция стоит за краем обрыва),
+      // трос заканчиваем на краю — там, куда «смотрит» самый крутой луч от нижней станции, —
+      // а дальше до станции линия идёт по земле. Так устроены настоящие канатки: станция на бровке.
+      let jEnd = idx.length - 1, hEnd = g1;
+      let bestS = (g1 - g0) / L;
+      idx.forEach((i, k) => {
+        const t = tt[k]; if (t < 0.6 || t > 0.999) return;
+        if (ground[i] < g0 + (g1 - g0) * t + CLEAR) return;   // склон здесь ниже прямой — всё в порядке
+        const sl = (ground[i] + CLEAR - g0) / (t * L);
+        if (sl > bestS) { bestS = sl; jEnd = k; hEnd = ground[i] + CLEAR; }
+      });
+      const tEnd = tt[jEnd];
+      // запас над склоном: у концов трос касается земли, к середине пролёта — не меньше CLEAR
+      const clr = u => CLEAR * Math.min(1, u / 0.1, (1 - u) / 0.1);
+      const h0 = g0;
+      let sag = SAG * L * tEnd;
+      idx.forEach((i, k) => {
+        if (k > jEnd) return;
+        const u = tt[k] / tEnd, w = 4 * u * (1 - u);
+        if (w > 0.05) sag = Math.min(sag, Math.max(0, (h0 + (hEnd - h0) * u - ground[i] - clr(u)) / w));
+      });
+      idx.forEach((i, k) => {
+        if (k > jEnd) { fixed[i] = ground[i]; return; }        // после края обрыва — по земле до станции
+        const u = tt[k] / tEnd;
+        // небольшие бугры под тросом, если они есть, он просто перешагивает с запасом
+        fixed[i] = Math.max(h0 + (hEnd - h0) * u - 4 * sag * u * (1 - u), ground[i] + clr(u));
+      });
+    }
     rt.line.polyline.setPathLonLat([rt.dense.map((p, i) => [p[0], p[1], fixed[i] + ROUTE_LIFT])]);
     rt.dense.forEach((p, i) => {
       if (p[3] >= 0 && rt.points[p[3]]) rt.points[p[3]].setLonLat(new LonLat(p[0], p[1], fixed[i] + LABEL_LIFT));
