@@ -108,7 +108,8 @@
   #warp .wrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
   #warp button { border: 0; border-radius: 9px; padding: 8px 10px; background: var(--chip); color: var(--fg); font-size: 13px; cursor: pointer; }
   #warp button.go { background: #5b3fa8; font-weight: 600; }
-  #warp input { width: 110px; background: var(--chip); color: var(--fg); border: 0; border-radius: 8px; padding: 8px; font-size: 15px; }
+  #warp select { flex: 1; min-width: 0; background: var(--chip); color: var(--fg); border: 0; border-radius: 8px; padding: 8px; font-size: 14px; }
+  #warp input { width: 100px; background: var(--chip); color: var(--fg); border: 0; border-radius: 8px; padding: 8px; font-size: 15px; }
   #warp .hint { color: var(--muted); font-size: 12px; }
   body.mapfull #warp { display: none; }
   #btns button { font-size: 12px; padding: 8px 2px; }
@@ -132,7 +133,7 @@
   <div class="seg" id="segFx"><span>Эффекты скорости</span><button data-v="0">Выкл</button><button data-v="1">Лёгкие</button><button data-v="2">Сильные</button></div>
   <label><input type="checkbox" id="oAtmo"> Атмосфера (красивее, но на телефоне может мерцать)</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps" id="ver">Версия: 11.10, 18:35</span>
+  <span class="fps" id="ver">Версия: 11.10, 19:00</span>
   <a href="../">← Горы мира (маршруты и полёты по трекам)</a>
 </div>
 
@@ -157,11 +158,13 @@
 </div>
 
 <div id="warp" hidden>
-  <div class="wrow" style="justify-content:space-between"><b>⚡ Варп-прыжок вперёд по курсу</b><button id="warpClose" aria-label="Закрыть">▾</button></div>
-  <div class="wrow"><input id="warpKm" type="number" inputmode="decimal" min="1" max="40075" step="any" value="1000"> <span>км</span>
-    <button data-km="100">100</button><button data-km="1000">1 000</button><button data-km="5000">5 000</button><button data-km="10000">10 000</button></div>
-  <div class="wrow"><button id="warpGo" class="go">⚡ Прыгнуть</button><button id="warpPt" class="go">⚡ До точки курса</button><button id="warpHere">📌 Точка здесь</button></div>
-  <div class="hint">Прыжок мгновенный, курс, скорость и высота сохраняются. «До точки курса» — до ближайшей цели автопилота (или до первой точки, если автопилот выключен).</div>
+  <div class="wrow" style="justify-content:space-between"><b>⚡ Варп-прыжок</b><button id="warpClose" aria-label="Закрыть">▾</button></div>
+  <div class="wrow"><span>Вперёд по курсу:</span><input id="warpKm" type="number" inputmode="decimal" min="1" max="40075" step="any" value="1000"> <span>км</span></div>
+  <div class="wrow"><button data-km="100">100</button><button data-km="1000">1 000</button><button data-km="5000">5 000</button><button data-km="10000">10 000</button><button id="warpGo" class="go">⚡ Прыгнуть</button></div>
+  <div class="wrow" style="border-top:1px solid #3a4350;padding-top:8px"><span>К точке:</span><select id="warpDest"></select></div>
+  <div class="wrow"><span>не долетая</span><input id="warpStop" type="number" inputmode="decimal" min="1" max="20000" step="any" value="300"> <span>км</span><button id="warpPt" class="go">⚡ К точке</button></div>
+  <div class="wrow"><button id="warpHere">📌 Точка здесь</button></div>
+  <div class="hint">«К точке» ставит вас за N км до неё, носом на точку, — автопилот просто продолжит путь и пройдёт её, ничего не ломается. Для точки курса автопилот переключается на неё; к месту из списка летите вручную (автопилот при этом выключается).</div>
 </div>
 
 <div id="head" hidden>
@@ -199,7 +202,7 @@ const DEG = Math.PI / 180;
 
 // ---------------- Настройки (запоминаются в браузере) ----------------
 const KEY = "jet-settings-v1";
-const S = { imagery: "esri", atmo: false, follow: true, fxl: 1, route: [], tourId: null, warpKm: 1000,
+const S = { imagery: "esri", atmo: false, follow: true, fxl: 1, route: [], tourId: null, warpKm: 1000, warpStop: 300, warpDest: "",
   lon: 7.0, lat: 45.9, hdg: 90, spdT: 500, altT: 330 };
 try { Object.assign(S, JSON.parse(localStorage.getItem(KEY) || "{}")); } catch (e) {}
 if (S.fx === false) S.fxl = 0;      // старая настройка «эффект скорости» выключена
@@ -519,6 +522,7 @@ function drawRoute() {
   route.forEach((w, i) => OFFS.forEach(off => L.marker([w[1], w[0] + off], { interactive: false, icon: L.divIcon({ className: "", iconSize: [22, 22], iconAnchor: [11, 11], html: '<div class="wp">' + (i + 1) + '</div>' }) }).addTo(wpGroup)));
   S.route = route; saveS();
   renderPts();
+  if (!$("warp").hidden) fillWarpDest();
   mapInfo();
 }
 function mapInfo() {
@@ -590,17 +594,39 @@ function jumpDistance(km) {                                          // впер
   P = unit(P2); F = unit(F2.sub(P.scaleTo(F2.dot(P))));
   afterJump();
 }
-function jumpToIndex(i) {
-  const w = route[i]; if (!w) return;
-  const nx = route[i + 1] || (ap.on && $("mapLoop").checked ? route[0] : null);
-  const hd = nx ? bearingTo(w[0], w[1], nx[0], nx[1]) : fl.hdg;      // сразу смотрим на следующую точку
-  setPos(w[0], w[1], hd);
-  if (ap.on) { ap.idx = i + 1; if (ap.idx >= route.length) { if ($("mapLoop").checked) ap.idx = 0; else stopAP("Это была последняя точка курса"); } }
+// Прыжок «к точке»: оказываемся за stopKm до неё на дуге большого круга от нас к ней, носом на точку.
+// Автопилот (если летит к этой точке) продолжает как ни в чём не бывало: подлетает и проходит её штатно.
+function jumpToward(lon, lat, stopKm) {
+  const T = unit(cartAt(lon, lat, 0)), d = P.dot(T), total = Math.acos(clamp(d, -1, 1)) * RAD_KM;
+  const tv = T.sub(P.scaleTo(d)), have = tv.length() > 1e-6;
+  const dir = have ? unit(tv) : F;                                   // у самой точки или напротив — направление не определено
+  if (total <= stopKm) { if (have) F = dir; afterJump(); return; }   // уже ближе — только разворачиваемся на точку
+  const th = (total - stopKm) / RAD_KM, c = Math.cos(th), sn = Math.sin(th);
+  const P2 = P.scaleTo(c).add(dir.scaleTo(sn)), F2 = dir.scaleTo(c).sub(P.scaleTo(sn));
+  P = unit(P2); F = unit(F2.sub(P.scaleTo(F2.dot(P))));
   afterJump();
+}
+const stopKmNow = () => { const v = parseFloat(String($("warpStop").value).replace(",", ".")); return isFinite(v) && v > 0 ? v : S.warpStop; };
+function jumpToDest(val) {
+  const [kind, k] = String(val).split(":"), i = +k;
+  let km = stopKmNow();
+  if (ap.on && kind === "r") {                                        // автопилоту нужно время довернуть и «поймать» точку
+    const minKm = Math.max(10, fl.v / 3.6 * 3 / 1000);
+    if (km < minKm) { km = Math.ceil(minKm); toast("«Не долетая» увеличено до " + nf(km) + " км: на такой скорости автопилоту нужен запас, чтобы пройти точку."); }
+  }
+  if (kind === "r") {
+    const w = route[i]; if (!w) return;
+    jumpToward(w[0], w[1], km);
+    if (ap.on) { ap.idx = i; }                                       // автопилот теперь идёт именно к ней
+  } else {
+    const pl = PLACES[i]; if (!pl) return;
+    jumpToward(pl[1], pl[2], km);
+    if (ap.on) stopAP("Прыжок к месту «" + pl[0] + "» — автопилот выключен, дальше летите сами");
+  }
 }
 function startWarp(action) { if (warp.on) return; warp.on = true; warp.did = false; warp.t0 = performance.now(); warp.action = action; $("warp").hidden = true; $("bWarp").classList.remove("on"); }
 function layoutWarp() { $("warp").style.bottom = (window.innerHeight - $("bar").getBoundingClientRect().top + 8) + "px"; }
-$("bWarp").onclick = () => { const w = $("warp"); w.hidden = !w.hidden; $("bWarp").classList.toggle("on", !w.hidden); if (!w.hidden) { layoutWarp(); $("warpKm").value = S.warpKm; } };
+$("bWarp").onclick = () => { const w = $("warp"); w.hidden = !w.hidden; $("bWarp").classList.toggle("on", !w.hidden); if (!w.hidden) { layoutWarp(); $("warpKm").value = S.warpKm; $("warpStop").value = S.warpStop; fillWarpDest(); } };
 $("warpClose").onclick = () => { $("warp").hidden = true; $("bWarp").classList.remove("on"); };
 document.querySelectorAll("#warp [data-km]").forEach(b => b.onclick = () => { $("warpKm").value = b.dataset.km; });
 $("warpGo").onclick = () => {
@@ -610,10 +636,22 @@ $("warpGo").onclick = () => {
   startWarp(() => jumpDistance(km));
 };
 $("warpPt").onclick = () => {
-  if (!route.length) { toast("Нет точек курса: поставьте их на карте или выберите готовый курс."); return; }
-  const i = ap.on ? Math.min(ap.idx, route.length - 1) : 0;
-  startWarp(() => jumpToIndex(i));
+  const v = $("warpDest").value; if (!v) { toast("Нет точки назначения: поставьте точки на карте или выберите место."); return; }
+  S.warpStop = stopKmNow(); S.warpDest = v; saveS();
+  startWarp(() => jumpToDest(v));
 };
+$("warpStop").onchange = () => { S.warpStop = stopKmNow(); saveS(); };
+function fillWarpDest() {                                            // список: точки курса и места
+  const sel = $("warpDest"), prev = sel.value || S.warpDest; sel.innerHTML = "";
+  const g1 = document.createElement("optgroup"); g1.label = "Точки курса";
+  route.forEach((w, i) => { const o = document.createElement("option"); o.value = "r:" + i; o.textContent = (i + 1) + ". " + (w[2] || (Math.abs(w[1]).toFixed(1) + (w[1] >= 0 ? "N " : "S ") + Math.abs(w[0]).toFixed(1) + (w[0] >= 0 ? "E" : "W"))) + (ap.on && ap.idx === i ? "  ← цель АП" : ""); g1.appendChild(o); });
+  if (route.length) sel.appendChild(g1);
+  const g2 = document.createElement("optgroup"); g2.label = "Места";
+  PLACES.forEach((p, i) => { const o = document.createElement("option"); o.value = "p:" + i; o.textContent = p[0]; g2.appendChild(o); });
+  sel.appendChild(g2);
+  const want = ap.on && route[ap.idx] ? "r:" + ap.idx : prev;
+  if ([...sel.options].some(o => o.value === want)) sel.value = want; else if (route.length) sel.value = "r:0";
+}
 $("warpHere").onclick = () => { addWaypoint(+fl.lon.toFixed(3), +fl.lat.toFixed(3)); toast("Точка поставлена здесь (№" + route.length + ")."); };
 window.addEventListener("resize", () => { if (!$("warp").hidden) layoutWarp(); });
 
@@ -628,7 +666,7 @@ function renderPts() {
     t.innerHTML = (w[2] ? w[2] + " " : "") + "<small>" + Math.abs(w[1]).toFixed(2) + (w[1] >= 0 ? "°N " : "°S ") + Math.abs(w[0]).toFixed(2) + (w[0] >= 0 ? "°E" : "°W") + "</small>";
     r.appendChild(t);
     const go = document.createElement("button"); go.textContent = "✈"; go.title = "Лететь отсюда"; go.onclick = () => { ap.on = true; ap.idx = i; $("bAp").classList.add("on"); setMapMode(false); toast("Автопилот: к точке " + (i + 1) + (w[2] ? " «" + w[2] + "»" : "") + "."); };
-    const wp = document.createElement("button"); wp.textContent = "⚡"; wp.title = "Прыгнуть сюда"; wp.onclick = () => { setMapMode(false); startWarp(() => jumpToIndex(i)); };
+    const wp = document.createElement("button"); wp.textContent = "⚡"; wp.title = "Прыгнуть сюда"; wp.onclick = () => { setMapMode(false); startWarp(() => jumpToDest("r:" + i)); };
     const del = document.createElement("button"); del.textContent = "✕"; del.onclick = () => {
       route.splice(i, 1); ap.tour = null; showTourChips();
       if (ap.on) { if (ap.idx > i) ap.idx--; if (ap.idx >= route.length) { if (route.length) ap.idx = route.length - 1; else stopAP("Точек не осталось — автопилот выключен"); } }
@@ -781,7 +819,7 @@ planet.renderer.events.on("postdraw", () => {
 window.addEventListener("pagehide", () => { S.lon = fl.lon; S.lat = fl.lat; S.hdg = fl.hdg; saveS(); });
 layoutHead();
 initMap();
-window.__jet = { fl, S, head, setPos, warp, jumpDistance, parseCoord, ap, TOURS, loadTour, startAP, get route() { return route; }, get lmap() { return lmap; }, get P() { return P; }, get F() { return F; } };
+window.__jet = { fl, S, head, setPos, warp, jumpDistance, parseCoord, jumpToDest, fillWarpDest, ap, TOURS, loadTour, startAP, get route() { return route; }, get lmap() { return lmap; }, get P() { return P; }, get F() { return F; } };
 </script>
 </body>
 </html>
