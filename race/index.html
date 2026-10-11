@@ -70,6 +70,7 @@
   <h2>Гоночная трасса</h2>
   <label>Трасса и скорость <select id="sPreset"></select></label>
   <div class="row"><button id="bNew">🎲 Новая трасса</button><button id="bRestart">⟲ Заново</button><button id="bClose">Закрыть</button></div>
+  <label>Трасса <select id="sStyle"><option value="easy">простая, плавная</option><option value="wild">крутая, с шпильками</option></select></label>
   <label>Мастерство автопилота <input type="range" id="sSkill" min="70" max="100" step="1"></label>
   <label>Соперник (автопилот) <input type="checkbox" id="sRival"></label>
   <label>Вернуть автопилот через <select id="sResume"><option value="0">никогда</option><option value="2">2 с</option><option value="4">4 с</option><option value="8">8 с</option></select></label>
@@ -78,7 +79,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 11.10, 23:59</small>
+  <small id="ver">версия 12.10, 00:13</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -95,7 +96,7 @@ const PRESETS = [
   { id:"hyper", name:"Гипер · 7200 км/ч",         vmax:2000 },
   { id:"orbit", name:"Над планетой · 24000 км/ч", vmax:6700 },
 ];
-const S = Object.assign({ preset:"fast", seed:7, skill:92, fx:1, cam:0, rival:true, resume:4, inv:false, assist:true, q:1.5 }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
+const S = Object.assign({ style:"easy", preset:"fast", seed:7, skill:92, fx:1, cam:0, rival:true, resume:4, inv:false, assist:true, q:1.5 }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
 const saveS = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
 
 /* ================= рельеф: одна формула для JS и шейдера ================= */
@@ -106,18 +107,24 @@ float nz(float x,float z,float c,float s,float ph){
 }
 float hgt(float x,float z,float sc){
   x/=sc; z/=sc;
-  float h=520.;
+  float h=380.;
   h+=620.*nz(x*3.1e-4,z*3.1e-4,.8,.6,0.3);
   float r=1.-abs(nz(x*7.7e-4,z*7.7e-4,.6,-.8,1.9));
   h+=420.*r*r;
   h+=150.*nz(x*2.1e-3,z*2.1e-3,.96,.28,4.1);
   h+=45.*nz(x*5.3e-3,z*5.3e-3,.28,.96,2.2);
   h+=12.*nz(x*1.3e-2,z*1.3e-2,-.6,.8,5.0);
+  float lk=nz(x*3.4e-4,z*3.4e-4,.2,.98,6.4);
+  float low=1.-smoothstep(230.,430.,h);
+  h=mix(h,-40.,smoothstep(.26,.44,lk)*low);
   return h*sc;
-}`;
+}
+float tmpF(float x,float z,float sc,float hs){ x/=sc; z/=sc; return clamp(.56+.68*nz(x*3e-4,z*3e-4,.9,.44,5.1)-hs/5000.,0.,1.); }
+float wetF(float x,float z,float sc){ x/=sc; z/=sc; return clamp(.5+.68*nz(x*3.7e-4,z*3.7e-4,.3,.95,8.2),0.,1.); }`;
 const jsSrc = H_SRC.replace(/float (\w+)(?=\s*[,)])/g, "$1").replace(/float\s+(\w+)\s*\(/g, "function $1(").replace(/float\s+(\w+)\s*=/g, "let $1 =");
-const hgtRaw = new Function("const abs=Math.abs,sin=Math.sin;" + jsSrc + ";return hgt;")();
-const nzRaw = new Function("const abs=Math.abs,sin=Math.sin;" + jsSrc + ";return nz;")();
+const hgtRaw = new Function("const abs=Math.abs,sin=Math.sin,smoothstep=(a,b,x)=>{const t=Math.min(1,Math.max(0,(x-a)/(b-a)));return t*t*(3-2*t)},mix=(a,b,t)=>a+(b-a)*t,clamp=(x,a,b)=>Math.min(b,Math.max(a,x));" + jsSrc + ";return hgt;")();
+const bioRaw = new Function("const abs=Math.abs,sin=Math.sin,smoothstep=(a,b,x)=>{const t=Math.min(1,Math.max(0,(x-a)/(b-a)));return t*t*(3-2*t)},mix=(a,b,t)=>a+(b-a)*t,clamp=(x,a,b)=>Math.min(b,Math.max(a,x));" + jsSrc + ";return [tmpF,wetF];")();
+const nzRaw = new Function("const abs=Math.abs,sin=Math.sin,smoothstep=(a,b,x)=>{const t=Math.min(1,Math.max(0,(x-a)/(b-a)));return t*t*(3-2*t)},mix=(a,b,t)=>a+(b-a)*t,clamp=(x,a,b)=>Math.min(b,Math.max(a,x));" + jsSrc + ";return nz;")();
 
 /* ================= трасса ================= */
 function rng(seed) { let a = seed >>> 0; return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
@@ -148,22 +155,23 @@ function computeProfile(T, k) {
   let s = 0, mn = 1e18; for (let i = 0; i < N; i++) { s += vl[i]; mn = Math.min(mn, vl[i]); } T.vAvg = s / N; T.vMin = mn;
 }
 
-function buildTrack(preset, seed, skill) {
+function buildTrack(preset, seed, skill, style) {
+  const easy = style !== "wild";
   const pr = paramsFor(preset.vmax), { vmax, SC } = pr;
   const Lt = vmax * 100, Rb = Lt / (2 * Math.PI) / 1.1;
   let best = null;
   for (let att = 0; att < 40; att++) {
-    const rnd = rng(seed * 7919 + att * 104729 + 13), damp = 0.9 + 0.05 * att;
+    const rnd = rng(seed * 7919 + att * 104729 + 13), damp = easy ? 0.9 * Math.pow(0.93, att) : 0.9 + 0.05 * att;
     const c0 = 60 + 0.6 * vmax;
     const M = 600, ph = Array.from({ length: 6 }, () => rnd() * 6.28);
-    const fr = [2, 3, 4, 5, 7, 9], am = [0.40, 0.34, 0.28, 0.22, 0.16, 0.12].map(a => a * damp * (0.5 + rnd()));
-    const dips = Array.from({ length: 3 + Math.floor(rnd() * 3) }, () => ({ a: rnd() * 6.283, d: (0.30 + rnd() * 0.3) * Math.min(1, 0.6 + att * 0.1), w: 0.08 + rnd() * 0.08 }));
+    const fr = [2, 3, 4, 5, 7, 9], am = (easy ? [0.30, 0.20, 0.12, 0.07, 0, 0] : [0.40, 0.34, 0.28, 0.22, 0.16, 0.12]).map(a => a * damp * (0.5 + rnd()));
+    const dips = Array.from({ length: easy ? 0 : 3 + Math.floor(rnd() * 3) }, () => ({ a: rnd() * 6.283, d: (0.30 + rnd() * 0.3) * Math.min(1, 0.6 + att * 0.1), w: 0.08 + rnd() * 0.08 }));
     const xz = [];
     for (let j = 0; j < M; j++) {
       const th = 2 * Math.PI * j / M; let r = 1;
       for (let q = 0; q < 6; q++) r += am[q] * Math.sin(fr[q] * th + ph[q]);
       for (const dp of dips) { let da = Math.abs(th - dp.a); da = Math.min(da, 6.283 - da); r -= dp.d * Math.exp(-(da / dp.w) * (da / dp.w)); }
-      r = Math.max(0.28, r);
+      r = Math.max(easy ? 0.55 : 0.28, r);
       xz.push([Rb * r * Math.cos(th), Rb * r * Math.sin(th) * (0.8 + 0.3 * rnd() * 0 + 0.1)]);
     }
     { let len = 0; for (let j = 0; j < M; j++) { const a = xz[j], b = xz[(j + 1) % M]; len += Math.hypot(b[0] - a[0], b[1] - a[1]); } const f = Lt * 1.2 / len; for (const q of xz) { q[0] *= f; q[1] *= f; } }
@@ -172,7 +180,7 @@ function buildTrack(preset, seed, skill) {
     const g = new Float64Array(M); for (let j = 0; j < M; j++) g[j] = ground(xz[j][0], xz[j][1], SC);
     let y = blurCirc(maxCirc(g, win), win);
     const wv = [rnd() * 6.28, rnd() * 6.28];
-    const P0 = xz.map((q, j) => { const th = 2 * Math.PI * j / M; return [q[0], y[j] + c0 * (0.62 + 0.2 * Math.sin(3 * th + wv[0]) + 0.12 * Math.sin(7 * th + wv[1])), q[1]]; });
+    const P0 = xz.map((q, j) => { const th = 2 * Math.PI * j / M; return [q[0], y[j] + c0 * (0.62 + (easy ? 0.1 : 0.2) * Math.sin(3 * th + wv[0]) + (easy ? 0.04 : 0.12) * Math.sin(7 * th + wv[1])), q[1]]; });
     // резамплинг по длине дуги в N точек
     const N = 2000;
     let pts = P0;
@@ -181,7 +189,7 @@ function buildTrack(preset, seed, skill) {
       const L = cum[cum.length - 1], out = []; let seg = 0;
       for (let i = 0; i < N; i++) { const t = L * i / N; while (cum[seg + 1] < t) seg++; const a = pts[seg], b = pts[(seg + 1) % pts.length], u = (t - cum[seg]) / (cum[seg + 1] - cum[seg] || 1); out.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u]); }
       // сглаживание
-      const sig = pass === 0 ? Math.max(2, Math.round(N / 330)) : 2;
+      const sig = pass === 0 ? Math.max(2, Math.round(N / (easy ? 100 : 330))) : 2;
       const cols = [0, 1, 2].map(c => blurCirc(Float64Array.from(out, p => p[c]), sig));
       pts = out.map((_, i) => [cols[0][i], cols[1][i], cols[2][i]]);
     }
@@ -204,9 +212,9 @@ function buildTrack(preset, seed, skill) {
     for (let i = 0; i < N; i++) { const tx = Tn[3 * i], tz = Tn[3 * i + 2]; let rx = -tz, rz = tx; const l = Math.hypot(rx, rz) || 1; T.Rn[3 * i] = rx / l; T.Rn[3 * i + 1] = 0; T.Rn[3 * i + 2] = rz / l; }
     computeProfile(T, skill);
     const ratio = T.vAvg / vmax;
-    const okMin = T.vMin >= 0.32 * vmax, sc2 = Math.abs(ratio - 0.66) + (okMin ? 0 : 1);
+    const okMin = T.vMin >= (easy ? 0.62 : 0.32) * vmax, sc2 = easy ? (okMin ? 0 : 1) + (1 - ratio) : Math.abs(ratio - 0.66) + (okMin ? 0 : 1);
     if (!best || sc2 < best.sc2) best = { T, ratio, sc2 };
-    if (ratio >= 0.55 && ratio <= 0.8 && okMin) { best = { T, ratio, sc2 }; break; }
+    if (easy ? (ratio >= 0.9 && okMin) : (ratio >= 0.55 && ratio <= 0.8 && okMin)) { best = { T, ratio, sc2 }; break; }
   }
   const T = best.T;
   // ворота
@@ -303,23 +311,39 @@ function initScene() {
   for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) { pos[k++] = i / n * 2 - 1; pos[k++] = j / n * 2 - 1; pos[k++] = 0; }
   for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { const a = j * (n + 1) + i, b = a + 1, c = a + n + 1, d = c + 1; idx.push(a, c, b, b, c, d); }
   const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(pos, 3)); geo.setIndex(idx);
-  const u = { uC: { value: new THREE.Vector2() }, uSC: { value: 1 }, uR: { value: 4e4 }, uCam: { value: new THREE.Vector3() }, uSun: { value: new THREE.Vector3(0.5, 0.45, 0.35).normalize() }, uFog: { value: fogC }, uFD: { value: 1e-4 } };
+  const u = { uC: { value: new THREE.Vector2() }, uSC: { value: 1 }, uR: { value: 4e4 }, uCam: { value: new THREE.Vector3() }, uSun: { value: new THREE.Vector3(0.5, 0.45, 0.35).normalize() }, uFog: { value: fogC }, uFD: { value: 1e-4 }, uSnap: { value: 1 } };
   terrain = new THREE.Mesh(geo, new THREE.ShaderMaterial({ uniforms: u, extensions: { derivatives: true },
-    vertexShader: `precision highp float; uniform vec2 uC; uniform float uSC,uR; varying vec3 vW; varying vec3 vN; varying float vSea;
+    vertexShader: `precision highp float; uniform vec2 uC; uniform float uSC,uR,uSnap; varying vec3 vW; varying vec3 vN; varying float vRaw; varying vec2 vB;
 ${H_SRC}
 void main(){ vec2 g=position.xy; vec2 off=sign(g)*pow(abs(g),vec2(2.2))*uR; vec2 w=uC+off;
- float h=hgt(w.x,w.y,uSC); float e=max(uSC*20.,length(off)*.01); float hx=hgt(w.x+e,w.y,uSC), hz=hgt(w.x,w.y+e,uSC);
- vec3 n=normalize(vec3(h-hx,e,h-hz)); vSea=0.; if(h<0.){ h=0.; n=vec3(0.,1.,0.); vSea=1.; }
+ /* вершины привязаны к неподвижной сетке мира: рельеф не «плывёт» при движении */
+ float d=length(off); float dc=uR*.0172*pow(max(d,1.)/uR,.5455); float q=exp2(ceil(log2(max(dc,uSC*6.)))); w=mix(w,floor(w/q+.5)*q,uSnap);
+ float h=hgt(w.x,w.y,uSC); float e=max(q,uSC*20.); float hx=hgt(w.x+e,w.y,uSC), hz=hgt(w.x,w.y+e,uSC);
+ vec3 n=normalize(vec3(h-hx,e,h-hz)); vRaw=h/uSC; if(h<0.){ h=0.; n=vec3(0.,1.,0.); }
+ vB=vec2(tmpF(w.x,w.y,uSC,h/uSC),wetF(w.x,w.y,uSC));
  vW=vec3(w.x,h,w.y); vN=n; gl_Position=projectionMatrix*viewMatrix*vec4(vW,1.); }`,
-    fragmentShader: `precision highp float; varying vec3 vW; varying vec3 vN; varying float vSea; uniform vec3 uCam,uSun,uFog; uniform float uFD,uSC;
-void main(){ vec3 n=normalize(vN); float d=length(vW-uCam); float hs=vW.y/uSC; vec3 col;
- if(vSea>.5){ col=mix(vec3(.02,.1,.2),vec3(.05,.28,.4),exp(-d*2e-5/uSC)); vec3 V=normalize(uCam-vW); vec3 Rr=reflect(-uSun,vec3(0.,1.,0.)); col+=vec3(1.,.9,.7)*pow(max(dot(Rr,V),0.),60.)*.8; }
- else{ float slope=1.-n.y; vec3 sand=vec3(.76,.69,.5), grass=vec3(.17,.36,.14), rock=vec3(.4,.35,.31), snow=vec3(.93,.95,.98), dry=vec3(.46,.42,.2);
-  col=mix(sand,grass,smoothstep(15.,70.,hs)); col=mix(col,dry,smoothstep(500.,800.,hs)*.6);
-  col=mix(col,rock,clamp(smoothstep(.16,.36,slope)+smoothstep(900.,1300.,hs)*.5,0.,1.)); col=mix(col,snow,smoothstep(1250.,1600.,hs)*(1.-smoothstep(.4,.65,slope)));
+    fragmentShader: `precision highp float; varying vec3 vW; varying vec3 vN; varying float vRaw; varying vec2 vB; uniform vec3 uCam,uSun,uFog; uniform float uFD,uSC;
+float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+void main(){ vec3 n=normalize(vN); float d=length(vW-uCam); float hs=vW.y/uSC; float t=vB.x, wt=vB.y; vec3 col;
+ if(vRaw<0.){ float dep=clamp(-vRaw/45.,0.,1.); col=mix(vec3(.1,.5,.55),vec3(.02,.12,.26),dep); col=mix(col,vec3(.03,.1,.2),1.-exp(-d*3e-5/uSC)*.6);
+   vec3 V=normalize(uCam-vW); vec3 Rr=reflect(-uSun,vec3(0.,1.,0.)); col+=vec3(1.,.9,.7)*pow(max(dot(Rr,V),0.),60.)*.7; col=mix(col,vec3(.85,.95,.95),smoothstep(-2.5,0.,vRaw)*.55); }
+ else{ float slope=1.-n.y;
+  float desM=smoothstep(.56,.66,t)*(1.-smoothstep(.34,.46,wt)); float sav=smoothstep(.44,.52,t)*(1.-smoothstep(.42,.54,wt))*(1.-desM); float trop=smoothstep(.58,.68,t)*smoothstep(.4,.52,wt); float tun=1.-smoothstep(.14,.24,t);
+  vec3 gc=vec3(.17,.36,.14); gc=mix(gc,vec3(.46,.44,.2),(1.-smoothstep(.28,.42,wt))*.65); gc=mix(gc,vec3(.09,.43,.11),trop); gc=mix(gc,vec3(.6,.54,.24),sav); gc=mix(gc,vec3(.87,.71,.43),desM); gc=mix(gc,vec3(.82,.86,.88),tun);
+  float hE=hs+(.5-t)*1000.;
+  col=mix(vec3(.78,.7,.5),gc,smoothstep(8.,45.,hs));
+  /* поля */
+  float fz=smoothstep(.22,.32,wt)*(1.-smoothstep(.55,.65,wt))*smoothstep(.26,.36,t)*(1.-smoothstep(.5,.56,t))*(1.-smoothstep(.1,.2,slope))*smoothstep(20.,50.,hs)*(1.-smoothstep(350.,520.,hs));
+  vec2 fp=vW.xz/(300.*uSC); vec2 id=floor(fp); float hh=h21(id); vec2 fd=vec2(cos(hh*6.283),sin(hh*6.283)); float fw=max(fwidth(fp.x),fwidth(fp.y));
+  float stripe=.5+.5*sin(dot(vW.xz/uSC,fd)*.35); float on=step(.42,fract(hh*7.7))*fz;
+  vec3 fc=hh<.25?vec3(.78,.68,.26):hh<.5?vec3(.33,.5,.17):hh<.75?vec3(.46,.33,.2):vec3(.62,.58,.3);
+  fc*=.88+.2*mix(stripe,.5,smoothstep(.02,.1,fw)); col=mix(col,fc,on*.8*(1.-smoothstep(.02,.15,fw)));
+  col=mix(col,vec3(.4,.35,.31),clamp(smoothstep(.16,.36,slope)+smoothstep(1000.,1400.,hE)*.5,0.,1.));
+  col=mix(col,vec3(.93,.95,.98),smoothstep(1300.,1650.,hE)*(1.-smoothstep(.4,.65,slope)));
+  col=mix(col,vec3(.93,.95,.98),tun*.35*(1.-smoothstep(.3,.5,slope)));
   col*=.3+.9*max(dot(n,uSun),0.); }
- vec2 gp=vW.xz/(400.*uSC); vec2 gf=abs(fract(gp-.5)-.5)/max(fwidth(gp),vec2(1e-6)); float line=1.-min(min(gf.x,gf.y),1.); float fw=max(fwidth(gp.x),fwidth(gp.y)); line*=1.-smoothstep(.12,.4,fw);
- col=mix(col,vec3(.3,.95,1.),line*.16);
+ vec2 gp=vW.xz/(400.*uSC); vec2 gf=abs(fract(gp-.5)-.5)/max(fwidth(gp),vec2(1e-6)); float line=1.-min(min(gf.x,gf.y),1.); float fw2=max(fwidth(gp.x),fwidth(gp.y)); line*=1.-smoothstep(.12,.4,fw2);
+ col=mix(col,vec3(.3,.95,1.),line*.1);
  float f=1.-exp(-pow(d*uFD,2.)); col=mix(col,uFog,clamp(f,0.,1.)); gl_FragColor=vec4(col,1.); }` }));
   terrain.frustumCulled = false; SCN.add(terrain);
 
@@ -340,36 +364,56 @@ void main(){ vec3 n=normalize(vN); float d=length(vW-uCam); float hs=vW.y/uSC; v
 ${H_SRC}
 float hsh(vec2 p){ p=mod(p,997.); return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }`;
   const fogFrag = `float f=1.-exp(-pow(length(vW-uCam)*uFD,2.)); col=mix(col,uFog,clamp(f,0.,1.)); gl_FragColor=vec4(col,1.);`;
-  const treeMat = () => new THREE.ShaderMaterial({ uniforms: Object.assign({ uCell: { value: 45 }, uSize: { value: 22 }, uRad: { value: 2250 }, uIn0: { value: -2 }, uIn1: { value: -1 }, uOut0: { value: .72 }, uOut1: { value: 1 }, uWide: { value: .62 } }, { uC: u.uC, uSC: u.uSC, uCam: u.uCam, uSun: u.uSun, uFog: u.uFog, uFD: u.uFD }),
-    vertexShader: lifeCommon + `varying vec2 vUv; varying vec3 vW; varying float vSh,vHs;
-void main(){ vec2 cell=floor(uC/uCell)+aIdx; float h1=hsh(cell),h2=hsh(cell+17.3),h3=hsh(cell+41.7); vec2 cp=(cell+vec2(.15+.7*h1,.15+.7*h2))*uCell; float d=length(cp-uC)/uRad;
- float vis=smoothstep(uIn0,uIn1,d)*(1.-smoothstep(uOut0,uOut1,d)); float pn=nz(cp.x/uSC*4e-4,cp.y/uSC*4e-4,.7,-.7,3.3)*.5+.5; float dens=smoothstep(.34,.58,pn)*.85+.06;
- vUv=vec2(0.); vW=vec3(0.); vSh=0.; vHs=0.;
- if(vis<.02||h3>dens){ gl_Position=vec4(9.,9.,9.,1.); return; }
- float gh=hgt(cp.x,cp.y,uSC); float hs=gh/uSC; if(hs<18.||hs>800.){ gl_Position=vec4(9.,9.,9.,1.); return; }
- float sz=uSize*(.7+.6*h2)*vis; vec2 dv=uCam.xz-cp; float L=max(length(dv),1.); vec3 rt=vec3(dv.y,0.,-dv.x)/L;
- vec3 wp=vec3(cp.x,gh,cp.y)+rt*position.x*sz*uWide+vec3(0.,1.,0.)*position.y*sz; vW=wp; vUv=uv; vSh=.7+.5*h3; vHs=hs; gl_Position=projectionMatrix*viewMatrix*vec4(wp,1.); }`,
-    fragmentShader: `precision highp float; varying vec2 vUv; varying vec3 vW; varying float vSh,vHs; uniform vec3 uCam,uFog; uniform float uFD;
-void main(){ float y=vUv.y, x=vUv.x-.5, t=.5; if(y<.13){ if(abs(x)>.04) discard; } else { float yn=(y-.13)/.87; t=fract(yn*3.); float w=(1.-yn)*.5*(.62+.38*(1.-t)); if(abs(x)>w) discard; }
- vec3 col=mix(vec3(.07,.26,.09),vec3(.05,.17,.1),clamp(vHs/900.,0.,1.))*vSh*(.6+.6*t); if(y<.13) col=vec3(.25,.16,.09);
+  const shared = { uC: u.uC, uSC: u.uSC, uCam: u.uCam, uSun: u.uSun, uFog: u.uFog, uFD: u.uFD };
+  const treeMat = () => new THREE.ShaderMaterial({ uniforms: Object.assign({ uCell: { value: 45 }, uSize: { value: 22 }, uRad: { value: 2250 }, uIn0: { value: -2 }, uIn1: { value: -1 }, uOut0: { value: .72 }, uOut1: { value: 1 }, uWide: { value: .62 } }, shared),
+    vertexShader: lifeCommon + `varying vec2 vUv; varying vec3 vW; varying float vSh,vHs,vSp,vTn;
+void main(){ vec2 cell=floor(uC/uCell)+aIdx; float h1=hsh(cell),h2=hsh(cell+17.3),h3=hsh(cell+41.7),h4=hsh(cell+93.1); vec2 cp=(cell+vec2(.15+.7*h1,.15+.7*h2))*uCell; float d=length(cp-uC)/uRad;
+ float vis=smoothstep(uIn0,uIn1,d)*(1.-smoothstep(uOut0,uOut1,d)); float pn=nz(cp.x/uSC*4e-4,cp.y/uSC*4e-4,.7,-.7,3.3)*.5+.5;
+ vUv=vec2(0.); vW=vec3(0.); vSh=0.; vHs=0.; vSp=0.; vTn=0.;
+ if(vis<.02){ gl_Position=vec4(9.,9.,9.,1.); return; }
+ float gh=hgt(cp.x,cp.y,uSC); float hs=gh/uSC; if(hs<14.){ gl_Position=vec4(9.,9.,9.,1.); return; }
+ float t=tmpF(cp.x,cp.y,uSC,hs), wt=wetF(cp.x,cp.y,uSC); float sp=0., dens=0., szm=1.;
+ if(hs>1250.){ sp=6.; dens=.06; szm=.3; }
+ else if(t<.18){ sp=4.; dens=smoothstep(.34,.6,pn)*.5+.06; }
+ else if(t>.58&&wt<.42){ if(h4<.6){ sp=3.; szm=.55; } else { sp=6.; szm=.3; } dens=.07+.06*pn; }
+ else if(t>.58){ sp=h4<.55?2.:1.; dens=smoothstep(.2,.5,pn)*.8+.12; szm=1.05; }
+ else if(t>.46&&wt<.5){ sp=5.; dens=.14; szm=.85; }
+ else if(wt<.4){ sp=1.; dens=.08+.12*smoothstep(.4,.7,pn); szm=.7; }
+ else { sp=h4<.55?0.:1.; dens=smoothstep(.3,.54,pn)*.9+.1; }
+ if(h3>dens){ gl_Position=vec4(9.,9.,9.,1.); return; }
+ float sz=uSize*szm*(.7+.6*h2)*vis; vec2 dv=uCam.xz-cp; float L=max(length(dv),1.); vec3 rt=vec3(dv.y,0.,-dv.x)/L;
+ vec3 wp=vec3(cp.x,gh,cp.y)+rt*position.x*sz*uWide+vec3(0.,1.,0.)*position.y*sz; vW=wp; vUv=uv; vSh=.7+.5*h3; vHs=hs; vSp=sp; vTn=h4; gl_Position=projectionMatrix*viewMatrix*vec4(wp,1.); }`,
+    fragmentShader: `precision highp float; varying vec2 vUv; varying vec3 vW; varying float vSh,vHs,vSp,vTn; uniform vec3 uCam,uFog; uniform float uFD;
+void main(){ float y=vUv.y, x=vUv.x-.5, t=.5; vec3 col=vec3(.1,.3,.1); float sp=vSp; vec3 trunk=vec3(.25,.16,.09);
+ if(sp<.5||(sp>3.5&&sp<4.5)){ if(y<.13){ if(abs(x)>.04) discard; col=trunk; } else { float yn=(y-.13)/.87; t=fract(yn*3.); float w=(1.-yn)*.5*(.62+.38*(1.-t)); if(abs(x)>w) discard;
+     col=mix(vec3(.07,.26,.09),vec3(.05,.17,.1),clamp(vHs/1100.,0.,1.))*vSh*(.6+.6*t); if(sp>3.5) col=mix(col*1.2,vec3(.93,.96,1.),smoothstep(.35,.6,t)*.85); } }
+ else if(sp<1.5){ vec2 q=vec2(x/.37,(y-.64)/.34); if(y<.36&&abs(x)<.04){ col=trunk; } else if(dot(q,q)<1.){ vec3 g=mix(vec3(.2,.42,.1),vec3(.35,.5,.12),vTn); if(vTn>.88) g=vec3(.7,.38,.1); col=g*vSh*(.65+.45*y); } else discard; }
+ else if(sp<2.5){ vec2 q=vec2(x/.5,(y-.76)/.15); if(abs(x)<.03&&y<.76){ col=vec3(.4,.3,.18); } else if(dot(q,q)<1.){ col=vec3(.12,.5,.14)*vSh*(.7+.5*y); } else discard; }
+ else if(sp<3.5){ float a=step(abs(x),.075)*step(y,.92-.0*abs(x)); float arm1=step(abs(x+.19),.05)*step(.4,y)*step(y,.68); float c1=step(.34,y)*step(y,.42)*step(-.2,x)*step(x,0.); float arm2=step(abs(x-.19),.05)*step(.5,y)*step(y,.8); float c2=step(.44,y)*step(y,.52)*step(0.,x)*step(x,.2);
+   if(a+arm1+c1+arm2+c2<.5) discard; col=vec3(.26,.46,.26)*vSh*(.7+.4*y); }
+ else if(sp<5.5){ vec2 q=vec2(x/.5,(y-.62)/.12); if(abs(x)<.035&&y<.55){ col=trunk; } else if(dot(q,q)<1.){ col=vec3(.42,.48,.18)*vSh; } else discard; }
+ else { vec2 q=vec2(x/.5,y/.5); if(dot(q,q)>1.) discard; col=vec3(.5,.48,.45)*(.6+.5*y)*(.8+.4*vTn); }
  ${fogFrag} }` });
-  const houseMat = new THREE.ShaderMaterial({ uniforms: Object.assign({ uCell: { value: 120 }, uSize: { value: 18 }, uRad: { value: 4560 }, uIn0: { value: -2 }, uIn1: { value: -1 }, uOut0: { value: .72 }, uOut1: { value: 1 }, uWide: { value: 1 } }, { uC: u.uC, uSC: u.uSC, uCam: u.uCam, uSun: u.uSun, uFog: u.uFog, uFD: u.uFD }),
+  const houseMat = new THREE.ShaderMaterial({ uniforms: Object.assign({ uCell: { value: 120 }, uSize: { value: 12 }, uRad: { value: 4560 }, uIn0: { value: -2 }, uIn1: { value: -1 }, uOut0: { value: .72 }, uOut1: { value: 1 }, uWide: { value: 1 } }, shared),
     vertexShader: lifeCommon + `attribute vec3 aCol; varying vec3 vCol,vN,vW;
 void main(){ vec2 cell=floor(uC/uCell)+aIdx; float h1=hsh(cell),h2=hsh(cell+17.3),h3=hsh(cell+41.7); vec2 cp=(cell+vec2(.15+.7*h1,.15+.7*h2))*uCell; float d=length(cp-uC)/uRad;
  float vis=smoothstep(uIn0,uIn1,d)*(1.-smoothstep(uOut0,uOut1,d)); float pn=nz(cp.x/uSC*2.3e-4,cp.y/uSC*2.3e-4,.5,.86,1.7)*.5+.5;
  vCol=vec3(0.); vN=vec3(0.,1.,0.); vW=vec3(0.);
- if(vis<.02||pn<.56||h3>.55){ gl_Position=vec4(9.,9.,9.,1.); return; }
- float gh=hgt(cp.x,cp.y,uSC); float hs=gh/uSC; if(hs<4.||hs>170.){ gl_Position=vec4(9.,9.,9.,1.); return; }
+ if(vis<.02||pn<.54||h3>.6){ gl_Position=vec4(9.,9.,9.,1.); return; }
+ float gh=hgt(cp.x,cp.y,uSC); float hs=gh/uSC; if(hs<4.||hs>200.){ gl_Position=vec4(9.,9.,9.,1.); return; }
+ float t=tmpF(cp.x,cp.y,uSC,hs), wt=wetF(cp.x,cp.y,uSC); if(t<.16){ gl_Position=vec4(9.,9.,9.,1.); return; }
  float a=h1*6.2832, ca=cos(a), sa=sin(a); float sz=uSize*(.8+.5*h2)*vis; vec2 lp=vec2(ca*position.x+sa*position.z,-sa*position.x+ca*position.z)*sz;
  vec3 wp=vec3(cp.x+lp.x,gh+position.y*sz-.05*sz,cp.y+lp.y); vec2 nr=vec2(ca*normal.x+sa*normal.z,-sa*normal.x+ca*normal.z); vN=normalize(vec3(nr.x,normal.y,nr.y));
- vCol=aCol*(.85+.3*h3); vW=wp; gl_Position=projectionMatrix*viewMatrix*vec4(wp,1.); }`,
+ bool roof=aCol.r>.5&&aCol.g<.3; bool des=t>.58&&wt<.42;
+ vec3 rc=h2<.34?vec3(.62,.2,.14):h2<.6?vec3(.4,.28,.2):h2<.85?vec3(.3,.36,.46):vec3(.8,.45,.2);
+ vCol=roof?rc*(.85+.3*h3):(des?vec3(.86,.74,.54):aCol)*(.88+.2*h3); vW=wp; gl_Position=projectionMatrix*viewMatrix*vec4(wp,1.); }`,
     fragmentShader: `precision highp float; varying vec3 vCol,vN,vW; uniform vec3 uCam,uFog,uSun; uniform float uFD;
 void main(){ vec3 col=vCol*(.38+.75*max(dot(normalize(vN),uSun),0.)); ${fogFrag} }` });
   const mkLayer = (geo, mat, NG) => { const g = new THREE.InstancedBufferGeometry(); g.index = geo.index; for (const k in geo.attributes) g.setAttribute(k, geo.attributes[k]);
     const a = new Float32Array(NG * NG * 2); let k = 0; for (let j = 0; j < NG; j++) for (let i = 0; i < NG; i++) { a[k++] = i - NG / 2; a[k++] = j - NG / 2; }
     g.setAttribute("aIdx", new THREE.InstancedBufferAttribute(a, 2)); g.instanceCount = NG * NG; const m = new THREE.Mesh(g, mat); m.frustumCulled = false; SCN.add(m); return m; };
-  life = { A: mkLayer(quad, treeMat(), 100), B: mkLayer(quad, treeMat(), 84), C: mkLayer(house, houseMat, 76) };
-  life.A.userData = { cell: 45, size: 22, NG: 100 }; life.B.userData = { cell: 260, size: 70, NG: 84, wide: .9 }; life.C.userData = { cell: 120, size: 12, NG: 76 };
+  life = { A: mkLayer(quad, treeMat(), 112), B: mkLayer(quad, treeMat(), 90), C: mkLayer(house, houseMat, 80) };
+  life.A.userData = { cell: 36, size: 22, NG: 112 }; life.B.userData = { cell: 210, size: 70, NG: 90, wide: .9 }; life.C.userData = { cell: 110, size: 12, NG: 80 };
   // небо
   sky = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 12), new THREE.ShaderMaterial({ side: THREE.BackSide, depthWrite: false, fog: false,
     uniforms: { uSun: u.uSun, uHor: { value: fogC } },
@@ -423,7 +467,7 @@ function updateStreaks(dt) {
 /* ================= игра ================= */
 function startGame() {
   const preset = PRESETS.find(p => p.id === S.preset) || PRESETS[1];
-  T = buildTrack(preset, S.seed, S.skill / 100);
+  T = buildTrack(preset, S.seed, S.skill / 100, S.style);
   terrain.material.uniforms.uSC.value = T.SC; terrain.material.uniforms.uR.value = T.R;
   const fd = 2.2 / (T.R * 0.9); terrain.material.uniforms.uFD.value = fd; SCN.fog.density = fd;
   camera.near = 2 * T.cs; camera.far = T.R * 1.7; camera.updateProjectionMatrix(); sky.scale.setScalar(T.R * 1.5);
@@ -518,7 +562,7 @@ function applyPlane(mesh, p, tr, dt) {
 function frame(ms) {
   const t = ms / 1000, dtRaw = Math.min(0.1, t - lastT || 0.016); lastT = t;
   if (!T) return;
-  let left = dtRaw; while (left > 1e-6) { const d = Math.min(1 / 60, left); simStep(d); left -= d; }
+  let left = dtRaw; while (left > 1e-6 && !window.__freeze) { const d = Math.min(1 / 60, left); simStep(d); left -= d; }
   const dt = dtRaw, pl = player;
   // камера
   const cs = T.cs, modes = [[26, 7, 0.9], [14, 3.2, 0.9], [-2.5, 0.9, 1.2], [60, 22, 0.8]], m = modes[camMode % 4];
@@ -585,10 +629,11 @@ addEventListener("keyup", e => { ctl.keys[e.key.length === 1 ? e.key.toLowerCase
 
 /* ================= панель ================= */
 const sP = $("sPreset"); PRESETS.forEach(p => sP.add(new Option(p.name, p.id)));
-function syncPanel() { sP.value = S.preset; $("sSkill").value = S.skill; $("sRival").checked = !!S.rival; $("sResume").value = S.resume; $("sAssist").checked = !!S.assist; $("sInv").checked = !!S.inv; $("sFx").value = S.fx; $("sLife").value = S.life === 0 ? 0 : 1; $("sQ").value = S.q; }
+function syncPanel() { sP.value = S.preset; $("sStyle").value = S.style === "wild" ? "wild" : "easy"; $("sSkill").value = S.skill; $("sRival").checked = !!S.rival; $("sResume").value = S.resume; $("sAssist").checked = !!S.assist; $("sInv").checked = !!S.inv; $("sFx").value = S.fx; $("sLife").value = S.life === 0 ? 0 : 1; $("sQ").value = S.q; }
 $("bSet").onclick = () => { syncPanel(); $("panel").style.display = "block"; };
 $("bClose").onclick = () => $("panel").style.display = "none";
 sP.onchange = () => { S.preset = sP.value; saveS(); startGame(); };
+$("sStyle").onchange = e => { S.style = e.target.value; saveS(); startGame(); $("panel").style.display = "none"; };
 $("sSkill").onchange = e => { S.skill = +e.target.value; saveS(); computeProfile(T, S.skill / 100); };
 $("sRival").onchange = e => { S.rival = e.target.checked; saveS(); planeMesh.r.visible = S.rival; trail.r.forEach(t => t.visible = false); };
 $("sResume").onchange = e => { S.resume = +e.target.value; saveS(); };
@@ -605,7 +650,7 @@ initScene(); startGame(); renderer.setAnimationLoop(frame);
 
 /* отладка и тесты */
 window.__race = {
-  get life() { return life; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, ctl, S, ground: (x, z) => ground(x, z, T.SC),
+  get life() { return life; }, get terrain() { return terrain; }, frame: t => frame(t), bio: (x, z) => { const h = hgtRaw(x, z, 1); return [h, bioRaw[0](x, z, 1, h), bioRaw[1](x, z, 1)]; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, ctl, S, ground: (x, z) => ground(x, z, T.SC),
   /* симуляция без рендера: автопилот, статистика */
   sim(seconds, dt = 1 / 60) {
     const st = { t: 0, maxErr: 0, sumErr: 0, n: 0, minAgl: 1e18, crashes0: crashes, misses0: misses, passed0: gatesPassed, laps0: lapCount, maxV: 0, minV: 1e18, rollMax: 0 };
