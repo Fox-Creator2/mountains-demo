@@ -67,9 +67,9 @@
     background: var(--panel); border-radius: 12px; padding: 8px 14px; display: flex; flex-direction: column; gap: 0; }
   #fly[hidden] { display: none; }
   /* «голова»: круг-джойстик, перетаскиваешь — камера поворачивается, отпускаешь — возвращается вперёд по курсу */
-  #head { position: absolute; right: 12px; top: 28%; z-index: 26; display: flex; flex-direction: column; align-items: center; gap: 8px; touch-action: none; }
+  #head { position: absolute; left: 12px; bottom: 300px; z-index: 26; display: flex; flex-direction: column; align-items: center; gap: 8px; touch-action: none; }
   #head[hidden] { display: none; }
-  #headPad { position: relative; width: 140px; height: 140px; border-radius: 50%; background: rgba(16,20,26,0.55);
+  #headPad { position: relative; width: var(--hs, 140px); height: var(--hs, 140px); border-radius: 50%; background: rgba(16,20,26,0.55);
     border: 1px solid rgba(255,255,255,0.35); touch-action: none; }
   #headPad::before, #headPad::after { content: ""; position: absolute; background: rgba(255,255,255,0.2); }
   #headPad::before { left: 50%; top: 8px; bottom: 8px; width: 1px; }
@@ -135,7 +135,7 @@
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <button id="gpxClear" class="mini" style="align-self:flex-start;border:0;border-radius:8px;padding:6px 10px;background:var(--chip);color:var(--fg);font-size:12px;cursor:pointer">Удалить все загруженные GPX-треки</button>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps" id="ver">Версия: 11.10, 17:05</span>
+  <span class="fps" id="ver">Версия: 11.10, 17:30</span>
   <span class="fps" id="nodes">Узлов: —</span>
   <details><summary>Отчёт об укладке маршрутов</summary>
     <div class="fps" id="routeDbg" style="white-space:pre-wrap;font-size:11px"></div>
@@ -823,7 +823,7 @@ async function drapeRoute(rt, mountainName) {
   }
 }
 
-window.__dbg = { MOUNTAINS, drapeRoute, get fly() { return fly; } };
+window.__dbg = { MOUNTAINS, drapeRoute, get fly() { return fly; }, get head() { return head; } };
 
 // Что получилось при раскладке маршрутов выбранной горы по рельефу — видно в панели ⚙
 function showRouteDbg() {
@@ -1322,7 +1322,7 @@ planet.renderer.events.on("postdraw", () => {
   const now = performance.now();
   if (now - fpsT > 1000) {
     document.getElementById("fps").textContent = "FPS: " + Math.round(frames * 1000 / (now - fpsT));
-    document.getElementById("ver").textContent = "Версия: 11.10, 17:05 · движок " + ENGINE +
+    document.getElementById("ver").textContent = "Версия: 11.10, 17:30 · движок " + ENGINE +
       " · кадр " + planet.renderer.handler.canvas.width + "×" + planet.renderer.handler.canvas.height + " пикс.";
     document.getElementById("nodes").textContent = "Узлов: " + planet._createdNodesCount + " (очистка после " + planet._maxNodes + ")";
     frames = 0; fpsT = now;
@@ -1364,7 +1364,7 @@ function flyAt(tr, s) {
   return [tr.lon[lo] + (tr.lon[hi] - tr.lon[lo]) * t, tr.lat[lo] + (tr.lat[hi] - tr.lat[lo]) * t, tr.h[lo] + (tr.h[hi] - tr.h[lo]) * t];
 }
 // «Голова»: поворот взгляда относительно направления полёта. yaw — вправо (рад), pitch — вверх от курса (рад)
-const head = { yaw: 0, pitch: 0, drag: false, lock: false };
+const head = { yaw: 0, pitch: 0, vYaw: 0, vPitch: 0, tYaw: 0, tPitch: 0, drag: false, lock: false };
 function flyFrame() {
   const tr = fly.tr; if (!tr) return;
   const a = flyAt(tr, fly.s), b = flyAt(tr, fly.s + FLY_AHEAD);
@@ -1393,9 +1393,10 @@ function flyUi() {
   $f("flyPlay").classList.toggle("on", fly.playing);
   $f("bFly").classList.toggle("on", fly.panel || fly.playing);
   $f("head").hidden = !fly.on;                  // «голова» появляется, когда полёт начат
+  if (typeof layoutHead === "function") layoutHead();
 }
 const saveFly = () => { try { localStorage.setItem(FLY_KEY, JSON.stringify({ speed: fly.speed, agl: fly.agl })); } catch (e) {} };
-function stopFly() { fly.playing = false; fly.on = false; fly.last = 0; head.yaw = head.pitch = 0; document.body.classList.remove("nui"); flyUi(); }
+function stopFly() { fly.playing = false; fly.on = false; fly.last = 0; head.yaw = head.pitch = head.vYaw = head.vPitch = head.tYaw = head.tPitch = 0; document.body.classList.remove("nui"); $f("headUi").classList.remove("on"); flyUi(); headKnobDraw(); }
 function closeFlyPanel() { fly.panel = false; $f("fly").hidden = true; flyUi(); }
 function fillFlyRoutes() {
   const sel = $f("flyRoute"), keep = fly.rt && current ? current.routes.indexOf(fly.rt) : -1;
@@ -1411,7 +1412,7 @@ $f("bFly").onclick = () => {
   fillFlyRoutes();
   $f("flySpeed").value = flySliderFromSpeed(Math.min(FS_MAX, Math.max(FS_MIN, fly.speed)));
   $f("flyAgl").value = flySliderFromAgl(Math.min(FA_MAX, Math.max(FA_MIN, fly.agl)));
-  flyUi();
+  flyUi(); layoutHead();
 };
 $f("flyClose").onclick = closeFlyPanel;
 $f("flySpeed").oninput = e => { fly.speed = flySpeedFrom(+e.target.value); saveFly(); flyUi(); };
@@ -1423,37 +1424,62 @@ $f("flyProg").oninput = async e => {
 $f("flyRoute").onchange = () => { stopFly(); fly.rt = null; fly.tr = null; };
 $f("flyStart").onclick = async () => { if (!(await ensureFlight())) return; fly.s = 0; fly.ramp = 0; flyFrame(); };
 
+// Круг «головы» стоит слева над тем, что внизу (панелью полёта или нижней панелью), и подгоняется по размеру,
+// чтобы не наезжать на окно настроек полёта
+function layoutHead() {
+  const h = $f("head"); if (h.hidden) return;
+  const H = window.innerHeight, nui = document.body.classList.contains("nui");
+  let bottomY = H;                                  // верхняя граница того, что занимает низ экрана
+  if (!nui) {
+    const p = $f("fly"), bar = $f("bar");
+    bottomY = (!p.hidden ? p.getBoundingClientRect().top : bar.getBoundingClientRect().top);
+  }
+  const below = H - bottomY + (nui ? 24 : 10) + (nui ? 0 : 34);   // + место под шкалу масштаба карты
+  const avail = bottomY - 12 - 36 - 8 - 12;                       // высота, которую можно отдать кругу
+  const size = Math.max(84, Math.min(140, avail));
+  h.style.bottom = below + "px";
+  $f("headPad").style.setProperty("--hs", size + "px");
+  knobR = size / 2 - 22; headKnobDraw();
+}
+window.addEventListener("resize", layoutHead);
 $f("flyEnd").onclick = stopFly;
 // ---- «Голова»: перетаскивание круга ----
-const KNOB_R = 70 - 22;                          // ход ручки внутри круга, пикс.
+let knobR = 48;                                  // ход ручки внутри круга, пикс. (зависит от размера круга)
 function headKnobDraw() {
-  const k = $f("headKnob");
-  k.style.transform = "translate(" + (head.yaw / Math.PI * KNOB_R) + "px," + (-head.pitch / (Math.PI / 2 * 0.95) * KNOB_R) + "px)";
+  // пока палец на круге, ручка стоит под пальцем; потом едет вместе с взглядом
+  const yaw = head.drag || head.lock ? head.tYaw : head.yaw, pitch = head.drag || head.lock ? head.tPitch : head.pitch;
+  $f("headKnob").style.transform = "translate(" + (yaw / Math.PI * knobR) + "px," + (-pitch / (Math.PI / 2 * 0.95) * knobR) + "px)";
 }
 function headFromPointer(e) {
   const r = $f("headPad").getBoundingClientRect();
   let dx = (e.clientX - r.left - r.width / 2) / (r.width / 2 - 22), dy = (e.clientY - r.top - r.height / 2) / (r.height / 2 - 22);
   const len = Math.hypot(dx, dy); if (len > 1) { dx /= len; dy /= len; }
-  head.yaw = dx * Math.PI;                       // вправо/влево до ±180° — можно оглянуться назад
-  head.pitch = -dy * Math.PI / 2 * 0.95;         // вверх/вниз до ~±85°
+  head.tYaw = dx * Math.PI;                      // вправо/влево до ±180° — можно оглянуться назад
+  head.tPitch = -dy * Math.PI / 2 * 0.95;        // вверх/вниз до ~±85°
   headKnobDraw();
-  if (fly.on && !fly.playing) flyFrame();        // на паузе кадр обновляем сразу
 }
 $f("headPad").addEventListener("pointerdown", e => { head.drag = true; e.currentTarget.setPointerCapture(e.pointerId); headFromPointer(e); e.preventDefault(); });
 $f("headPad").addEventListener("pointermove", e => { if (head.drag) headFromPointer(e); });
 ["pointerup", "pointercancel"].forEach(t => $f("headPad").addEventListener(t, () => { head.drag = false; }));
 $f("headLock").onclick = function () { head.lock = !head.lock; this.classList.toggle("on", head.lock); };
 // «Чистый экран»: скрывает всё, кроме головы
-$f("headUi").onclick = function () { const on = document.body.classList.toggle("nui"); this.classList.toggle("on", on); window.dispatchEvent(new Event("resize")); try { planet.renderer.resize(); } catch (e) {} };
-// возврат взгляда вперёд, когда голову отпустили
+$f("headUi").onclick = function () { const on = document.body.classList.toggle("nui"); this.classList.toggle("on", on); window.dispatchEvent(new Event("resize")); try { planet.renderer.resize(); } catch (e) {} layoutHead(); };
+// Инерция взгляда: камера не прыгает за пальцем, а догоняет его как пружина с демпфером (без раскачки).
+// Когда палец отпущен, цель — прямо по курсу, и возврат идёт медленнее, чем следование за пальцем.
+const HEAD_W_FOLLOW = 5, HEAD_W_RETURN = 3;      // «жёсткость» пружины, 1/с: меньше — инертнее
 planet.renderer.events.on("postdraw", () => {
-  if (head.drag || head.lock || (!head.yaw && !head.pitch)) { headLast = 0; return; }
-  const now = performance.now(), dt = headLast ? Math.min((now - headLast) / 1000, 0.25) : 0; headLast = now;
-  const k = 1 - Math.exp(-dt * 5);
-  head.yaw -= head.yaw * k; head.pitch -= head.pitch * k;
-  if (Math.abs(head.yaw) < 0.002 && Math.abs(head.pitch) < 0.002) head.yaw = head.pitch = 0;
+  if (!fly.on) { headLast = 0; return; }
+  const now = performance.now(), dt = headLast ? Math.min((now - headLast) / 1000, 0.1) : 0; headLast = now;
+  if (!dt) return;
+  if (!head.drag && !head.lock) { head.tYaw = 0; head.tPitch = 0; }
+  const w = head.drag ? HEAD_W_FOLLOW : head.lock ? HEAD_W_FOLLOW : HEAD_W_RETURN;
+  const step = (x, v, t) => { const a = w * w * (t - x) - 2 * w * v; v += a * dt; return [x + v * dt, v]; };
+  const moved = Math.abs(head.yaw - head.tYaw) + Math.abs(head.pitch - head.tPitch) + Math.abs(head.vYaw) + Math.abs(head.vPitch);
+  if (moved < 0.002) { head.yaw = head.tYaw; head.pitch = head.tPitch; head.vYaw = head.vPitch = 0; return; }
+  [head.yaw, head.vYaw] = step(head.yaw, head.vYaw, head.tYaw);
+  [head.pitch, head.vPitch] = step(head.pitch, head.vPitch, head.tPitch);
   headKnobDraw();
-  if (fly.on && !fly.playing) flyFrame();
+  if (!fly.playing) flyFrame();                   // на паузе кадр обновляем сами
 });
 let headLast = 0;
 
