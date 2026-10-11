@@ -77,7 +77,7 @@
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps">Версия: 11.10, 04:25</span>
+  <span class="fps">Версия: 11.10, 04:35</span>
   <div class="fps" id="routeDbg" style="max-width:300px;white-space:pre-wrap;font-size:11px"></div>
 </div>
 
@@ -397,6 +397,7 @@ function setRouteVisible(rt, on) {
 // zoom: для перебора вариантов (подгонка точек, обходы) берём более крупные плитки SEARCH_ZOOM —
 // их в разы меньше, и ответ приходит быстрее; окончательную линию кладём по самым подробным.
 const SEARCH_ZOOM = 12;
+const DRAPE_ZOOM = 13;   // окончательная линия: шаг рельефа ~10–20 м, а плиток вчетверо меньше, чем на самом подробном зуме
 const hCache = new Map();
 function heightAt(lon, lat, zoom) {
   if (window.__heightStub) return window.__heightStub(lon, lat);   // для проверок без сети
@@ -539,7 +540,7 @@ async function drapeRoute(rt, mountainName) {
     const snapped = await snapPoints(rt);
     const eff = await findDetours(rt, snapped.pts);
     const pts = eff.pts, dense = densify(pts);
-    const hs = await heightsAt(dense);
+    const hs = await heightsAt(dense, DRAPE_ZOOM);
     // Высота каждой точки линии — по рельефу. Высоты ключевых точек в данных грубые, поэтому им не верим:
     //  • пешие отрезки и все станции/точки маршрута лежат на поверхности (если линия «задрана», она прижимается);
     //  • отрезки по воздуху (канатная дорога) — прямая между станциями, а станции стоят на рельефе;
@@ -549,7 +550,10 @@ async function drapeRoute(rt, mountainName) {
     const dbg = { t0: T0, noTerrain: 0, moved: snapped.moved, detours: eff.pts.length - rt.pts.length, bridges: eff.bridges.length, filled: 0, spans: [] };
     const ground = dense.map((p, i) => {
       const h = hs[i];
-      if (isFinite(h) && h > Math.min(p[2] * 0.5, p[2] - 300)) return h;
+      // раньше здесь отбрасывались высоты намного ниже расчётной — и линия над настоящими глубокими долинами
+      // (Демерджи: поляна → Северная Демерджи) оставалась висеть по прямой. Пустые плитки heightAt и так
+      // отсеивает (возвращает NaN), поэтому верим любой полученной высоте.
+      if (isFinite(h)) return h;
       dbg.noTerrain++; return p[2];
     });
     // Воздушные отрезки (канатная дорога): трос — плавная кривая от станции к станции.
@@ -730,6 +734,21 @@ async function updateLabelsLOS() {
 planet.camera.events.on("moveend", () => updateLabelsLOS());
 planet.camera.events.on("viewchange", () => { if (performance.now() - losLast > 1000) updateLabelsLOS(); });
 
+// Фоновая укладка: когда выбранная гора готова, по одной укладываем остальные горы,
+// чтобы при переключении маршруты сразу лежали на рельефе.
+let bgRunning = false;
+function scheduleBackgroundDrape() {
+  if (bgRunning) return;
+  bgRunning = true;
+  const next = async () => {
+    const m = MOUNTAINS.find(x => x.routes.some(rt => !rt.draped && !rt.draping));
+    if (!m) { bgRunning = false; return; }
+    await Promise.all(m.routes.map(rt => drapeRoute(rt, m.name)));
+    (window.requestIdleCallback || (f => setTimeout(f, 300)))(next);
+  };
+  setTimeout(next, 1500);
+}
+
 // Список маршрутов выбранной горы под её названием: цветная метка, тап — скрыть/показать маршрут
 function renderRouteList(m) {
   const box = document.getElementById("routes");
@@ -810,7 +829,7 @@ function goTo(i) {
     m.h.toLocaleString("ru-RU") + " м · " + n + " " + (n === 1 ? "маршрут" : n < 5 ? "маршрута" : "маршрутов");
   renderRouteList(m);
   showRouteDbg();
-  setTimeout(() => m.routes.forEach(rt => drapeRoute(rt, m.name)), 400);
+  Promise.all(m.routes.map(rt => drapeRoute(rt, m.name))).then(scheduleBackgroundDrape);
   document.querySelectorAll(".chip").forEach((c, k) => c.classList.toggle("on", k === i));
 }
 
