@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Скоростной полёт</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/og.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root { --panel: rgba(16,20,26,0.80); --chip: #262d36; --chip-on: #d9a441; --fg: #eef1f4; --muted: #9aa5b1; --err: #ff7a6b; }
   html, body { margin: 0; height: 100%; background: #05070a; color: var(--fg);
@@ -61,10 +63,37 @@
   #diag label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
   #diag .fps { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
   #diag a { color: var(--chip-on); font-size: 12px; }
+  #toast { position: absolute; left: 12px; right: 12px; bottom: calc(300px + env(safe-area-inset-bottom, 0px)); z-index: 40; max-width: 380px; margin: 0 auto;
+    background: rgba(16,20,26,0.95); border: 1px solid #3a4350; border-radius: 10px; padding: 8px 12px; font-size: 13px; white-space: pre-wrap; pointer-events: none; }
+  #toast[hidden] { display: none; }
   #log { position: absolute; top: calc(8px + env(safe-area-inset-top, 0px)); left: 8px; right: 8px; z-index: 30; font: 12px/1.4 ui-monospace, monospace;
     color: var(--err); background: rgba(0,0,0,0.75); border-radius: 8px; padding: 6px 8px; white-space: pre-wrap; }
   #log:empty { display: none; }
 
+  /* Карта: в углу — мини-карта, по тапу — на весь экран, чтобы проложить курс */
+  #mapWrap { position: absolute; z-index: 12; background: #cfd8dc; overflow: hidden; }
+  #mapWrap.mini { top: calc(8px + env(safe-area-inset-top, 0px)); right: 8px; width: 112px; height: 112px; border-radius: 14px; border: 2px solid rgba(255,255,255,0.7); box-shadow: 0 2px 10px rgba(0,0,0,0.5); }
+  #mapWrap.full { inset: 0; z-index: 18; border-radius: 0; border: 0; }
+  #map { position: absolute; inset: 0; background: #cfd8dc; }
+  #mapTap { position: absolute; inset: 0; z-index: 1000; cursor: pointer; }
+  #mapWrap.full #mapTap, #mapWrap.mini #mapPanel, #mapWrap.mini #mapClose { display: none; }
+  #mapWrap.mini .leaflet-control-attribution { display: none; }
+  #mapClose { position: absolute; top: calc(8px + env(safe-area-inset-top, 0px)); right: 8px; z-index: 1001; width: 40px; height: 40px; border: 0; border-radius: 10px;
+    background: rgba(16,20,26,0.88); color: var(--fg); font-size: 18px; cursor: pointer; }
+  #mapPanel { position: absolute; top: calc(8px + env(safe-area-inset-top, 0px)); left: 8px; right: 56px; z-index: 1001; display: flex; flex-direction: column; gap: 6px;
+    background: rgba(16,20,26,0.88); border-radius: 12px; padding: 8px; color: var(--fg); font-size: 13px; }
+  #mapTours { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+  #mapTours::-webkit-scrollbar { display: none; }
+  #mapTours .chip.on { background: var(--chip-on); color: #1a1407; font-weight: 600; }
+  #mapRow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  #mapRow button { border: 0; border-radius: 9px; padding: 8px 10px; background: var(--chip); color: var(--fg); font-size: 13px; cursor: pointer; }
+  #mapGo { background: #3b6e4f !important; font-weight: 600; }
+  #mapRow label { display: flex; gap: 5px; align-items: center; font-size: 12px; color: var(--muted); }
+  #mapInfo { font-size: 12px; color: var(--muted); }
+  .pl svg { transition: none; filter: drop-shadow(0 0 2px rgba(0,0,0,.6)); }
+  .wp { width: 22px; height: 22px; border-radius: 50%; background: #ffd23f; color: #1a1407; font: 700 12px/22px system-ui; text-align: center; border: 2px solid #fff; box-sizing: border-box; }
+  body.mapfull #head, body.mapfull #hud { display: none; }
+  body.nui #mapWrap.mini { display: none; }
   /* «чистый экран»: всё скрыто, кроме головы и кнопки возврата интерфейса */
   body.nui #bar, body.nui #diag, body.nui #hud, body.nui .og-compass-button, body.nui .og-zoomin-button, body.nui .og-zoomout-button,
   body.nui .og-coordinates, body.nui .og-scale-container, body.nui .og-attribution, body.nui .og-control-container { display: none !important; }
@@ -75,16 +104,32 @@
 <canvas id="fx"></canvas>
 <div id="log"></div>
 <div id="hud"></div>
+<div id="toast" hidden></div>
 
 <div id="diag" hidden>
   <div class="head"><b>Настройки</b><button class="close" id="diagClose" aria-label="Закрыть">✕</button></div>
   <div class="seg" id="segImg"><span>Снимки</span><button data-v="esri">Esri</button><button data-v="bing">Bing</button></div>
   <label><input type="checkbox" id="oFollow"> Следовать рельефу (высота — над землёй)</label>
-  <label><input type="checkbox" id="oFx"> Эффект скорости (полосы и расширение обзора)</label>
+  <div class="seg" id="segFx"><span>Эффекты скорости</span><button data-v="0">Выкл</button><button data-v="1">Лёгкие</button><button data-v="2">Сильные</button></div>
   <label><input type="checkbox" id="oAtmo"> Атмосфера (красивее, но на телефоне может мерцать)</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps" id="ver">Версия: 11.10, 17:50</span>
+  <span class="fps" id="ver">Версия: 11.10, 18:10</span>
   <a href="../">← Горы мира (маршруты и полёты по трекам)</a>
+</div>
+
+<div id="mapWrap" class="mini">
+  <div id="map"></div>
+  <div id="mapTap"></div>
+  <button id="mapClose" aria-label="Закрыть карту">✕</button>
+  <div id="mapPanel">
+    <div id="mapTours"></div>
+    <div id="mapRow">
+      <button id="mapGo">▶ Лететь по курсу</button><button id="mapUndo">↶ Точку</button><button id="mapClear">Очистить</button><button id="mapMe">📍 Я</button>
+      <label><input type="checkbox" id="mapLoop"> по кругу</label>
+      <label><input type="checkbox" id="mapHints" checked> скорость и высота курса</label>
+    </div>
+    <div id="mapInfo"></div>
+  </div>
 </div>
 
 <div id="head" hidden>
@@ -100,7 +145,7 @@
   <div id="steer"><span class="lbl" style="left:14px">◀ влево</span><span class="lbl" style="right:14px">вправо ▶</span><div id="steerKnob">КУРС</div></div>
   <div class="ctl"><div class="row"><span>Скорость</span><b id="spdVal">—</b></div><input type="range" id="spd" min="0" max="1000" step="1" value="500"></div>
   <div class="ctl"><div class="row"><span>Высота <span id="altMode"></span></span><b id="altVal">—</b></div><input type="range" id="alt" min="0" max="1000" step="1" value="300"></div>
-  <div id="btns"><button id="bStop">Стоп</button><button id="bMax">Земля за 10 мин</button><button id="bDiag">⚙</button><button id="bUi" style="flex:0 0 44px" aria-label="Скрыть интерфейс">👁</button></div>
+  <div id="btns"><button id="bStop">Стоп</button><button id="bMax">Макс.</button><button id="bMap">🗺 Карта</button><button id="bAp">Автопилот</button><button id="bDiag">⚙</button><button id="bUi" style="flex:0 0 44px" aria-label="Скрыть интерфейс">👁</button></div>
 </div>
 
 <script>
@@ -115,14 +160,17 @@ import { Globe, XYZ, Bing, GlobusRgbTerrain, LonLat, Vec3 } from "https://cdn.js
 const OG_RES = "https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/res";
 const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 const $ = id => document.getElementById(id);
+let toastTimer = 0;
+function toast(msg, ms = 6000) { const t = document.getElementById("toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, ms); }
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const DEG = Math.PI / 180;
 
 // ---------------- Настройки (запоминаются в браузере) ----------------
 const KEY = "jet-settings-v1";
-const S = { imagery: "esri", atmo: false, follow: true, fx: true,
+const S = { imagery: "esri", atmo: false, follow: true, fxl: 1, route: [], tourId: null,
   lon: 7.0, lat: 45.9, hdg: 90, spdT: 500, altT: 330 };
 try { Object.assign(S, JSON.parse(localStorage.getItem(KEY) || "{}")); } catch (e) {}
+if (S.fx === false) S.fxl = 0;      // старая настройка «эффект скорости» выключена
 const saveS = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
 
 // ---------------- Глобус ----------------
@@ -263,7 +311,7 @@ function steerFromPointer(e) {
   const r = $("steer").getBoundingClientRect();
   fl.steer = clamp((e.clientX - r.left - r.width / 2) / (r.width / 2 - 36), -1, 1);
 }
-$("steer").addEventListener("pointerdown", e => { steerDrag = true; e.currentTarget.setPointerCapture(e.pointerId); steerFromPointer(e); e.preventDefault(); });
+$("steer").addEventListener("pointerdown", e => { if (ap.on) stopAP("Автопилот выключен — ручное управление"); steerDrag = true; e.currentTarget.setPointerCapture(e.pointerId); steerFromPointer(e); e.preventDefault(); });
 $("steer").addEventListener("pointermove", e => { if (steerDrag) steerFromPointer(e); });
 ["pointerup", "pointercancel"].forEach(t => $("steer").addEventListener(t, () => { steerDrag = false; }));
 const keys = new Set();
@@ -295,9 +343,11 @@ function applyImagery() {
 }
 document.querySelectorAll("#segImg button").forEach(b => b.onclick = () => { S.imagery = b.dataset.v; saveS(); applyImagery(); });
 applyImagery();
-$("oFollow").checked = S.follow; $("oFx").checked = S.fx; $("oAtmo").checked = S.atmo;
+$("oFollow").checked = S.follow; $("oAtmo").checked = S.atmo;
 $("oFollow").onchange = e => { S.follow = e.target.checked; if (!S.follow) fl.groundT = 0; saveS(); };
-$("oFx").onchange = e => { S.fx = e.target.checked; saveS(); };
+const showFx = () => document.querySelectorAll("#segFx button").forEach(b => b.classList.toggle("on", +b.dataset.v === S.fxl));
+document.querySelectorAll("#segFx button").forEach(b => b.onclick = () => { S.fxl = +b.dataset.v; saveS(); showFx(); });
+showFx();
 $("oAtmo").onchange = e => { S.atmo = e.target.checked; planet.atmosphereEnabled = S.atmo; saveS(); };
 
 // ---------------- Эффект скорости ----------------
@@ -305,24 +355,182 @@ const fx = $("fx"), fg = fx.getContext("2d");
 const STREAKS = Array.from({ length: 80 }, () => ({ a: Math.random() * Math.PI * 2, r0: 0.12 + Math.random() * 0.9, ph: Math.random(), w: 0.6 + Math.random() * 1.4 }));
 function sizeFx() { fx.width = Math.round(window.innerWidth / 2); fx.height = Math.round(window.innerHeight / 2); }
 sizeFx(); window.addEventListener("resize", sizeFx);
+// Эффекты скорости. «Лёгкие» (по умолчанию): редкие тонкие штрихи только по краям кадра, центр чистый, едва заметное затемнение
+// по углам и крошечная тряска камеры на малой высоте. «Сильные»: плотные полосы по всему кадру, как раньше.
+const fxK = () => S.fxl ? clamp(Math.log10(Math.max(fl.omega, 1e-6) / 0.15) / 2.2, 0, 1) : 0;
 function drawFx(t) {
   fg.clearRect(0, 0, fx.width, fx.height);
-  const k = S.fx ? clamp(Math.log10(Math.max(fl.omega, 1e-6) / 0.15) / 2.2, 0, 1) : 0;
-  if (k < 0.02) return;
-  const W = fx.width, H = fx.height, maxR = Math.hypot(W, H) / 2;
+  const k = fxK(); if (k < 0.02) return;
+  const strong = S.fxl === 2, W = fx.width, H = fx.height, maxR = Math.hypot(W, H) / 2;
   const pxRad = H / (fl.fov * DEG);
-  // точка, куда летим, на экране: курс — горизонт, камера смотрит вниз и повёрнута «головой»
   const cx = clamp(W / 2 - head.yaw * pxRad, -W, 2 * W), cy = clamp(H / 2 - (0 - (fl.pitchBase + head.pitch)) * pxRad, -H, 2 * H);
+  if (!strong) {                                              // затемнение по краям
+    const g = fg.createRadialGradient(W / 2, H / 2, maxR * 0.55, W / 2, H / 2, maxR);
+    g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0," + (0.30 * k).toFixed(3) + ")");
+    fg.fillStyle = g; fg.fillRect(0, 0, W, H);
+  }
   fg.lineCap = "round";
-  for (const s of STREAKS) {
+  const n = strong ? 80 : 34, amp = strong ? 0.55 : 0.22, lenK = strong ? 0.45 : 0.16, inner = strong ? 0.08 : 0.42;
+  for (let i = 0; i < n; i++) {
+    const s = STREAKS[i];
     const ph = (s.ph + t * 0.0004 * (0.5 + k * 3) * s.w) % 1, rr = ph * ph;
-    const r = (0.08 + rr * 1.1) * maxR * s.r0 + rr * maxR * 0.3, len = (0.02 + k * 0.45) * maxR * rr + 2;
+    const r = (inner + rr * 1.1) * maxR * s.r0 + rr * maxR * 0.3, len = (0.02 + k * lenK) * maxR * rr + 2;
     const ca = Math.cos(s.a), sa = Math.sin(s.a);
-    fg.strokeStyle = "rgba(255,255,255," + (0.55 * k * Math.min(1, rr * 2.2)).toFixed(3) + ")";
-    fg.lineWidth = 1 + k * 2 * rr;
+    fg.strokeStyle = "rgba(255,255,255," + (amp * k * Math.min(1, rr * 2.2)).toFixed(3) + ")";
+    fg.lineWidth = strong ? 1 + k * 2 * rr : 1;
     fg.beginPath(); fg.moveTo(cx + ca * r, cy + sa * r); fg.lineTo(cx + ca * (r - len), cy + sa * (r - len)); fg.stroke();
   }
 }
+// микротряска: сглаженный «шум» в долях градуса, только на малой высоте и только при быстром движении земли
+function shake(t) {
+  if (S.fxl !== 1 && S.fxl !== 2) return [0, 0, 0];
+  const k = fxK() * clamp(1 - Math.log10(Math.max(fl.agl, 50) / 500) / 1.5, 0, 1), a = (S.fxl === 2 ? 0.0035 : 0.0014) * k * k;
+  const n = (f, ph) => Math.sin(t * f + ph) * 0.5 + Math.sin(t * f * 2.3 + ph * 1.7) * 0.3 + Math.sin(t * f * 4.1 + ph * 0.6) * 0.2;
+  return [a * n(0.011, 1), a * n(0.013, 4), a * 2.5 * n(0.009, 2)];
+}
+
+// ---------------- Карта, курс и автопилот ----------------
+const RAD_KM = 6371;
+const ap = { on: false, idx: 0, rate: 22, dist: 0, tour: null };
+let route = Array.isArray(S.route) ? S.route.filter(w => Array.isArray(w) && w.length >= 2) : [];
+const altTo = h => 1000 * Math.log(h / 50) / Math.log(4e5);
+const wrapLon = x => ((x + 180) % 360 + 360) % 360 - 180;
+const TOURS = [
+  { id: "peaks", name: "⛰ Великие вершины", v: 40000, h: 12000, pts: [[6.865, 45.833, "Монблан"], [42.439, 43.35, "Эльбрус"], [86.925, 27.988, "Эверест"], [138.727, 35.361, "Фудзи"], [-151.007, 63.07, "Денали"], [-70.011, -32.653, "Аконкагуа"], [37.356, -3.067, "Килиманджаро"]] },
+  { id: "nature", name: "🌋 Чудеса природы", v: 30000, h: 15000, pts: [[-112.14, 36.1, "Гранд-Каньон"], [-110.5, 44.4, "Йеллоустон"], [-79.07, 43.08, "Ниагара"], [-60.0, -3.1, "Амазонка"], [-54.44, -25.69, "Игуасу"], [-73.0, -50.0, "Патагония"], [25.85, -17.92, "Виктория"], [37.36, -3.07, "Килиманджаро"], [14.5, 28.5, "Сахара"]] },
+  { id: "cities", name: "🏙 Города мира", v: 60000, h: 20000, pts: [[37.62, 55.75, "Москва"], [2.35, 48.86, "Париж"], [-74.0, 40.71, "Нью-Йорк"], [-43.2, -22.9, "Рио"], [18.42, -33.92, "Кейптаун"], [55.3, 25.2, "Дубай"], [72.88, 19.08, "Мумбаи"], [103.82, 1.35, "Сингапур"], [139.7, 35.68, "Токио"], [151.2, -33.87, "Сидней"]] },
+  { id: "ancient", name: "🏛 Древности", v: 30000, h: 10000, pts: [[-1.83, 51.18, "Стоунхендж"], [31.13, 29.98, "Гиза"], [35.44, 30.33, "Петра"], [103.87, 13.41, "Ангкор"], [-109.35, -27.11, "Рапа-Нуи"], [-72.55, -13.16, "Мачу-Пикчу"], [-88.57, 20.68, "Чичен-Ица"]] },
+  { id: "islands", name: "🏝 Острова", v: 40000, h: 8000, pts: [[-19.0, 64.9, "Исландия"], [-155.5, 19.6, "Гавайи"], [-151.74, -16.5, "Бора-Бора"], [-90.5, -0.6, "Галапагос"], [73.5, 4.2, "Мальдивы"], [55.5, -21.1, "Реюньон"], [170.5, -43.6, "Н. Зеландия"]] },
+  { id: "equator", name: "🌍 Экватор", v: 120000, h: 30000, pts: [[0, 0, ""], [60, 0, ""], [120, 0, ""], [180, 0, ""], [-120, 0, ""], [-60, 0, ""], [0, 0, "Круг"]] },
+  { id: "poles", name: "🧊 Через полюса", v: 120000, h: 30000, pts: [[0, 40, ""], [0, 89.5, "Северный полюс"], [180, 40, ""], [180, -40, ""], [180, -89.5, "Южный полюс"], [0, -40, ""], [0, 40, ""]] }
+];
+const vecOf = (lon, lat) => [Math.cos(lat * DEG) * Math.cos(lon * DEG), Math.cos(lat * DEG) * Math.sin(lon * DEG), Math.sin(lat * DEG)];
+const llOf = v => [Math.atan2(v[1], v[0]) / DEG, Math.asin(clamp(v[2], -1, 1)) / DEG];
+// точки дуги большого круга между двумя местами [lat, lon] — разбитые на линии на границе «стыка» долгот ±180
+function gcLines(pts) {
+  const lines = []; let cur = [], prev = null;
+  const push = (lon, lat) => { if (prev !== null && Math.abs(lon - prev) > 180) { lines.push(cur); cur = []; } cur.push([lat, lon]); prev = lon; };
+  for (let i = 0; i < pts.length - 1; i++) {
+    const A = vecOf(pts[i][0], pts[i][1]), B = vecOf(pts[i + 1][0], pts[i + 1][1]);
+    const d = clamp(A[0] * B[0] + A[1] * B[1] + A[2] * B[2], -1, 1), ang = Math.acos(d), n = Math.max(1, Math.ceil(ang / (2 * DEG)));
+    for (let k = (i === 0 ? 0 : 1); k <= n; k++) {
+      const t = k / n; let v;
+      if (ang < 1e-6) v = A; else { const sa = Math.sin(ang), c1 = Math.sin((1 - t) * ang) / sa, c2 = Math.sin(t * ang) / sa; v = [A[0] * c1 + B[0] * c2, A[1] * c1 + B[1] * c2, A[2] * c1 + B[2] * c2]; }
+      const [lo, la] = llOf(v); push(lo, la);
+    }
+  }
+  if (pts.length === 1) push(pts[0][0], pts[0][1]);
+  if (cur.length) lines.push(cur);
+  return lines;
+}
+const routeKm = () => { let km = 0; for (let i = 0; i < route.length - 1; i++) { const A = vecOf(route[i][0], route[i][1]), B = vecOf(route[i + 1][0], route[i + 1][1]); km += Math.acos(clamp(A[0] * B[0] + A[1] * B[1] + A[2] * B[2], -1, 1)) * RAD_KM; } return km; };
+
+let lmap = null, mapFull = false, planeMks = [], trailLs = [], routeLs = [], wpGroup = null, trail = [], trailT = 0;
+const OFFS = [-360, 0, 360];
+function setCopies(layers, lines) { layers.forEach((l, i) => l.setLatLngs(lines.map(ln => ln.map(([la, lo]) => [la, lo + OFFS[i]])))); }
+function initMap() {
+  if (typeof L === "undefined") { $("mapWrap").style.display = "none"; log("Не загрузилась карта (Leaflet) — мини-карта и курсы недоступны"); return; }
+  lmap = L.map("map", { zoomControl: false, attributionControl: false, minZoom: 1, maxZoom: 10, zoomSnap: 0.5, worldCopyJump: false, inertia: true })
+    .setView([clamp(S.lat, -80, 80), S.lon], 4);
+  L.control.attribution({ prefix: false }).addTo(lmap);
+  L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}", { maxZoom: 10, attribution: "Esri World Topo" }).addTo(lmap);
+  trailLs = OFFS.map(() => L.polyline([], { color: "#e8431f", weight: 2.5, opacity: 0.9 }).addTo(lmap));
+  routeLs = OFFS.map(() => L.polyline([], { color: "#c58a00", weight: 3, opacity: 0.95, dashArray: "8 6" }).addTo(lmap));
+  wpGroup = L.layerGroup().addTo(lmap);
+  planeMks = OFFS.map(() => L.marker([0, 0], { interactive: false, keyboard: false, zIndexOffset: 1000,
+    icon: L.divIcon({ className: "pl", iconSize: [28, 28], iconAnchor: [14, 14],
+      html: '<svg viewBox="0 0 24 24" width="28" height="28" style="transform:rotate(0deg)"><path d="M12 1.5 L19.5 21.5 L12 17.5 L4.5 21.5 Z" fill="#ff5a2e" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>' }) }).addTo(lmap));
+  lmap.on("click", e => { if (!mapFull) return; addWaypoint(wrapLon(e.latlng.lng), clamp(e.latlng.lat, -89, 89)); });
+  setMapMode(false);
+  drawRoute();
+}
+function setMapMode(full) {
+  mapFull = full;
+  $("mapWrap").className = full ? "full" : "mini";
+  document.body.classList.toggle("mapfull", full);
+  for (const h of ["dragging", "touchZoom", "doubleClickZoom", "scrollWheelZoom", "boxZoom", "keyboard"]) { if (lmap[h]) lmap[h][full ? "enable" : "disable"](); }
+  lmap.invalidateSize();
+  lmap.setView([clamp(fl.lat, -80, 80), fl.lon], full ? 3 : miniZoom(), { animate: false });
+  $("bMap").classList.toggle("on", full);
+  mapInfo();
+}
+const miniZoom = () => clamp(Math.round(6 - Math.log10(Math.max(fl.v, 100) / 100)), 1, 6);
+function drawRoute() {
+  if (!lmap) return;
+  const pts = route.map(w => [w[0], w[1]]);
+  setCopies(routeLs, pts.length > 1 ? gcLines(pts) : []);
+  wpGroup.clearLayers();
+  route.forEach((w, i) => OFFS.forEach(off => L.marker([w[1], w[0] + off], { interactive: false, icon: L.divIcon({ className: "", iconSize: [22, 22], iconAnchor: [11, 11], html: '<div class="wp">' + (i + 1) + '</div>' }) }).addTo(wpGroup)));
+  S.route = route; saveS();
+  mapInfo();
+}
+function mapInfo() {
+  const km = routeKm(), v = Math.max(fl.v, 1);
+  $("mapInfo").textContent = route.length
+    ? "Точек: " + route.length + " · ~" + nf(km) + " км" + (fl.v > 1 ? " · на текущей скорости ~" + (km / v >= 1 ? (km / v).toFixed(1).replace(".", ",") + " ч" : Math.round(km / v * 60) + " мин") : "") + (ap.on ? " · автопилот: точка " + (ap.idx + 1) : "")
+    : "Тапните по карте, чтобы поставить точки курса, или выберите готовый курс выше. Двигать и масштабировать карту можно пальцами.";
+}
+function addWaypoint(lon, lat) { route.push([+lon.toFixed(3), +lat.toFixed(3), ""]); ap.tour = null; showTourChips(); drawRoute(); }
+function loadTour(t) {
+  route = t.pts.map(p => p.slice()); ap.tour = t; S.tourId = t.id; showTourChips(); drawRoute();
+  if (lmap && mapFull) { const b = L.latLngBounds(route.map(w => [w[1], w[0]])); lmap.fitBounds(b.pad(0.2), { animate: false, maxZoom: 6 }); }
+}
+function showTourChips() { document.querySelectorAll("#mapTours .chip").forEach((c, i) => c.classList.toggle("on", ap.tour === TOURS[i])); }
+TOURS.forEach(t => { const b = document.createElement("button"); b.className = "chip"; b.textContent = t.name; b.onclick = () => loadTour(t); $("mapTours").appendChild(b); });
+$("mapUndo").onclick = () => { route.pop(); ap.tour = null; showTourChips(); drawRoute(); };
+$("mapClear").onclick = () => { route = []; ap.tour = null; if (ap.on) stopAP("Курс очищен — автопилот выключен"); showTourChips(); drawRoute(); };
+$("mapMe").onclick = () => lmap && lmap.setView([clamp(fl.lat, -80, 80), fl.lon], Math.max(lmap.getZoom(), 3), { animate: true });
+$("mapTap").onclick = () => lmap && setMapMode(true);
+$("mapClose").onclick = () => lmap && setMapMode(false);
+$("bMap").onclick = () => lmap && setMapMode(!mapFull);
+
+function startAP() {
+  if (!route.length) { toast("Сначала проложите курс: откройте карту и поставьте точки или выберите готовый курс."); if (lmap && !mapFull) setMapMode(true); return; }
+  ap.on = true; ap.idx = 0; $("bAp").classList.add("on");
+  if (ap.tour && $("mapHints").checked) {
+    S.spdT = clamp(spdTo(ap.tour.v), 0, 1000); $("spd").value = S.spdT;
+    S.altT = clamp(altTo(ap.tour.h), 0, 1000); $("alt").value = S.altT;
+  }
+  if (mapFull) setMapMode(false);
+  toast("Автопилот: " + (ap.tour ? ap.tour.name.replace(/^\S+\s/, "") : "свой курс") + ", точек " + route.length + ". Тронете руль — управление вернётся вам.");
+}
+function stopAP(msg) { ap.on = false; $("bAp").classList.remove("on"); if (msg) toast(msg); mapInfo(); }
+$("mapGo").onclick = startAP;
+$("bAp").onclick = () => { if (ap.on) stopAP("Автопилот выключен"); else startAP(); };
+$("mapLoop").checked = false;
+
+// Шаг автопилота: направление на текущую точку курса → команда рулю; при подлёте — следующая точка.
+function apStep() {
+  const w = route[ap.idx]; if (!w) { stopAP("Курс пройден"); return 0; }
+  const T = unit(cartAt(w[0], w[1], 0)), d = P.dot(T), ang = Math.acos(clamp(d, -1, 1));
+  const vms = fl.v / 3.6, arrive = Math.max(10000, vms * 2);
+  ap.dist = ang * R_EARTH;
+  if (ap.dist < arrive) {
+    ap.idx++;
+    if (ap.idx >= route.length) { if ($("mapLoop").checked) ap.idx = 0; else { stopAP("Курс пройден — дальше летите сами"); return 0; } }
+    return apStep();
+  }
+  // чтобы на огромной скорости не ходить кругами вокруг точки, радиус разворота должен быть меньше радиуса подлёта
+  ap.rate = Math.max(22, vms / (0.5 * arrive) / DEG);
+  const tv = T.sub(P.scaleTo(d));
+  if (tv.length() < 1e-6) return 1;                                  // точка ровно напротив — всё равно куда, поворачиваем вправо
+  const dir = unit(tv);
+  const e = Math.atan2(F.cross(dir).dot(P), F.dot(dir)) / DEG;     // >0 — цель слева
+  return clamp(-e / 20, -1, 1);
+}
+function updateMap(now) {
+  if (!lmap) return;
+  const lat = clamp(fl.lat, -85, 85), lon = fl.lon;
+  planeMks.forEach((m, i) => { m.setLatLng([lat, lon + OFFS[i]]); const el = m.getElement(); if (el && el.firstChild) el.firstChild.style.transform = "rotate(" + fl.hdg.toFixed(1) + "deg)"; });
+  if (now - trailT > 500 && fl.v > 1) {
+    trailT = now; trail.push([lon, lat]); if (trail.length > 900) trail.shift();
+    const lines = []; let cur = []; let prev = null;
+    for (const [lo, la] of trail) { if (prev !== null && Math.abs(lo - prev) > 180) { lines.push(cur); cur = []; } cur.push([la, lo]); prev = lo; }
+    if (cur.length) lines.push(cur); setCopies(trailLs, lines);
+  }
+  if (!mapFull && now - mapViewT > 400) { mapViewT = now; lmap.setView([lat, lon], miniZoom(), { animate: false }); }
+}
+let mapViewT = 0;
 
 // ---------------- Главный цикл: движение, камера, HUD ----------------
 let lastT = 0, hudT = 0, saveT = 0, headLast = 0, frames = 0, fpsT = performance.now();
@@ -335,7 +543,9 @@ planet.renderer.events.on("postdraw", () => {
   if (!dt) return;
 
   // ---- ввод ----
-  if (keys.has("ArrowLeft") || keys.has("a")) fl.steer = clamp(fl.steer - dt * 3, -1, 1);
+  if (ap.on && (keys.has("ArrowLeft") || keys.has("ArrowRight") || keys.has("a") || keys.has("d"))) stopAP("Автопилот выключен — ручное управление");
+  if (ap.on) fl.steer += (apStep() - fl.steer) * (1 - Math.exp(-dt * 4));
+  else if (keys.has("ArrowLeft") || keys.has("a")) fl.steer = clamp(fl.steer - dt * 3, -1, 1);
   else if (keys.has("ArrowRight") || keys.has("d")) fl.steer = clamp(fl.steer + dt * 3, -1, 1);
   else if (!steerDrag) fl.steer *= Math.exp(-dt * 7);                // руль сам возвращается в центр
   if (Math.abs(fl.steer) < 0.003 && !steerDrag) fl.steer = 0;
@@ -362,7 +572,7 @@ planet.renderer.events.on("postdraw", () => {
     const P2 = P.scaleTo(c).add(F.scaleTo(s)), F2 = F.scaleTo(c).sub(P.scaleTo(s));
     P = unit(P2); F = F2;
   }
-  const phi = -fl.steer * 22 * DEG * dt;                              // вправо — по часовой, до 22°/с
+  const phi = -fl.steer * (ap.on ? ap.rate : 22) * DEG * dt;                              // вправо — по часовой, до 22°/с
   if (phi) { const c = Math.cos(phi), s = Math.sin(phi); F = F.scaleTo(c).add(P.cross(F).scaleTo(s)); }
   F = unit(F.sub(P.scaleTo(F.dot(P))));
   fl.bank += (fl.steer * 28 * DEG - fl.bank) * (1 - Math.exp(-dt * 4));
@@ -393,18 +603,20 @@ planet.renderer.events.on("postdraw", () => {
   // наклон «вниз»: чем выше, тем сильнее смотрим вниз, чтобы горизонт и земля были в кадре (у горизонта — dip)
   const dip = Math.acos(R_EARTH / (R_EARTH + eyeAlt)) / DEG;
   fl.pitchBase = -clamp(1.05 * dip + 4, 4, 88) * DEG;
-  const pitch = clamp(fl.pitchBase + head.pitch, -1.5, 1.5), yaw = head.yaw;
+  const sh = shake(now);
+  const pitch = clamp(fl.pitchBase + head.pitch + sh[0], -1.5, 1.5), yaw = head.yaw + sh[1];
   const dir = fh.scaleTo(Math.cos(pitch) * Math.cos(yaw)).add(r.scaleTo(Math.cos(pitch) * Math.sin(yaw))).add(n.scaleTo(Math.sin(pitch)));
-  const up = n.scaleTo(Math.cos(fl.bank)).add(r.scaleTo(Math.sin(fl.bank)));       // крен в повороте
+  const up = n.scaleTo(Math.cos(fl.bank + sh[2])).add(r.scaleTo(Math.sin(fl.bank + sh[2])));       // крен в повороте
   // угловая скорость «земли под нами» — по ней и эффект скорости
   fl.omega = fl.v / 3.6 / Math.max(30, S.follow ? fl.agl : eyeAlt);
-  const fovT = S.fx ? 47 + 28 * clamp(Math.log10(Math.max(fl.omega, 1e-6) / 0.05) / 2, 0, 1) : 47;
+  const fovT = 47 + [0, 12, 28][S.fxl] * clamp(Math.log10(Math.max(fl.omega, 1e-6) / 0.05) / 2, 0, 1);
   fl.fov += (fovT - fl.fov) * (1 - Math.exp(-dt * 3));
   if (Math.abs(cam.viewAngle - fl.fov) > 0.05) cam.setViewAngle(fl.fov);
   cam.set(eye, eye.add(dir.scaleTo(1000)), up);
   cam.update();
 
   drawFx(now);
+  updateMap(now);
 
   // ---- HUD ----
   if (now - hudT > 120) {
@@ -414,6 +626,7 @@ planet.renderer.events.on("postdraw", () => {
     $("hud").innerHTML = "<b>" + nf(fmtSpd(fl.v)) + " км/ч</b>" + (mach >= 0.5 ? "  М " + (mach >= 10 ? Math.round(mach) : mach.toFixed(1).replace(".", ",")) : "") +
       "\nЗемля за " + fmtLap(fl.v) + "\nВысота " + fmtAlt(eyeAlt) + (S.follow ? " (над землёй " + fmtAlt(fl.agl) + ")" : "") +
       "\nКурс " + String(Math.round(hd) % 360).padStart(3, "0") + "° " + dl +
+      (ap.on ? "\nАП → " + (route[ap.idx] && route[ap.idx][2] ? route[ap.idx][2] : "точка " + (ap.idx + 1)) + " (" + (ap.idx + 1) + "/" + route.length + ") · " + nf(ap.dist / 1000) + " км" : "") +
       "\n" + Math.abs(ll.lat).toFixed(2) + (ll.lat >= 0 ? "°с.ш. " : "°ю.ш. ") + Math.abs(ll.lon).toFixed(2) + (ll.lon >= 0 ? "°в.д." : "°з.д.");
     $("spdVal").textContent = nf(fmtSpd(vT)) + " км/ч · Земля за " + fmtLap(vT);
     $("altVal").textContent = fmtAlt(aglT);
@@ -427,7 +640,8 @@ planet.renderer.events.on("postdraw", () => {
 });
 window.addEventListener("pagehide", () => { S.lon = fl.lon; S.lat = fl.lat; S.hdg = fl.hdg; saveS(); });
 layoutHead();
-window.__jet = { fl, S, head, setPos, get P() { return P; }, get F() { return F; } };
+initMap();
+window.__jet = { fl, S, head, setPos, ap, TOURS, loadTour, startAP, get route() { return route; }, get lmap() { return lmap; }, get P() { return P; }, get F() { return F; } };
 </script>
 </body>
 </html>
