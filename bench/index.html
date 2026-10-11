@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Тест скорости тайлов</title>
+<style>
+  :root { --bg:#0b0e12; --panel:#161b22; --chip:#262d36; --fg:#eef1f4; --muted:#9aa5b1; --on:#d9a441; --ok:#6fdc4a; --err:#ff7a6b; }
+  html, body { margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 14px 14px 40px; }
+  h1 { font-size: 20px; margin: 4px 0 6px; }
+  p { color: var(--muted); font-size: 14px; line-height: 1.45; margin: 6px 0; }
+  .card { background: var(--panel); border-radius: 12px; padding: 12px; margin: 12px 0; }
+  .seg { display:flex; gap:6px; margin: 8px 0; }
+  .seg button, #run, #copy { border:0; border-radius:10px; padding:11px 14px; background:var(--chip); color:var(--fg); font-size:15px; cursor:pointer; }
+  .seg button.on { background: var(--on); color:#1a1407; font-weight:600; }
+  #run { background:#3b6e4f; font-weight:600; width:100%; margin-top:6px; }
+  #run[disabled] { opacity:.5; }
+  #bar { height:8px; background:var(--chip); border-radius:6px; overflow:hidden; margin-top:10px; }
+  #barIn { height:100%; width:0; background:var(--on); transition: width .2s; }
+  pre { white-space: pre-wrap; word-break: break-word; font: 12.5px/1.5 ui-monospace,"SF Mono",Menlo,monospace; margin:0; }
+  h2 { font-size:15px; margin: 0 0 6px; color: var(--on); }
+  table { width:100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  td, th { text-align:right; padding: 4px 6px; border-bottom: 1px solid #262d36; }
+  th { color: var(--muted); font-weight: 500; }
+  td:first-child, th:first-child { text-align:left; }
+  .best { color: var(--ok); font-weight: 600; }
+  .bad { color: var(--err); }
+  small { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Тест скорости тайлов</h1>
+  <p>Измеряет, что реально можно получить от серверов карт с вашего устройства и вашего интернета: задержку, тайлов в секунду при разной параллельности (в том числе в нескольких потоках), размер тайлов, скорость разбора картинок и сколько из этого получается «лётной скорости» без размытия.</p>
+  <div class="card">
+    <div class="seg" id="mode"><button data-v="light" class="on">Лёгкий</button><button data-v="full">Полный</button></div>
+    <p id="modeInfo"></p>
+    <p>Запускайте на том же интернете, на котором летаете (Wi-Fi или мобильный), и не закрывайте вкладку.</p>
+    <button id="run">▶ Запустить тест</button>
+    <div id="bar"><div id="barIn"></div></div>
+    <p id="status"></p>
+  </div>
+  <div class="card" id="infoCard" hidden><h2>Устройство и сеть</h2><pre id="info"></pre></div>
+  <div class="card" id="sumCard" hidden><h2>Сводка</h2><div id="sum"></div></div>
+  <div class="card" id="logCard" hidden><h2>Подробно</h2><pre id="log"></pre></div>
+  <div class="card" id="copyCard" hidden><button id="copy">Скопировать результат</button><p id="copied"></p></div>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const DEG = Math.PI / 180;
+const MODES = {
+  light: { name: "Лёгкий", levels: [1, 4, 8, 16, 32], batchMin: 32, zoomSet: [4, 9, 12, 15, 17], info: "около 40–60 секунд и 8–12 МБ трафика" },
+  full: { name: "Полный", levels: [1, 2, 4, 6, 8, 12, 16, 24, 32, 64], batchMin: 48, zoomSet: [3, 6, 9, 12, 14, 15, 16, 17], info: "около 2–3 минут и 30–40 МБ трафика (на мобильном интернете учтите расход)" }
+};
+let mode = "light";
+function showMode() { document.querySelectorAll("#mode button").forEach(b => b.classList.toggle("on", b.dataset.v === mode)); $("modeInfo").textContent = MODES[mode].name + ": " + MODES[mode].info + "."; }
+document.querySelectorAll("#mode button").forEach(b => b.onclick = () => { mode = b.dataset.v; showMode(); });
+showMode();
+
+// ---- вспомогательное ----
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const med = a => { if (!a.length) return NaN; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+const pct = (a, p) => { if (!a.length) return NaN; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
+const f1 = x => isFinite(x) ? x.toFixed(1).replace(".", ",") : "—";
+const f0 = x => isFinite(x) ? Math.round(x).toLocaleString("ru-RU") : "—";
+const kb = b => f1(b / 1024) + " КБ";
+
+// «сухопутные» точки, чтобы не попадать в океан (там тайлы пустые и крошечные)
+const LAND = [[6.9, 45.9], [42.4, 43.3], [86.9, 28.0], [37.6, 55.7], [34.2, 44.6], [-74.0, 40.7], [-112.1, 36.1], [-70.0, -32.6], [-60.0, -3.1], [10.0, 25.0],
+  [37.3, -3.0], [55.3, 25.2], [139.7, 35.7], [170.5, -43.6], [-19.0, 64.9], [2.3, 48.8], [77.2, 28.6], [116.4, 39.9], [-0.1, 51.5], [151.2, -33.9], [-99.1, 19.4], [31.2, 30.0]];
+function tileXY(lon, lat, z) {
+  const n = Math.pow(2, z), x = Math.floor((lon + 180) / 360 * n);
+  const y = Math.floor((1 - Math.log(Math.tan(lat * DEG) + 1 / Math.cos(lat * DEG)) / Math.PI) / 2 * n);
+  return [x, y];
+}
+const used = new Set();
+function randTile(z) {
+  const n = Math.pow(2, z);
+  for (let tries = 0; tries < 200; tries++) {
+    const p = LAND[Math.floor(Math.random() * LAND.length)];
+    let [x, y] = tileXY(p[0], p[1], z);
+    const spread = z <= 6 ? 1 : z <= 9 ? 6 : 40;
+    x += Math.floor((Math.random() * 2 - 1) * spread); y += Math.floor((Math.random() * 2 - 1) * spread);
+    x = ((x % n) + n) % n; y = Math.max(0, Math.min(n - 1, y));
+    const key = z + "/" + x + "/" + y;
+    if (!used.has(key)) { used.add(key); return [x, y]; }
+  }
+  return [Math.floor(Math.random() * n), Math.floor(Math.random() * n)];
+}
+const quad = (x, y, z) => { let q = ""; for (let i = z; i > 0; i--) { let d = 0, m = 1 << (i - 1); if (x & m) d++; if (y & m) d += 2; q += d; } return q; };
+const SRC = {
+  esri: (z, i, h) => { const [x, y] = randTile(z); return `https://${h || "server"}.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`; },
+  bing: (z, i) => { const [x, y] = randTile(z); return `https://ecn.t${i % 4}.tiles.virtualearth.net/tiles/a${quad(x, y, z)}.jpeg?g=7146&n=z`; },
+  terrain: (z, i) => { const [x, y] = randTile(z); return `https://${"abc"[i % 3]}.terrain.openglobus.org/all/${z}/${x}/${y}.png`; }
+};
+const mk = (kind, z, n, host) => Array.from({ length: n }, (_, i) => SRC[kind](z, i, host));
+
+async function getTile(url, cache) {
+  const t0 = performance.now();
+  try {
+    const r = await fetch(url, { mode: "cors", cache: cache ? "default" : "no-store" });
+    const b = await r.blob(), t1 = performance.now();
+    return { ok: r.ok, ms: t1 - t0, bytes: b.size, blob: b, url, status: r.status };
+  } catch (e) { return { ok: false, ms: performance.now() - t0, bytes: 0, err: String(e && e.message || e), url }; }
+}
+// пул из c одновременных запросов
+async function runPool(urls, c, keep) {
+  const res = new Array(urls.length); let next = 0;
+  const t0 = performance.now();
+  const worker = async () => { while (next < urls.length) { const i = next++; res[i] = await getTile(urls[i]); if (!keep) delete res[i].blob; } };
+  await Promise.all(Array.from({ length: Math.min(c, urls.length) }, worker));
+  return { res, wall: performance.now() - t0 };
+}
+function stat(r) {
+  const ok = r.res.filter(x => x && x.ok), bytes = ok.reduce((s, x) => s + x.bytes, 0), lat = ok.map(x => x.ms);
+  return { n: r.res.length, ok: ok.length, err: r.res.length - ok.length, wall: r.wall, tps: ok.length / (r.wall / 1000), mbps: bytes / 1048576 / (r.wall / 1000),
+    avgKb: ok.length ? bytes / ok.length / 1024 : NaN, med: med(lat), p95: pct(lat, 0.95), errs: r.res.filter(x => x && !x.ok).slice(0, 2).map(x => x.err || ("HTTP " + x.status)) };
+}
+function protoOf(urlPrefix) {
+  try { const e = performance.getEntriesByType("resource").filter(x => x.name.indexOf(urlPrefix) === 0); const p = e.map(x => x.nextHopProtocol).filter(Boolean); return p.length ? p[p.length - 1] : ""; } catch (e) { return ""; }
+}
+
+// ---- вывод ----
+const out = [];
+const logEl = $("log");
+function L(s) { out.push(s); logEl.textContent += s + "\n"; }
+let steps = 0, stepsDone = 0;
+function prog(msg) { $("status").textContent = msg; $("barIn").style.width = Math.min(100, stepsDone / steps * 100) + "%"; }
+const summary = {};
+
+async function main() {
+  const M = MODES[mode];
+  used.clear(); out.length = 0; logEl.textContent = ""; summary.sweep = null;
+  ["infoCard", "sumCard", "logCard", "copyCard"].forEach(id => $(id).hidden = true);
+  $("run").disabled = true;
+  steps = 1 + 1 + 4 + M.levels.length + 2 + M.zoomSet.length + 3 + 3 + 1; stepsDone = 0;
+  const conn = navigator.connection || {};
+  const info = ["Время: " + new Date().toLocaleString("ru-RU"), "Браузер: " + navigator.userAgent, "Ядер процессора: " + (navigator.hardwareConcurrency || "?") + ", память: " + (navigator.deviceMemory || "?") + " ГБ",
+    "Сеть (по данным браузера): " + (conn.effectiveType || "?") + ", канал ~" + (conn.downlink || "?") + " Мбит/с, задержка ~" + (conn.rtt || "?") + " мс", "Экран: " + screen.width + "×" + screen.height + ", плотность пикселей " + (window.devicePixelRatio || 1), "Режим теста: " + M.name];
+  $("info").textContent = info.join("\n"); $("infoCard").hidden = false; $("logCard").hidden = false;
+  info.forEach(x => out.push(x));
+
+  // 1. пропускная способность канала на одном большом файле
+  prog("Канал: скачиваю один большой файл…");
+  try {
+    const t0 = performance.now();
+    const r = await fetch("https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/og.es.js?bench=" + Date.now(), { cache: "no-store" });
+    const b = await r.blob(), s = (performance.now() - t0) / 1000;
+    summary.bw = b.size * 8 / 1e6 / s; L(`Канал (один файл ${f1(b.size / 1048576)} МБ): ${f1(summary.bw)} Мбит/с (${f1(b.size / 1048576 / s)} МБ/с)`);
+  } catch (e) { L("Канал: не удалось измерить (" + e.message + ")"); }
+  stepsDone++;
+
+  // 2. прогрев соединений и задержка (последовательно, по 6 тайлов)
+  const lat = {};
+  for (const [name, kind, z, host] of [["Esri (server)", "esri", 10, "server"], ["Esri (services)", "esri", 10, "services"], ["Bing", "bing", 10], ["Рельеф OpenGlobus", "terrain", 6]]) {
+    prog("Задержка: " + name + "…");
+    const urls = mk(kind, z, 7, host), res = [];
+    for (const u of urls) res.push(await getTile(u));
+    const ok = res.filter(r => r.ok); const first = res[0];
+    lat[name] = { first: first.ms, med: med(ok.slice(1).map(r => r.ms)), avgKb: ok.length ? ok.reduce((s, r) => s + r.bytes, 0) / ok.length / 1024 : NaN, ok: ok.length, err: res.length - ok.length, e: res.filter(r => !r.ok)[0] };
+    L(`Задержка ${name}: первый тайл ${f0(first.ms)} мс (с установкой соединения), далее в среднем ${f0(lat[name].med)} мс, размер ${f1(lat[name].avgKb)} КБ, ошибок ${lat[name].err}/7${lat[name].e ? " (" + (lat[name].e.err || "HTTP " + lat[name].e.status) + ")" : ""}`);
+    stepsDone++;
+  }
+  summary.lat = lat;
+  L("Протокол Esri: " + (protoOf("https://server.arcgisonline.com") || "браузер не сообщает") + "; рельеф: " + (protoOf("https://a.terrain.openglobus.org") || "браузер не сообщает"));
+
+  // 3. параллельность: Esri
+  L("\nЭсри, снимки z12: сколько тайлов в секунду при разной параллельности");
+  const sweep = [];
+  for (const c of M.levels) {
+    prog("Параллельность " + c + "…");
+    const urls = mk("esri", 12, Math.max(M.batchMin, 3 * c), "server");
+    const st = stat(await runPool(urls, c)); st.c = c; sweep.push(st);
+    L(`  ${String(c).padStart(2)} одновременно: ${f1(st.tps)} тайл/с, ${f1(st.mbps)} МБ/с, задержка тайла ср. ${f0(st.med)} / p95 ${f0(st.p95)} мс, ошибок ${st.err}/${st.n}${st.errs.length ? " " + st.errs[0] : ""}`);
+    stepsDone++;
+  }
+  summary.sweep = sweep;
+
+  // 4. шардирование (два имени сервера) на лучшей параллельности
+  const best = sweep.filter(s => s.err <= s.n * 0.1).sort((a, b) => b.tps - a.tps)[0] || sweep[0];
+  summary.best = best;
+  prog("Два имени сервера…");
+  { const n = Math.max(48, 3 * best.c);
+    const a = stat(await runPool(mk("esri", 12, n, "server"), best.c)), b2 = [].concat(mk("esri", 12, n / 2, "server"), mk("esri", 12, n / 2, "services"));
+    const bst = stat(await runPool(b2.sort(() => Math.random() - 0.5), best.c));
+    summary.shard = { one: a.tps, two: bst.tps };
+    L(`\nОдно имя сервера: ${f1(a.tps)} тайл/с; два имени (server + services): ${f1(bst.tps)} тайл/с при ${best.c} одновременных запросах`);
+  }
+  stepsDone += 2;
+
+  // 5. размер тайлов по зумам
+  L("\nРазмер и скорость тайла Esri по уровням детализации");
+  summary.zooms = [];
+  for (const z of M.zoomSet) {
+    prog("Уровень " + z + "…");
+    const st = stat(await runPool(mk("esri", z, 8, "server"), 4)); summary.zooms.push({ z, avgKb: st.avgKb, med: st.med, err: st.err });
+    L(`  z${z}: ${f1(st.avgKb)} КБ, ${f0(st.med)} мс, ошибок ${st.err}/8`);
+    stepsDone++;
+  }
+
+  // 6. Bing и рельеф: параллельность
+  for (const [name, kind, z] of [["Bing z12", "bing", 12], ["Рельеф OpenGlobus z6", "terrain", 6]]) {
+    prog(name + "…");
+    const st8 = stat(await runPool(mk(kind, z, 48, "server"), 8)), st16 = stat(await runPool(mk(kind, z, 64, "server"), 16));
+    summary[kind] = { c8: st8.tps, c16: st16.tps, kb: st16.avgKb, err: st16.err + st8.err };
+    L(`\n${name}: ${f1(st8.tps)} тайл/с при 8 одновременных, ${f1(st16.tps)} при 16, ${f1(st16.avgKb)} КБ/тайл, ошибок ${st8.err + st16.err}`);
+    stepsDone++;
+  }
+  stepsDone++; // рельеф
+
+  // 7. разбор картинок: главный поток и несколько потоков
+  prog("Разбор картинок…");
+  const blobs = (await runPool(mk("esri", 12, 40, "server"), 16, true)).res.filter(r => r && r.ok).map(r => r.blob);
+  L(`\nРазбор картинок (${blobs.length} тайлов z12):`);
+  if (blobs.length >= 8 && typeof createImageBitmap === "function") { try {
+    let t0 = performance.now(); for (const b of blobs) { const bm = await createImageBitmap(b); bm.close(); } const seq = (performance.now() - t0) / blobs.length;
+    t0 = performance.now(); await Promise.all(blobs.map(async b => { const bm = await createImageBitmap(b); bm.close(); })); const par = (performance.now() - t0) / blobs.length;
+    summary.decode = { seq, par };
+    L(`  по одному: ${f1(seq)} мс/тайл (${f0(1000 / seq)} тайл/с), все сразу: ${f1(par)} мс/тайл (${f0(1000 / par)} тайл/с)`);
+  } catch (e) { L("  не удалось разобрать: " + e.message); } } else L("  пропущено (мало тайлов или нет createImageBitmap)");
+  stepsDone++;
+
+  // 8. несколько потоков (Web Worker): загрузка + разбор
+  prog("Несколько потоков…");
+  summary.workers = null;
+  try {
+    const W = Math.min(4, Math.max(2, navigator.hardwareConcurrency || 4));
+    const code = `onmessage = async e => { const urls = e.data.urls, c = e.data.c; let next = 0, ok = 0, bytes = 0; const t0 = performance.now();
+      const w = async () => { while (next < urls.length) { const u = urls[next++]; try { const r = await fetch(u, { mode: 'cors', cache: 'no-store' }); const b = await r.blob(); bytes += b.size; if (typeof createImageBitmap === 'function') { const bm = await createImageBitmap(b); bm.close(); } ok++; } catch (err) {} } };
+      await Promise.all(Array.from({ length: c }, w)); postMessage({ ok, bytes, ms: performance.now() - t0 }); };`;
+    const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+    const per = 24, c = 8;
+    const t0 = performance.now();
+    const rs = await Promise.all(Array.from({ length: W }, () => new Promise((res, rej) => { const w = new Worker(url); w.onmessage = e => { res(e.data); w.terminate(); }; w.onerror = e => { rej(new Error(e.message || "worker")); w.terminate(); }; w.postMessage({ urls: mk("esri", 12, per, "server"), c }); })));
+    const wall = performance.now() - t0, ok = rs.reduce((s, r) => s + r.ok, 0), bytes = rs.reduce((s, r) => s + r.bytes, 0);
+    const main = stat(await runPool(mk("esri", 12, per * W, "server"), c * W));
+    summary.workers = { W, tps: ok / (wall / 1000), mainTps: main.tps };
+    L(`\nНесколько потоков (${W} воркеров × ${c} запросов, загрузка и разбор в каждом): ${f1(ok / (wall / 1000))} тайл/с, ${f1(bytes / 1048576 / (wall / 1000))} МБ/с; тот же объём в главном потоке (без разбора): ${f1(main.tps)} тайл/с`);
+  } catch (e) { L("\nНесколько потоков: не удалось (" + e.message + ")"); }
+  stepsDone++;
+
+  // 9. кэш
+  prog("Кэш браузера…");
+  { const urls = mk("esri", 12, 12, "server"); await runPool(urls.map(u => u), 6);
+    const t0 = performance.now(); const r1 = []; for (const u of urls) r1.push(await getTile(u, true)); const cached = (performance.now() - t0) / urls.length;
+    const t1 = performance.now(); const r2 = []; for (const u of urls) r2.push(await getTile(u, false)); const fresh = (performance.now() - t1) / urls.length;
+    summary.cache = { cached, fresh };
+    L(`\nПовторный запрос тех же тайлов: из кэша браузера ${f1(cached)} мс, заново из сети ${f1(fresh)} мс (если кэш не быстрее, браузер Esri-тайлы не кэширует — значит, постоянный кэш в приложении даст выигрыш)`); }
+  stepsDone++; prog("Готово");
+
+  render();
+  $("run").disabled = false; $("barIn").style.width = "100%";
+}
+
+function render() {
+  const s = summary, T = s.best ? s.best.tps : NaN, mb = s.best ? s.best.mbps : NaN;
+  let h = "";
+  h += `<p>Лучший результат Esri: <b class="best">${f1(T)} тайлов/с</b> (${f1(mb)} МБ/с) при <b>${s.best ? s.best.c : "?"}</b> одновременных запросах. ` +
+    (s.sweep ? "Дальше увеличивать параллельность " + (s.sweep[s.sweep.length - 1].tps < T * 1.1 ? "смысла нет — выигрыш меньше 10%" : "ещё имеет смысл") + "." : "") + "</p>";
+  h += "<table><tr><th>Одновременно</th><th>тайл/с</th><th>МБ/с</th><th>задержка</th><th>ошибки</th></tr>";
+  (s.sweep || []).forEach(r => { h += `<tr><td class="${r === s.best ? "best" : ""}">${r.c}</td><td class="${r === s.best ? "best" : ""}">${f1(r.tps)}</td><td>${f1(r.mbps)}</td><td>${f0(r.med)} мс</td><td class="${r.err ? "bad" : ""}">${r.err}/${r.n}</td></tr>`; });
+  h += "</table>";
+  const small = [];
+  if (s.shard) small.push(`Два имени сервера: ${f1(s.shard.two)} против ${f1(s.shard.one)} тайл/с на одном`);
+  if (s.terrain) small.push(`рельеф OpenGlobus: ${f1(s.terrain.c16)} тайл/с`);
+  if (s.bing) small.push(`Bing: ${f1(s.bing.c16)} тайл/с`);
+  if (s.decode) small.push(`разбор картинок: ${f0(1000 / s.decode.par)} тайл/с`);
+  if (s.workers) small.push(`в ${s.workers.W} потоках с разбором: ${f1(s.workers.tps)} тайл/с`);
+  if (small.length) h += `<p>${small.join("; ")}.</p>`;
+  // что из этого получается для полёта
+  if (isFinite(T)) {
+    h += `<p style="margin-top:10px"><b>Что это значит для полёта.</b> Чтобы картинка прямо под самолётом была чёткой, за секунду нужно получать тайлов примерно столько, сколько новых плиток входит в кадр: около <i>3 × скорость ÷ размер плитки</i>, а размер плитки — порядка 2/3 высоты. Отсюда потолок скорости ≈ <i>0,22 × тайл/с × высота</i>. «Практически» — с запасом на рельеф, разбор и несколько уровней детализации (×0,3).</p>`;
+    h += "<table><tr><th>Высота</th><th>потолок км/ч</th><th>практически км/ч</th></tr>";
+    for (const alt of [100, 1000, 10000, 100000, 1000000]) {
+      const v = 0.222 * T * alt * 3.6, vp = v * 0.3;
+      h += `<tr><td>${alt >= 1000 ? f0(alt / 1000) + " км" : alt + " м"}</td><td>${f0(v)}</td><td>${f0(vp)}</td></tr>`;
+    }
+    h += "</table>";
+    const need = 66667 * 9 / (2 * T), needP = need / 0.3;
+    h += `<p>Для «Земля за 10 минут» (240 000 км/ч) чётко прогрузится только на высоте от ~<b>${f0(need / 1000)} км</b> (практически от ~<b>${f0(needP / 1000)} км</b>). Ниже будет размыто при любом движке, пока источник отдаёт столько тайлов в секунду.</p>`;
+  }
+  $("sum").innerHTML = h; $("sumCard").hidden = false; $("copyCard").hidden = false;
+  try { localStorage.setItem("bench-last", JSON.stringify({ t: Date.now(), best: s.best && { c: s.best.c, tps: s.best.tps, mbps: s.best.mbps } })); } catch (e) {}
+}
+$("run").onclick = () => main().catch(e => { $("status").textContent = "Ошибка: " + e.message; $("run").disabled = false; });
+$("copy").onclick = async () => {
+  const txt = out.join("\n") + "\n\nЛучший результат Esri: " + (summary.best ? f1(summary.best.tps) + " тайл/с при " + summary.best.c + " одновременных" : "—");
+  try { await navigator.clipboard.writeText(txt); $("copied").textContent = "Скопировано — вставьте в чат."; }
+  catch (e) { const ta = document.createElement("textarea"); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); $("copied").textContent = "Скопировано — вставьте в чат."; } catch (e2) { $("copied").textContent = "Не удалось скопировать — выделите текст в «Подробно» и скопируйте вручную."; } ta.remove(); }
+};
+</script>
+</body>
+</html>
