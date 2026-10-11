@@ -92,7 +92,7 @@
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps">Версия: 11.10, 14:00</span>
+  <span class="fps">Версия: 11.10, 14:20</span>
   <div class="fps" id="routeDbg" style="max-width:300px;white-space:pre-wrap;font-size:11px"></div>
 </div>
 
@@ -347,11 +347,15 @@ Object.values(TERRAINS).forEach(t => {
 });
 function setDetailBox(m) {
   const r = m.r * 1.3;   // чуть шире рамки снимков, чтобы склоны у края не обрывались
-  const first = !detailBox;
+  const prev = detailBox;
   detailBox = [m.lon - r, m.lat - r, m.lon + r, m.lat + r];
-  // участки, которым раньше отказали в подробном рельефе, должны перезапроситься — перестраиваем дерево.
-  // Только при смене горы и вне кадра отрисовки (во время первой инициализации движка это ломает отрисовку).
-  if (!first) requestAnimationFrame(() => planet.quadTreeStrategy.destroyBranches());
+  // Участки рядом с новой горой, которым раньше отказали в подробном рельефе, должны перезапроситься.
+  // Это нужно, только если новая гора близко к прежней (например, в Крыму) — иначе там и так всё новое.
+  // Перестраиваем дерево вне кадра отрисовки (во время первой инициализации движка это ломает отрисовку).
+  if (prev) {
+    const near = Math.abs((prev[0] + prev[2]) / 2 - m.lon) < 1.5 && Math.abs((prev[1] + prev[3]) / 2 - m.lat) < 1.5;
+    if (near) requestAnimationFrame(() => planet.quadTreeStrategy.destroyBranches());
+  }
 }
 
 // После переключения рельефа движок дозапрашивает плитки у старого объекта, а тот уже отвязан от планеты
@@ -383,7 +387,7 @@ window.planet = planet;   // для отладки из консоли брау�
 // ---------------- Маршруты восхождения ----------------
 const ROUTE_LIFT = 3;      // небольшой подъём линии над рельефом; от провалов под склон защищает depthOffset слоя
 const LABEL_LIFT = 8;      // кружки точек — чуть над поверхностью
-const TEXT_LIFT = 150;     // подписи — заметно выше окружающего рельефа
+const TEXT_LIFT = 250;     // подписи — на «флагштоке» на 250 м выше самого высокого места в радиусе 400 м
 
 // Сгущаем маршрут: точка каждые ~50 м, высота сначала линейная между ключевыми точками
 function densify(route) {
@@ -462,7 +466,11 @@ MOUNTAINS.forEach(m => {
       // для кластеризации подписей: текст, размер шрифта и важность (вершина важнее, выше — важнее)
       e.labelInfo = { len: (p[3] + ", " + p[2] + " м").length, size: top ? 15 : 13, prio: (top ? 100000 : 0) + p[2], rt };
       e.labelShown = true;
+      // «флагшток»: тонкая вертикальная линия от точки маршрута вверх к подписи
+      e.stalk = new Entity({ polyline: {
+        pathLonLat: [[[p[0], p[1], p[2]], [p[0], p[1], p[2] + TEXT_LIFT]]], thickness: 1.5, color: "rgba(255,255,255,0.75)" } });
       routeLayer.add(e);
+      routeLayer.add(e.stalk);
       labelLayer.add(e.textEntity);
       return e;
     });
@@ -472,7 +480,7 @@ MOUNTAINS.forEach(m => {
 function setRouteVisible(rt, on) {
   rt.visible = on;
   rt.line.setVisibility(on);
-  rt.points.forEach(e => { if (e) { e.setVisibility(on); e.labelShown = on; e.textEntity.setVisibility(on); } });
+  rt.points.forEach(e => { if (e) { e.setVisibility(on); e.labelShown = on; e.textEntity.setVisibility(on); e.stalk.setVisibility(on); } });
   declutterLabels();
 }
 
@@ -772,9 +780,9 @@ function showRouteDbg() {
 // ---- Подписи точек ----
 // 1) Базовая высота подписи — над самым высоким местом рельефа в радиусе ~300 м вокруг точки (+TEXT_LIFT),
 //    а не над самой точкой: иначе на склоне подпись утыкается в гору выше по склону.
-// 2) Динамика: когда камера останавливается (и раз в секунду во время облёта), для каждой подписи выбранной
-//    горы проверяем, видна ли она с камеры — нет ли рельефа на линии «камера → подпись». Если подпись
-//    закрыта склоном, поднимаем её ступенями по 100 м (до +600 м), пока не станет видна.
+// 2) Подпись стоит на «флагштоке» — вертикальной линии от точки маршрута. Отдельный слой подписей сдвинут
+//    к камере (depthOffset), поэтому склоны перед подписью её не перерезают. Во время движения камеры
+//    ничего не пересчитываем и рельеф не запрашиваем — фон не подгружается.
 async function placeLabels(rt) {
   const kx = 111320 * Math.cos(rt.pts[0][1] * Math.PI / 180), ky = 111320;
   await Promise.all(rt.points.map(async e => {
@@ -786,67 +794,18 @@ async function placeLabels(rt) {
     // зум как у линии: на грубых плитках острые гребни сглажены, и подпись оказывалась ниже настоящего склона
     const hh = (await heightsAt(ring, DRAPE_ZOOM)).filter(isFinite);
     e.labelBase = Math.max(h, ...hh) + TEXT_LIFT;
-    e.labelLift = 0;
     e.textEntity.setLonLat(new LonLat(lon, lat, e.labelBase));
+    e.stalk.polyline.setPathLonLat([[[lon, lat, h + LABEL_LIFT], [lon, lat, e.labelBase]]]);
   }));
 }
-let losBusy = false, losLast = 0;
-async function updateLabelsLOS() {
-  if (losBusy || !current) return;
-  losBusy = true; losLast = performance.now();
-  try {
-    const cam = planet.camera.getLonLat();
-    const kx = 111320 * Math.cos(cam.lat * Math.PI / 180), ky = 111320;
-    for (const rt of current.routes) {
-      if (!rt.visible) continue;
-      for (const e of rt.points) {
-        if (!e || e.labelBase == null) continue;
-        const [lon, lat] = e.labelPos;
-        let lift = 0;
-        for (; lift <= 600; lift += 100) {
-          const h = e.labelBase + lift;
-          const dist = Math.hypot((lon - cam.lon) * kx, (lat - cam.lat) * ky);
-          const n = Math.min(40, Math.max(8, Math.round(dist / 250)));
-          const samples = [];
-          for (let k = 1; k < n; k++) {               // ближнюю к подписи часть (последние 150 м) не проверяем
-            const f = k / n; if ((1 - f) * dist < 150) continue;
-            samples.push([cam.lon + (lon - cam.lon) * f, cam.lat + (lat - cam.lat) * f, cam.height + (h - cam.height) * f]);
-          }
-          const hh = await heightsAt(samples, DRAPE_ZOOM);
-          if (!samples.some((sp, k) => isFinite(hh[k]) && hh[k] > sp[2] - 30)) break;   // ничего не мешает (с запасом 30 м)
-        }
-        lift = Math.min(lift, 600);
-        if (lift !== e.labelLift) { e.labelLift = lift; e.textEntity.setLonLat(new LonLat(lon, lat, e.labelBase + lift)); }
-      }
-    }
-  } finally { losBusy = false; }
-}
-// Проверяем видимость подписей не по событиям камеры (в rc30 они приходят не при любом движении),
-// а сами: раз в 0,8 с, если камера сдвинулась
-let losEye = null;
-planet.renderer.events.on("postdraw", () => {
-  if (performance.now() - losLast < 800) return;
-  const eye = planet.camera.eye;
-  if (losEye && eye.sub(losEye).length() < 5) return;
-  losEye = eye.clone();
-  updateLabelsLOS();
-});
+
 
 // Фоновая укладка: когда выбранная гора готова, по одной укладываем остальные горы,
 // чтобы при переключении маршруты сразу лежали на рельефе.
 let bgRunning = false;
 function scheduleBackgroundDrape() {
-  // Не мешаем загрузке выбранной горы: стартуем через 10 с, по одной горе раз в 4 с,
-  // и только с обычным рельефом (подробный Mapterhorn слишком тяжёлый для фоновой докачки).
-  if (bgRunning || mapSettings.terrain !== "globus") return;
-  bgRunning = true;
-  const next = async () => {
-    const m = mapSettings.terrain === "globus" && MOUNTAINS.find(x => x !== current && x.routes.some(rt => !rt.draped && !rt.draping));
-    if (!m) { bgRunning = false; return; }
-    await Promise.all(m.routes.map(rt => drapeRoute(rt, m.name)));
-    setTimeout(() => (window.requestIdleCallback || (f => f()))(next), 4000);
-  };
-  setTimeout(next, 10000);
+  // Фоновая укладка маршрутов других гор отключена: она качала рельеф всех гор и отнимала сеть у выбранной.
+  // Маршруты укладываются при выборе горы — это быстро, а уложенные запоминаются до перезагрузки страницы.
 }
 
 // ---- Кластеризация подписей ----
@@ -886,6 +845,7 @@ function setLabel(e, on) {
   if (e.labelShown === on) return;
   e.labelShown = on;
   e.textEntity.setVisibility(on);
+  e.stalk.setVisibility(on);
 }
 planet.renderer.events.on("postdraw", () => {
   const now = performance.now();
