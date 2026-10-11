@@ -34,6 +34,11 @@
   .rchip { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; border: 1px solid #3a4350; border-radius: 999px;
     padding: 4px 10px; background: transparent; color: var(--fg); font-size: 12px; cursor: pointer; }
   .rchip i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .rchip.rdel { padding: 4px 8px; margin-left: -4px; color: var(--muted); }
+  .rchip.radd { border-style: dashed; color: var(--chip-on); }
+  #toast { position: absolute; left: 12px; right: 12px; bottom: calc(172px + env(safe-area-inset-bottom, 0px)); z-index: 40;
+    background: rgba(16,20,26,0.95); border: 1px solid #3a4350; border-radius: 10px; padding: 8px 12px; font-size: 13px; white-space: pre-wrap; }
+  #toast[hidden] { display: none; }
   .rchip.off { color: var(--muted); text-decoration: line-through; opacity: 0.6; }
   #chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
   #chips::-webkit-scrollbar { display: none; }
@@ -88,6 +93,8 @@
 <body>
 <div id="globus"></div>
 <div id="log"></div>
+<div id="toast" hidden></div>
+<input type="file" id="gpxFile" multiple hidden>
 
 <div id="diag" hidden>
   <div class="head"><b>Настройки карты</b><button class="close" id="diagClose" aria-label="Закрыть">✕</button></div>
@@ -99,8 +106,9 @@
   <label><input type="checkbox" id="dFrames" checked> Грубая подложка + рамки гор</label>
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
+  <button id="gpxClear" class="mini" style="align-self:flex-start;border:0;border-radius:8px;padding:6px 10px;background:var(--chip);color:var(--fg);font-size:12px;cursor:pointer">Удалить все загруженные GPX-треки</button>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps" id="ver">Версия: 11.10, 16:00</span>
+  <span class="fps" id="ver">Версия: 11.10, 16:15</span>
   <span class="fps" id="nodes">Узлов: —</span>
   <details><summary>Отчёт об укладке маршрутов</summary>
     <div class="fps" id="routeDbg" style="white-space:pre-wrap;font-size:11px"></div>
@@ -324,18 +332,20 @@ const saveMap = () => { try { localStorage.setItem(MAP_KEY, JSON.stringify(mapSe
 //  • base — глобальная подложка только с грубыми тайлами (до 5-го зума), это «вид с орбиты»;
 //  • mountains — для каждой горы свой слой с extent: внутри рамки детальные тайлы, снаружи ничего не грузится;
 //  • full — подложка без ограничений, для сравнения в диагностике.
+const makeLayer = (kind, name, opts) => kind === "bing"
+  ? new Bing(name, opts)
+  : new XYZ(name, { url: ESRI, attribution: "Esri World Imagery", ...opts });
+// слой детальных снимков одной горы (внутри рамки m.r вокруг m.lon, m.lat)
+const makeMountainLayer = (kind, m, visible) => makeLayer(kind, kind + " " + m.name, {
+  isBaseLayer: false, maxNativeZoom: 17, visibility: visible, hideInLayerSwitcher: true, attribution: "",
+  extent: [[m.lon - m.r, m.lat - m.r], [m.lon + m.r, m.lat + m.r]]
+});
 function makeImagery(kind) {
-  const make = (name, opts) => kind === "bing"
-    ? new Bing(name, opts)
-    : new XYZ(name, { url: ESRI, attribution: "Esri World Imagery", ...opts });
   const on = mapSettings.imagery === kind;
   return {
-    base: make(kind + " низкое", { isBaseLayer: true, maxNativeZoom: 5, visibility: on }),
-    full: make(kind + " полная", { isBaseLayer: true, maxNativeZoom: 17, visibility: false }),
-    mountains: MOUNTAINS.map(m => make(kind + " " + m.name, {
-      isBaseLayer: false, maxNativeZoom: 17, visibility: on, hideInLayerSwitcher: true, attribution: "",
-      extent: [[m.lon - m.r, m.lat - m.r], [m.lon + m.r, m.lat + m.r]]
-    }))
+    base: makeLayer(kind, kind + " низкое", { isBaseLayer: true, maxNativeZoom: 5, visibility: on }),
+    full: makeLayer(kind, kind + " полная", { isBaseLayer: true, maxNativeZoom: 17, visibility: false }),
+    mountains: MOUNTAINS.map(m => makeMountainLayer(kind, m, on))
   };
 }
 const IMAGERY = { bing: makeImagery("bing"), esri: makeImagery("esri") };
@@ -429,46 +439,59 @@ function nearLabeled(labeled, p) {
   return labeled.some(q => Math.abs(q[0] - p[0]) * 111320 * Math.cos(p[1] * Math.PI / 180) < 150 && Math.abs(q[1] - p[1]) * 111320 < 150);
 }
 
-MOUNTAINS.forEach(m => {
-  const labeled = [];
-  m.routes.forEach((rt, ri) => {
-    rt.color = ROUTE_COLORS[ri % ROUTE_COLORS.length];
-    rt.visible = true;
-    rt.dense = densify(rt.pts);
-    rt.line = new Entity({
-      polyline: { pathLonLat: [rt.dense.map(p => [p[0], p[1], p[2] + ROUTE_LIFT])], thickness: 4, color: rt.color }
-    });
-    routeLayer.add(rt.line);
-    rt.points = rt.pts.map((p, i) => {
-      if (nearLabeled(labeled, p)) return null;      // эту точку уже подписал другой маршрут
-      labeled.push(p);
-      const top = i === rt.pts.length - 1;
-      // кружок — у самой поверхности, подпись — отдельно и повыше, чтобы не врезалась в склон
-      const e = new Entity({
-        lonlat: [p[0], p[1], p[2] + LABEL_LIFT],
-        billboard: { src: top ? DOT_TOP : DOTS[ri % DOTS.length], size: [14, 14] }
-      });
-      e.textEntity = new Entity({
-        lonlat: [p[0], p[1], p[2] + TEXT_LIFT],
-        label: {
-          text: p[3] + ", " + p[2] + " м",
-          size: top ? 15 : 13, color: "#ffffff", outline: ENGINE_V1 ? 3 : 0.28, outlineColor: "rgba(0,0,0,0.85)",   // в 1.0 обводка в пикселях
-          offset: [8, 0]
-        }
-      });
-      // для кластеризации подписей: текст, размер шрифта и важность (вершина важнее, выше — важнее)
-      e.labelInfo = { len: (p[3] + ", " + p[2] + " м").length, size: top ? 15 : 13, prio: (top ? 100000 : 0) + p[2], rt };
-      e.labelShown = true;
-      // «флагшток»: тонкая вертикальная линия от точки маршрута вверх к подписи
-      e.stalk = new Entity({ polyline: {
-        pathLonLat: [[[p[0], p[1], p[2]], [p[0], p[1], p[2] + TEXT_LIFT]]], thickness: 1.5, color: "rgba(255,255,255,0.75)" } });
-      routeLayer.add(e);
-      routeLayer.add(e.stalk);
-      labelLayer.add(e.textEntity);
-      return e;
-    });
+// Создаёт линию, кружки, подписи и «флагштоки» маршрута rt (номер ri среди маршрутов горы m).
+// labeled — уже подписанные точки горы: общие точки нескольких маршрутов подписываем один раз.
+function buildRoute(m, rt, ri, labeled) {
+  rt.color = ROUTE_COLORS[ri % ROUTE_COLORS.length];
+  rt.visible = true;
+  rt.dense = densify(rt.pts);
+  rt.line = new Entity({
+    polyline: { pathLonLat: [rt.dense.map(p => [p[0], p[1], p[2] + ROUTE_LIFT])], thickness: 4, color: rt.color }
   });
-});
+  routeLayer.add(rt.line);
+  rt.points = rt.pts.map((p, i) => {
+    if (rt.gpx && !p[3]) return null;                // у GPX-трека подписаны только старт, финиш и высшая точка
+    if (nearLabeled(labeled, p)) return null;      // эту точку уже подписал другой маршрут
+    labeled.push(p);
+    const top = i === rt.pts.length - 1;
+    const text = rt.noEle ? p[3] : p[3] + ", " + p[2] + " м";
+    // кружок — у самой поверхности, подпись — отдельно и повыше, чтобы не врезалась в склон
+    const e = new Entity({
+      lonlat: [p[0], p[1], p[2] + LABEL_LIFT],
+      billboard: { src: top ? DOT_TOP : DOTS[ri % DOTS.length], size: [14, 14] }
+    });
+    e.textEntity = new Entity({
+      lonlat: [p[0], p[1], p[2] + TEXT_LIFT],
+      label: {
+        text,
+        size: top ? 15 : 13, color: "#ffffff", outline: ENGINE_V1 ? 3 : 0.28, outlineColor: "rgba(0,0,0,0.85)",   // в 1.0 обводка в пикселях
+        offset: [8, 0]
+      }
+    });
+    // для кластеризации подписей: текст, размер шрифта и важность (вершина важнее, выше — важнее)
+    e.labelInfo = { len: text.length, size: top ? 15 : 13, prio: (top ? 100000 : 0) + p[2], rt };
+    e.labelShown = true;
+    // «флагшток»: тонкая вертикальная линия от точки маршрута вверх к подписи
+    e.stalk = new Entity({ polyline: {
+      pathLonLat: [[[p[0], p[1], p[2]], [p[0], p[1], p[2] + TEXT_LIFT]]], thickness: 1.5, color: "rgba(255,255,255,0.75)" } });
+    routeLayer.add(e);
+    routeLayer.add(e.stalk);
+    labelLayer.add(e.textEntity);
+    return e;
+  });
+}
+function buildMountainRoutes(m) {
+  m.labeled = [];
+  m.routes.forEach((rt, ri) => buildRoute(m, rt, ri, m.labeled));
+}
+MOUNTAINS.forEach(buildMountainRoutes);
+
+// убрать маршрут со сцены (для удаляемых пользователем треков)
+function removeRouteEntities(rt) {
+  const rm = e => { try { e.remove(); } catch (err) {} };
+  rm(rt.line);
+  (rt.points || []).forEach(e => { if (e) { rm(e); rm(e.textEntity); rm(e.stalk); } });
+}
 
 function setRouteVisible(rt, on) {
   rt.visible = on;
@@ -625,8 +648,9 @@ async function drapeRoute(rt, mountainName) {
   const gen = drapeGen;
   const T0 = performance.now();
   try {
-    const snapped = await snapPoints(rt);
-    const eff = await findDetours(rt, snapped.pts);
+    // GPX-трек — настоящая запись пути с сотнями точек: подгонка по высоте и обходы ему не нужны, просто кладём на рельеф
+    const snapped = rt.gpx ? { pts: rt.pts, moved: 0 } : await snapPoints(rt);
+    const eff = rt.gpx ? { pts: rt.pts, orig: rt.pts.map((_, i) => i), air: [], bridges: [] } : await findDetours(rt, snapped.pts);
     const pts = eff.pts, dense = densify(pts);
     const hs = await heightsAt(dense, DRAPE_ZOOM);
     // Высота каждой точки линии — по рельефу. Высоты ключевых точек в данных грубые, поэтому им не верим:
@@ -713,7 +737,7 @@ async function drapeRoute(rt, mountainName) {
     // Считаем «закрытие» профиля окном ±DIP_WIN точек (≈ ±300 м): сначала максимум по окну, потом минимум.
     // Оно заполняет только провалы уже окна и не трогает обычные подъёмы и спуски. Где провал глубже
     // DIP_FILL, линия идёт по закрытому профилю (поверху), в остальных местах — как раньше по рельефу.
-    {
+    if (!rt.gpx) {   // у настоящего трека провалы — это реальные овраги, их не засыпаем
       const DIP_WIN = 6, DIP_FILL = 80, n = fixed.length, P = 2 * DIP_WIN;
       // края профиля продлеваем крайними значениями, иначе у начала и конца маршрута закрытие даёт ложный подъём
       const f = [...Array(P).fill(fixed[0]), ...fixed, ...Array(P).fill(fixed[n - 1])];
@@ -736,6 +760,10 @@ async function drapeRoute(rt, mountainName) {
     await placeLabels(rt);
     if (gen !== drapeGen) { rt.redo = true; return; }
     rt.draped = true;
+    if (rt.gpx) {
+      if (rt.noEle) { rt.stats.gain = gainOf(ground); if (current && current.routes.includes(rt)) renderRouteList(current); }
+      dbg.points = rt.pts.length;
+    }
     dbg.ms = Math.round(performance.now() - dbg.t0);
     rt.dbg = dbg;
     showRouteDbg();
@@ -756,6 +784,7 @@ function showRouteDbg() {
     if (!rt.dbg) return "• " + rt.name + ": " + (rt.draping ? "считается…" : "ещё не уложен на рельеф");
     const d = rt.dbg;
     let t = "• " + rt.name + ": уложен за " + d.ms + " мс";
+    if (rt.gpx) t += ", GPX " + rt.stats.km.toFixed(1).replace(".", ",") + " км, набор " + rt.stats.gain + " м, точек " + d.points;
     if (d.noTerrain) t += ", без рельефа " + d.noTerrain + " точ.";
     if (d.moved) t += ", подогнано по высоте точек: " + d.moved;
     (rt.snapReport || []).forEach(line => { t += "\n   ◦ " + line; });
@@ -855,10 +884,21 @@ function renderRouteList(m) {
     const b = document.createElement("button");
     b.className = "rchip" + (rt.visible ? "" : " off");
     b.innerHTML = '<i style="background:' + rt.color + '"></i>';
-    b.appendChild(document.createTextNode(rt.name));
+    const st = rt.gpx && rt.stats ? " · " + rt.stats.km.toFixed(1).replace(".", ",") + " км" + (rt.stats.gain ? ", ↑" + rt.stats.gain + " м" : "") : "";
+    b.appendChild(document.createTextNode(rt.name + st));
     b.onclick = () => { setRouteVisible(rt, !rt.visible); b.classList.toggle("off", !rt.visible); };
     box.appendChild(b);
+    if (rt.user) {   // загруженный трек можно удалить
+      const x = document.createElement("button");
+      x.className = "rchip rdel"; x.textContent = "✕"; x.setAttribute("aria-label", "Удалить трек");
+      x.onclick = () => { if (confirm("Удалить трек «" + rt.name + "»?")) deleteUserTrack(rt); };
+      box.appendChild(x);
+    }
   });
+  const add = document.createElement("button");
+  add.className = "rchip radd"; add.textContent = "＋ GPX";
+  add.onclick = () => document.getElementById("gpxFile").click();
+  box.appendChild(add);
 }
 
 // Камера стоит позади начала маршрута и чуть сбоку и смотрит на вершину:
@@ -875,7 +915,7 @@ function saveSettings() {
 function cameraFor(m) {
   // Откуда смотреть по умолчанию: позади начала основного маршрута и чуть сбоку, чтобы путь шёл снизу вверх к вершине.
   // Возвращаем курс камеры (куда она смотрит, от севера по часовой) и расстояние до вершины.
-  const r = m.route, s0 = r[0], top = r[r.length - 1];
+  const r = m.route, s0 = r[0], top = m.top || r[r.length - 1];
   const kx = 111320 * Math.cos(m.lat * Math.PI / 180), ky = 111320;
   const dx = (top[0] - s0[0]) * kx, dy = (top[1] - s0[1]) * ky;
   const len = Math.max(Math.hypot(dx, dy), 1500);
@@ -937,7 +977,7 @@ function goTo(i) {
   const keepOrbit = orbiting;                      // если облёт шёл — продолжим его на новой горе
   orbiting = false;
   // облёт, наклон и расстояние — относительно конечной точки подъёма (вершины маршрута)
-  const top = m.route[m.route.length - 1];
+  const top = m.top || m.route[m.route.length - 1];
   setSummit(top);
   orbitCenter = summit; orbitUp = U;
   const c = cameraFor(m);
@@ -958,11 +998,14 @@ function goTo(i) {
   document.getElementById("mName").textContent = m.name;
   const n = m.routes.length;
   document.getElementById("mMeta").textContent =
-    m.h.toLocaleString("ru-RU") + " м · " + n + " " + (n === 1 ? "маршрут" : n < 5 ? "маршрута" : "маршрутов");
+    (m.h > 0 ? m.h.toLocaleString("ru-RU") + " м · " : "") + n + " " + (n === 1 ? "маршрут" : n < 5 ? "маршрута" : "маршрутов");
   renderRouteList(m);
   showRouteDbg();
   Promise.all(m.routes.map(rt => drapeRoute(rt, m.name))).then(scheduleBackgroundDrape);
-  document.querySelectorAll(".chip").forEach((c, k) => c.classList.toggle("on", k === i));
+  document.querySelectorAll(".chip").forEach((c, k) => {
+    c.classList.toggle("on", k === i);
+    if (k === i) chips.scrollTo({ left: c.offsetLeft - (chips.clientWidth - c.offsetWidth) / 2, behavior: "smooth" });   // активная кнопка в середине ряда
+  });
   if (typeof applySun === "function" && sunState.on) applySun();
 }
 
@@ -996,13 +1039,17 @@ function stopOrbit() {
 }
 
 const chips = document.getElementById("chips");
-MOUNTAINS.forEach((m, i) => {
-  const b = document.createElement("button");
-  b.className = "chip";
-  b.textContent = m.name;
-  b.onclick = () => goTo(i);
-  chips.appendChild(b);
-});
+function buildChips() {
+  chips.innerHTML = "";
+  MOUNTAINS.forEach((m, i) => {
+    const b = document.createElement("button");
+    b.className = "chip" + (m === current ? " on" : "");
+    b.textContent = m.name;
+    b.onclick = () => goTo(i);
+    chips.appendChild(b);
+  });
+}
+buildChips();
 
 document.getElementById("bMode").onclick = function () {
   flyMode = !flyMode;
@@ -1225,15 +1272,210 @@ planet.renderer.events.on("postdraw", () => {
   const now = performance.now();
   if (now - fpsT > 1000) {
     document.getElementById("fps").textContent = "FPS: " + Math.round(frames * 1000 / (now - fpsT));
-    document.getElementById("ver").textContent = "Версия: 11.10, 16:00 · движок " + ENGINE +
+    document.getElementById("ver").textContent = "Версия: 11.10, 16:15 · движок " + ENGINE +
       " · кадр " + planet.renderer.handler.canvas.width + "×" + planet.renderer.handler.canvas.height + " пикс.";
     document.getElementById("nodes").textContent = "Узлов: " + planet._createdNodesCount + " (очистка после " + planet._maxNodes + ")";
     frames = 0; fpsT = now;
   }
 });
 
+// ---------------- Свои GPX-треки ----------------
+// Трек из файла (Komoot, Strava, Garmin, AllTrails…) — это уже настоящая запись пути с сотнями точек, поэтому он
+// идёт по упрощённому конвейеру: прореживаем до точки каждые ~35 м и кладём на рельеф (без подгонки и обходов).
+// Если трек целиком лежит в рамке одной из гор — он добавляется к её маршрутам; иначе создаётся новое место
+// со своей рамкой детальных снимков. Треки запоминаются в браузере (localStorage) и возвращаются при следующем заходе.
+const USER_KEY = "mountains-demo-gpx-v1";
+const userTracks = [];            // записи для сохранения: { name, pts:[[lon,lat,ele]], noEle }
+const toastEl = document.getElementById("toast");
+let toastTimer = 0;
+function toast(msg, ms = 6000) {
+  toastEl.textContent = msg; toastEl.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { toastEl.hidden = true; }, ms);
+}
+const mDist = (a, b) => Math.hypot((b[0] - a[0]) * 111320 * Math.cos((a[1] + b[1]) / 2 * Math.PI / 180), (b[1] - a[1]) * 111320);
+
+// Набор высоты с гистерезисом: колебания меньше HYST метров (шум GPS и рельефа) не считаем
+function gainOf(h, HYST = 8) {
+  let gain = 0, ref = h[0];
+  for (const v of h) { if (!isFinite(v)) continue; if (v - ref >= HYST) { gain += v - ref; ref = v; } else if (ref - v >= HYST) ref = v; }
+  return Math.round(gain);
+}
+
+// Разбор GPX: каждый <trk> (и <rte>) — отдельный трек. Возвращает [{ name, pts:[[lon,lat,ele]], noEle }]
+function parseGpx(text, fileName) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if (doc.getElementsByTagName("parsererror").length) throw new Error("файл не похож на GPX (ошибка разбора XML)");
+  const base = fileName.replace(/\.[^.]+$/, "");
+  const out = [];
+  const take = (el, ptTag) => {
+    const raw = [];
+    for (const p of el.getElementsByTagName(ptTag)) {
+      const lat = parseFloat(p.getAttribute("lat")), lon = parseFloat(p.getAttribute("lon"));
+      if (!isFinite(lat) || !isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) continue;
+      const ee = p.getElementsByTagName("ele")[0], ele = ee ? parseFloat(ee.textContent) : NaN;
+      raw.push([lon, lat, isFinite(ele) ? ele : null]);
+    }
+    if (raw.length < 2) return;
+    const nameEl = Array.from(el.children).find(c => c.localName === "name");
+    out.push({ name: (nameEl && nameEl.textContent.trim()) || base, raw });
+  };
+  for (const t of doc.getElementsByTagName("trk")) take(t, "trkpt");
+  for (const r of doc.getElementsByTagName("rte")) take(r, "rtept");
+  return out;
+}
+
+// Прореживание: точка не чаще чем через step метров, всего не больше MAX; последняя точка всегда остаётся
+function thinTrack(raw) {
+  const MAX = 2500;
+  let step = 35, kept;
+  do {
+    kept = [raw[0]];
+    for (let i = 1; i < raw.length - 1; i++) if (mDist(kept[kept.length - 1], raw[i]) >= step) kept.push(raw[i]);
+    kept.push(raw[raw.length - 1]);
+    step *= 1.6;
+  } while (kept.length > MAX);
+  // пропущенные высоты (в части точек может не быть <ele>) — соседние значения
+  const have = kept.filter(p => p[2] !== null).length;
+  const noEle = have < kept.length * 0.8;
+  let last = null;
+  for (const p of kept) { if (p[2] === null) p[2] = last === null ? 0 : last; else last = p[2]; }
+  if (noEle) kept.forEach(p => { p[2] = 0; });
+  return { pts: kept.map(p => [+p[0].toFixed(5), +p[1].toFixed(5), Math.round(p[2])]), noEle };
+}
+
+// Какая из гор целиком содержит трек (его рамку) — к ней трек и добавляется
+function findHost(pts) {
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  pts.forEach(p => { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); });
+  const m = MOUNTAINS.find(m => x0 >= m.lon - m.r && x1 <= m.lon + m.r && y0 >= m.lat - m.r && y1 <= m.lat + m.r);
+  return { m, box: [x0, y0, x1, y1] };
+}
+
+// Новое место под трек, не попавший ни в одну из рамок: рамка детальных снимков вокруг трека, облёт — вокруг высшей точки
+function createPlace(name, pts, box, noEle) {
+  let ti = pts.length - 1;
+  if (!noEle) pts.forEach((p, i) => { if (p[2] > pts[ti][2]) ti = i; });
+  const [x0, y0, x1, y1] = box;
+  const m = { name, lon: (x0 + x1) / 2, lat: (y0 + y1) / 2, h: noEle ? 0 : pts[ti][2], routes: [], custom: true,
+    r: Math.max((x1 - x0) / 2, (y1 - y0) / 2) + 0.04, top: pts[ti].slice(), layers: {} };
+  for (const [kind, set] of Object.entries(IMAGERY)) {
+    const on = kind === mapSettings.imagery && document.getElementById("dFrames").checked;
+    const l = makeMountainLayer(kind, m, on);
+    planet.addLayer(l); set.mountains.push(l); m.layers[kind] = l;
+  }
+  MOUNTAINS.push(m);
+  return m;
+}
+
+// Добавляет трек на сцену. Возвращает гору, в которую он попал.
+async function addUserTrack(rec, fromStorage) {
+  const pts = rec.pts.map((p, i) => {
+    const q = p.slice();
+    // подписываем старт, финиш и высшую точку; остальные точки без подписи
+    q[3] = i === 0 ? "Старт" : i === rec.pts.length - 1 ? "Финиш" : "";
+    return q;
+  });
+  if (!rec.noEle) {
+    let hi = 1;
+    pts.forEach((p, i) => { if (p[2] > pts[hi][2]) hi = i; });
+    if (hi > 0 && hi < pts.length - 1 && pts[hi][2] > pts[0][2] + 30 && pts[hi][2] > pts[pts.length - 1][2] + 30) pts[hi][3] = "Высшая точка";
+  }
+  const { m: host, box } = findHost(pts);
+  let m = host;
+  if (!m) m = createPlace(rec.name, pts, box, rec.noEle);
+  // длина и набор высоты
+  let km = 0; for (let i = 1; i < pts.length; i++) km += mDist(pts[i - 1], pts[i]) / 1000;
+  const rt = { name: rec.name.length > 32 ? rec.name.slice(0, 31) + "…" : rec.name, pts, gpx: true, user: true, noEle: rec.noEle, rec,
+    stats: { km, gain: rec.noEle ? 0 : gainOf(pts.map(p => p[2])) } };
+  if (rec.noEle) pts.forEach(p => { p[2] = 0; });
+  m.routes.push(rt);
+  if (!m.labeled) m.labeled = [];
+  buildRoute(m, rt, m.routes.length - 1, m.labeled);
+  if (m.custom) {
+    // высоту вершины берём с рельефа, а не из GPS — камера смотрит туда, где поверхность на самом деле
+    const h = await heightAt(m.top[0], m.top[1], SEARCH_ZOOM);
+    if (isFinite(h)) m.top[2] = h;
+    m.route = m.routes[0].pts;
+  }
+  if (!fromStorage) userTracks.push(rec);
+  return m;
+}
+
+function saveUserTracks() {
+  try { localStorage.setItem(USER_KEY, JSON.stringify(userTracks)); return true; }
+  catch (e) { toast("Не удалось сохранить треки в браузере (мало места или запрещено хранение). Они останутся до закрытия страницы."); return false; }
+}
+
+async function importFiles(files) {
+  const added = []; const problems = [];
+  for (const f of files) {
+    try {
+      const tracks = parseGpx(await f.text(), f.name);
+      if (!tracks.length) { problems.push(f.name + ": в файле нет треков (нужны <trk> или <rte> с точками)"); continue; }
+      for (const t of tracks.slice(0, 10)) {
+        const { pts, noEle } = thinTrack(t.raw);
+        added.push(await addUserTrack({ name: t.name, pts, noEle }));
+      }
+      if (tracks.length > 10) problems.push(f.name + ": взяты первые 10 треков из " + tracks.length);
+    } catch (e) { problems.push(f.name + ": " + e.message); }
+  }
+  if (added.length) {
+    const ok = saveUserTracks();
+    buildChips();
+    goTo(MOUNTAINS.indexOf(added[added.length - 1]));
+    toast("Добавлено треков: " + added.length + (ok ? ". Сохранены в этом браузере." : "") + (problems.length ? "\n" + problems.join("\n") : ""));
+  } else if (problems.length) toast(problems.join("\n"), 9000);
+}
+document.getElementById("gpxFile").onchange = async (e) => {
+  const files = Array.from(e.target.files || []); e.target.value = "";
+  if (files.length) await importFiles(files);
+};
+
+function deleteUserTrack(rt) {
+  const m = MOUNTAINS.find(x => x.routes.includes(rt)); if (!m) return;
+  removeRouteEntities(rt);
+  m.routes.splice(m.routes.indexOf(rt), 1);
+  const k = userTracks.indexOf(rt.rec); if (k >= 0) userTracks.splice(k, 1);
+  saveUserTracks();
+  // цвета оставшихся маршрутов не перекрашиваем — они уже нарисованы
+  if (m.custom && !m.routes.some(r => r.user)) {
+    // это было последнее в «своём» месте — убираем и место с его слоями снимков
+    m.routes.forEach(removeRouteEntities);
+    for (const [kind, l] of Object.entries(m.layers)) {
+      try { planet.removeLayer(l); } catch (e) {}
+      const arr = IMAGERY[kind].mountains, i = arr.indexOf(l); if (i >= 0) arr.splice(i, 1);
+    }
+    MOUNTAINS.splice(MOUNTAINS.indexOf(m), 1);
+    buildChips(); goTo(0);
+    return;
+  }
+  if (m.routes.length) { m.route = m.routes[0].pts; if (m === current) { renderRouteList(m); showRouteDbg(); } }
+}
+document.getElementById("gpxClear").onclick = () => {
+  const all = MOUNTAINS.flatMap(m => m.routes.filter(r => r.user));
+  if (!all.length) { toast("Загруженных треков нет."); return; }
+  if (!confirm("Удалить все загруженные GPX-треки (" + all.length + ")?")) return;
+  all.forEach(deleteUserTrack);
+  toast("Загруженные треки удалены.");
+};
+
+// Возвращаем сохранённые треки (до первого goTo, чтобы новые места сразу были в списке)
+async function restoreUserTracks() {
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem(USER_KEY) || "[]"); } catch (e) {}
+  for (const rec of list) {
+    if (!rec || !Array.isArray(rec.pts) || rec.pts.length < 2) continue;
+    try { await addUserTrack(rec, false); } catch (e) { log("Не удалось вернуть сохранённый трек «" + rec.name + "»: " + e.message); }
+  }
+  if (list.length) {
+    buildChips();
+    if (current) { renderRouteList(current); Promise.all(current.routes.map(rt => drapeRoute(rt, current.name))); }
+  }
+}
+
 // Старт на первой горе: ставим камеру сразу и ещё раз, когда движок закончит инициализацию
 goTo(0);
+restoreUserTracks();
 setTimeout(() => { if (current === MOUNTAINS[0] && !orbiting) applyCam(); }, 600);
 </script>
 </body>
