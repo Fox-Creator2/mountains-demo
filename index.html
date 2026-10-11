@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Горы мира</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/og.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@openglobus/og@1.0.0-rc30/lib/og.css">
 <style>
   /* Полноэкранный глобус, снизу панель с горами */
   :root {
@@ -53,11 +53,23 @@
   #cam { position: absolute; left: 12px; right: 12px; bottom: calc(168px + env(safe-area-inset-bottom, 0px)); z-index: 25;
     background: var(--panel); border-radius: 12px; padding: 8px 14px; display: flex; flex-direction: column; gap: 0; }
   #cam[hidden] { display: none; }
+  #sun { position: absolute; left: 12px; right: 12px; bottom: calc(168px + env(safe-area-inset-bottom, 0px)); z-index: 25;
+    background: var(--panel); border-radius: 12px; padding: 8px 14px; display: flex; flex-direction: column; gap: 0; }
+  #sun[hidden] { display: none; }
+  #sun .row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); gap: 8px; }
+  #sun .row b { color: var(--fg); font-variant-numeric: tabular-nums; }
+  #sunTime, #sunDate { width: 100%; accent-color: var(--chip-on); height: 26px; margin: 0 0 4px; }
+  #sun .mini { flex: 1; border: 0; border-radius: 8px; padding: 7px 8px; background: var(--chip); color: var(--fg); font-size: 12px; cursor: pointer; }
+  #sun .mini.on { background: #3b6e4f; }
   #cam .reset { align-self: flex-end; border: 0; background: none; color: var(--muted); font-size: 12px;
     padding: 2px 0; cursor: pointer; text-decoration: underline; }
   #cam .row { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
   #cam .row b { color: var(--fg); font-variant-numeric: tabular-nums; }
   #tilt, #zoom, #speed { width: 100%; accent-color: var(--chip-on); height: 26px; margin: 0 0 4px; }
+  #diag .seg { display: flex; align-items: center; gap: 4px; }
+  #diag .seg span { flex: 1; }
+  #diag .seg button { border: 0; border-radius: 8px; padding: 6px 10px; background: var(--chip); color: var(--fg); font-size: 12px; cursor: pointer; }
+  #diag .seg button.on { background: var(--chip-on); color: #1a1407; font-weight: 600; }
   #diag label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
   #diag .fps { color: var(--muted); font-variant-numeric: tabular-nums; }
   #log { position: absolute; top: calc(8px + env(safe-area-inset-top, 0px)); left: 8px; right: 8px; z-index: 30;
@@ -72,13 +84,25 @@
 <div id="log"></div>
 
 <div id="diag" hidden>
-  <b>Диагностика мерцания</b>
+  <b>Настройки карты</b>
+  <div class="seg" id="segImg"><span>Снимки</span><button data-v="bing">Bing</button><button data-v="esri">Esri</button></div>
+  <div class="seg" id="segTer"><span>Рельеф</span><button data-v="globus">Обычный</button><button data-v="mapterhorn">Подробный</button></div>
+  <b style="margin-top:6px">Диагностика</b>
   <label><input type="checkbox" id="dFrames" checked> Грубая подложка + рамки гор</label>
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps">Версия: 11.10, 04:35</span>
+  <span class="fps">Версия: 11.10, 13:35</span>
   <div class="fps" id="routeDbg" style="max-width:300px;white-space:pre-wrap;font-size:11px"></div>
+</div>
+
+<div id="sun" class="panel" hidden>
+  <label class="row" style="color:var(--fg)"><span>Освещение по солнцу</span><input type="checkbox" id="sunOn"></label>
+  <div class="row"><span>Местное солнечное время</span><b id="sunTimeVal">—</b></div>
+  <input type="range" id="sunTime" min="0" max="1439" step="5" value="720">
+  <div class="row"><span>Дата</span><b id="sunDateVal">—</b></div>
+  <input type="range" id="sunDate" min="0" max="364" step="1" value="171">
+  <div class="row"><button id="sunPlay" class="mini">▶ Сутки за 24 с</button><button id="sunNow" class="mini">Сейчас</button></div>
 </div>
 
 <div id="cam" hidden>
@@ -99,6 +123,7 @@
     <button id="bMode">Телепорт</button>
     <button id="bOrbit">Облёт ⟳</button>
     <button id="bCam">Камера</button>
+    <button id="bSun" style="flex:0 0 44px" aria-label="Солнце">☀</button>
     <button id="bDiag" style="flex:0 0 44px">⚙</button>
   </div>
 </div>
@@ -112,10 +137,10 @@
 </script>
 
 <script type="module">
-import { Globe, XYZ, Vector, Entity, GlobusRgbTerrain, EmptyTerrain, LonLat } from
-  "https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/og.es.js";
+import { Globe, XYZ, Bing, Vector, Entity, GlobusRgbTerrain, MapterhornTerrain, EmptyTerrain, LonLat } from
+  "https://cdn.jsdelivr.net/npm/@openglobus/og@1.0.0-rc30/lib/og.es.js";
 
-const OG_RES = "https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/res";
+const OG_RES = "https://cdn.jsdelivr.net/npm/@openglobus/og@1.0.0-rc30/lib/res";
 const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 
 // Вершины: долгота, широта, высота (м). r — полуразмер рамки в градусах.
@@ -275,41 +300,64 @@ const MOUNTAINS = [
 // основной маршрут — первый в списке
 MOUNTAINS.forEach(m => { m.route = m.routes[0].pts; });
 
-// 1) Глобальная подложка — только грубые тайлы (максимум 5-й зум), это «вид с орбиты».
-const base = new XYZ("Esri низкое", {
-  isBaseLayer: true, url: ESRI, maxNativeZoom: 5, visibility: true, attribution: "Esri World Imagery"
-});
+// ---- Настройки карты (снимки и рельеф) — запоминаются в браузере ----
+const MAP_KEY = "mountains-demo-map-v1";
+const mapSettings = { imagery: "bing", terrain: "globus" };
+try { Object.assign(mapSettings, JSON.parse(localStorage.getItem(MAP_KEY) || "{}")); } catch (e) {}
+const saveMap = () => { try { localStorage.setItem(MAP_KEY, JSON.stringify(mapSettings)); } catch (e) {} };
 
-// 2) Для каждой горы — свой слой с extent. За пределами рамки он ничего не грузит.
-const mountainLayers = MOUNTAINS.map(m => new XYZ("Гора " + m.name, {
-  isBaseLayer: false, url: ESRI, maxNativeZoom: 17, visibility: true, hideInLayerSwitcher: true,
-  extent: [[m.lon - m.r, m.lat - m.r], [m.lon + m.r, m.lat + m.r]]
-}));
+// Набор слоёв снимков одного источника:
+//  • base — глобальная подложка только с грубыми тайлами (до 5-го зума), это «вид с орбиты»;
+//  • mountains — для каждой горы свой слой с extent: внутри рамки детальные тайлы, снаружи ничего не грузится;
+//  • full — подложка без ограничений, для сравнения в диагностике.
+function makeImagery(kind) {
+  const make = (name, opts) => kind === "bing"
+    ? new Bing(name, opts)
+    : new XYZ(name, { url: ESRI, attribution: "Esri World Imagery", ...opts });
+  const on = mapSettings.imagery === kind;
+  return {
+    base: make(kind + " низкое", { isBaseLayer: true, maxNativeZoom: 5, visibility: on }),
+    full: make(kind + " полная", { isBaseLayer: true, maxNativeZoom: 17, visibility: false }),
+    mountains: MOUNTAINS.map(m => make(kind + " " + m.name, {
+      isBaseLayer: false, maxNativeZoom: 17, visibility: on, hideInLayerSwitcher: true, attribution: "",
+      extent: [[m.lon - m.r, m.lat - m.r], [m.lon + m.r, m.lat + m.r]]
+    }))
+  };
+}
+const IMAGERY = { bing: makeImagery("bing"), esri: makeImagery("esri") };
+const allImageryLayers = Object.values(IMAGERY).flatMap(s => [s.base, s.full, ...s.mountains]);
 
-// Обычная подложка без ограничений — для сравнения в диагностике
-const fullBase = new XYZ("Esri полная", {
-  isBaseLayer: true, url: ESRI, maxNativeZoom: 17, visibility: false, attribution: "Esri World Imagery"
+// Рельеф: обычный (Globus) или подробный Mapterhorn — красивее в горах, но тяжелее
+const TERRAINS = { globus: new GlobusRgbTerrain(), mapterhorn: new MapterhornTerrain() };
+// После переключения рельефа движок дозапрашивает плитки у старого объекта, а тот уже отвязан от планеты
+// и падает с ошибкой. Защищаем: отвязанный рельеф сразу отвечает «нет данных».
+Object.values(TERRAINS).forEach(t => {
+  const orig = t.getHeightAsync.bind(t);
+  t.getHeightAsync = function (lonLat, cb, ...rest) {
+    if (!this._planet) { cb && cb(0); return true; }
+    return orig(lonLat, cb, ...rest);
+  };
 });
-const terrain = new GlobusRgbTerrain();
+const terrain = TERRAINS[mapSettings.terrain] || TERRAINS.globus;
 
 const first = MOUNTAINS[0];
 const globus = new Globe({
   target: "globus",
   name: "Earth",
   terrain: terrain,
-  layers: [base, fullBase, ...mountainLayers],
+  layers: allImageryLayers,
   resourcesSrc: OG_RES,
   fontsSrc: OG_RES + "/fonts",
   atmosphereEnabled: false,          // атмосфера давала мерцание при облёте на телефоне
-  transitionOpacityEnabled: false,   // без плавной подмены тайлов — она даёт мигание при движении камеры
-  viewExtent: [first.lon - first.r, first.lat - first.r, first.lon + first.r, first.lat + first.r]
+  transitionOpacityEnabled: false    // без плавной подмены тайлов — она даёт мигание при движении камеры
+  // стартовый viewExtent не задаём: в rc30 он применяется позже и перебивал нашу камеру (вид строго сверху)
 });
 const planet = globus.planet;
 window.planet = planet;   // для отладки из консоли браузера
 
 // ---------------- Маршруты восхождения ----------------
-const ROUTE_LIFT = 12;     // на сколько метров поднять линию над рельефом, чтобы она не тонула в склоне
-const LABEL_LIFT = 20;     // кружки точек — чуть над поверхностью
+const ROUTE_LIFT = 3;      // небольшой подъём линии над рельефом; от провалов под склон защищает depthOffset слоя
+const LABEL_LIFT = 8;      // кружки точек — чуть над поверхностью
 const TEXT_LIFT = 150;     // подписи — заметно выше окружающего рельефа
 
 // Сгущаем маршрут: точка каждые ~50 м, высота сначала линейная между ключевыми точками
@@ -342,8 +390,10 @@ function dot(color) {
 }
 const DOTS = ROUTE_COLORS.map(dot), DOT_TOP = dot("#ffc533");
 
+// depthOffset: при отрисовке линии и метки сдвигаются на 20 м к камере — так они не проваливаются под рельеф
+// (совет автора OpenGlobus). Поэтому собственный подъём над поверхностью теперь небольшой.
 const routeLayer = new Vector("Маршруты", {
-  pickingEnabled: false, hideInLayerSwitcher: true, polygonOffsetUnits: -4
+  pickingEnabled: false, hideInLayerSwitcher: true, polygonOffsetUnits: -4, depthOffset: -20
 });
 planet.addLayer(routeLayer);
 
@@ -375,10 +425,13 @@ MOUNTAINS.forEach(m => {
         lonlat: [p[0], p[1], p[2] + TEXT_LIFT],
         label: {
           text: p[3] + ", " + p[2] + " м",
-          size: top ? 15 : 13, color: "#ffffff", outline: 0.28, outlineColor: "rgba(0,0,0,0.85)",
+          size: top ? 15 : 13, color: "#ffffff", outline: 3, outlineColor: "rgba(0,0,0,0.85)",
           offset: [8, 0]
         }
       });
+      // для кластеризации подписей: текст, размер шрифта и важность (вершина важнее, выше — важнее)
+      e.labelInfo = { len: (p[3] + ", " + p[2] + " м").length, size: top ? 15 : 13, prio: (top ? 100000 : 0) + p[2], rt };
+      e.labelShown = true;
       routeLayer.add(e);
       routeLayer.add(e.textEntity);
       return e;
@@ -389,7 +442,8 @@ MOUNTAINS.forEach(m => {
 function setRouteVisible(rt, on) {
   rt.visible = on;
   rt.line.setVisibility(on);
-  rt.points.forEach(e => { if (e) { e.setVisibility(on); e.textEntity.setVisibility(on); } });
+  rt.points.forEach(e => { if (e) { e.setVisibility(on); e.labelShown = on; e.textEntity.setVisibility(on); } });
+  declutterLabels();
 }
 
 // Уточняем высоты по настоящему рельефу — для маршрутов выбранной горы и только один раз
@@ -410,7 +464,8 @@ function heightAt(lon, lat, zoom) {
     const t = planet.terrain;
     if (!t || !t.getHeightAsync) return res(NaN);
     const geo = t.geoid ? t.geoid.getHeightLonLat(ll) : 0;
-    const tryZ = z => t.getHeightAsync(ll, h => {
+    // после смены рельефа старый объект отвязан от планеты — его запросы прекращаем
+    const tryZ = z => !t._planet ? res(NaN) : t.getHeightAsync(ll, h => {
       if (h !== 0 && isFinite(h)) return res(h + geo);
       const next = (z || t.maxZoom || 14) - 2;
       if (next >= 6) tryZ(next); else res(NaN);
@@ -532,9 +587,11 @@ async function findDetours(rt, P) {
   return { pts, orig, air: airEff, bridges };
 }
 
+let drapeGen = 0;   // растёт при смене рельефа — незаконченная укладка по старому рельефу начинается заново
 async function drapeRoute(rt, mountainName) {
   if (rt.draped || rt.draping) return;
   rt.draping = true;
+  const gen = drapeGen;
   const T0 = performance.now();
   try {
     const snapped = await snapPoints(rt);
@@ -646,6 +703,7 @@ async function drapeRoute(rt, mountainName) {
       }
     });
     await placeLabels(rt);
+    if (gen !== drapeGen) { rt.redo = true; return; }
     rt.draped = true;
     dbg.ms = Math.round(performance.now() - dbg.t0);
     rt.dbg = dbg;
@@ -654,6 +712,7 @@ async function drapeRoute(rt, mountainName) {
     log("Маршрут «" + rt.name + "» (" + mountainName + "): не удалось уточнить высоты (" + e.message + ")");
   } finally {
     rt.draping = false;
+    if (rt.redo) { rt.redo = false; drapeRoute(rt, mountainName); }
   }
 }
 
@@ -749,6 +808,51 @@ function scheduleBackgroundDrape() {
   setTimeout(next, 1500);
 }
 
+// ---- Кластеризация подписей ----
+// Подписи, которые на экране налезают друг на друга, прячем, оставляя более важную: вершину, затем более высокие
+// точки. Кружки точек остаются. При приближении места становится больше — скрытые подписи возвращаются.
+// Пересчёт — 5 раз в секунду в цикле отрисовки, для подписей всех гор; подписи выбранной горы в приоритете.
+let declutterT = 0;
+function declutterLabels() {
+  if (!current) return;
+  const cam = planet.camera, fwd = cam.getForward(), dpr = window.devicePixelRatio || 1;
+  const items = [];
+  // все горы сразу: издалека подписи соседних гор (например, крымских) тоже не должны налезать;
+  // подписи выбранной горы важнее остальных
+  MOUNTAINS.forEach(m => m.routes.forEach(rt => rt.points.forEach(e => {
+    if (!e || !e.labelInfo) return;
+    if (!rt.visible) { e.labelShown = false; return; }
+    const c = e.textEntity.getCartesian();
+    const toEye = cam.eye.sub(c);
+    if (c.sub(cam.eye).dot(fwd) <= 0 ||                                   // за спиной камеры
+        toEye.dot(planet.ellipsoid.getSurfaceNormal3v(c)) <= 0 ||          // за горизонтом
+        toEye.length() > 250000) { setLabel(e, false); return; }           // дальше 250 км — мелко и не нужно
+    const px = planet.getPixelFromCartesian(c);
+    if (!px) return;
+    const x = px.x / dpr, y = px.y / dpr, info = e.labelInfo;
+    const w = info.len * info.size * 0.56 + 12, h = info.size + 6;
+    items.push({ e, prio: info.prio + (m === current ? 1e6 : 0), r: [x + 6, y - h / 2, x + 6 + w, y + h / 2] });
+  })));
+  items.sort((a, b) => b.prio - a.prio);
+  const kept = [];
+  for (const it of items) {
+    const hit = kept.some(k => !(it.r[2] < k[0] || it.r[0] > k[2] || it.r[3] < k[1] || it.r[1] > k[3]));
+    setLabel(it.e, !hit);
+    if (!hit) kept.push(it.r);
+  }
+}
+function setLabel(e, on) {
+  if (e.labelShown === on) return;
+  e.labelShown = on;
+  e.textEntity.setVisibility(on);
+}
+planet.renderer.events.on("postdraw", () => {
+  const now = performance.now();
+  if (now - declutterT < 200) return;
+  declutterT = now;
+  declutterLabels();
+});
+
 // Список маршрутов выбранной горы под её названием: цветная метка, тап — скрыть/показать маршрут
 function renderRouteList(m) {
   const box = document.getElementById("routes");
@@ -775,32 +879,60 @@ function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
 }
 function cameraFor(m) {
+  // Откуда смотреть по умолчанию: позади начала основного маршрута и чуть сбоку, чтобы путь шёл снизу вверх к вершине.
+  // Возвращаем курс камеры (куда она смотрит, от севера по часовой) и расстояние до вершины.
   const r = m.route, s0 = r[0], top = r[r.length - 1];
   const kx = 111320 * Math.cos(m.lat * Math.PI / 180), ky = 111320;
   const dx = (top[0] - s0[0]) * kx, dy = (top[1] - s0[1]) * ky;
   const len = Math.max(Math.hypot(dx, dy), 1500);
-  const ux = dx / len, uy = dy / len;                 // направление «старт → вершина»
-  const cLon = (s0[0] + top[0]) / 2, cLat = (s0[1] + top[1]) / 2, cH = (s0[2] + top[2]) / 2;
-  const back = len * 0.5 + Math.max(4000, len * 0.55);   // насколько отойти назад от середины
+  const ux = dx / len, uy = dy / len;                    // направление «старт → вершина»
+  const back = len * 0.5 + Math.max(4000, len * 0.55);  // отход назад от середины маршрута
   const side = len * 0.25;                               // небольшой сдвиг вбок для объёма
-  const ex = -ux * back + uy * side, ey = -uy * back - ux * side;
-  // направление от вершины к камере берём из расчёта выше; угол над горизонтом — из настроек,
-  // расстояние — из настроек, если его меняли ползунком, иначе подбирается под длину маршрута
-  const ox = cLon * kx + ex - top[0] * kx, oy = cLat * ky + ey - top[1] * ky;   // смещение камеры от вершины, м
-  const hd0 = Math.hypot(ox, oy), D = settings.dist || Math.hypot(hd0, Math.max(3000, len * 0.55));
-  const el = settings.tilt * Math.PI / 180, hd = D * Math.cos(el);
+  const ox = -dx / 2 - ux * back + uy * side, oy = -dy / 2 - uy * back - ux * side;   // камера относительно вершины, м
+  const hd0 = Math.hypot(ox, oy);
   return {
-    eye: new LonLat(top[0] + ox / hd0 * hd / kx, top[1] + oy / hd0 * hd / ky, top[2] + D * Math.sin(el)),
-    look: new LonLat(top[0], top[1], top[2]),
-    center: new LonLat(cLon, cLat, cH)
+    heading: Math.atan2(-ox, -oy) * 180 / Math.PI,      // смотрим с камеры на вершину
+    dist: settings.dist || Math.hypot(hd0, Math.max(3000, len * 0.55))
   };
 }
 
-// «Верх» для камеры — местная вертикаль (нормаль к поверхности в точке камеры).
-// Без этого движок в полёте берёт за верх ось Земли, и камера заваливается на бок,
-// если смотрит на восток или запад.
-function localUp(lonlat) {
-  return planet.ellipsoid.lonLatToCartesian(new LonLat(lonlat.lon, lonlat.lat, 0)).normal();
+// ---- Камера: курс, наклон и расстояние относительно вершины ----
+// Положение камеры задаётся тремя числами относительно вершины выбранной горы:
+//   heading — куда смотрит камера (азимут от севера по часовой, °), elev — угол над горизонтом (°), dist — расстояние (м).
+// Ориентацию ставим через camera.set(глаз, точка взгляда, верх) с «верхом» = нормалью к поверхности в точке камеры.
+// Движок строит боковой вектор как верх × назад, значит он всегда перпендикулярен нормали — горизонт ровный
+// по построению, без крена. Облёт, наклон и расстояние просто меняют эти три числа.
+const camState = { heading: 0, elev: 22, dist: 10000 };
+let summit = null, E = null, N = null, U = null;   // вершина и локальный базис «восток, север, вверх» в ней
+function setSummit(top) {
+  summit = planet.ellipsoid.lonLatToCartesian(new LonLat(top[0], top[1], top[2]));
+  U = planet.ellipsoid.getSurfaceNormal3v(summit);
+  const east = planet.ellipsoid.lonLatToCartesian(new LonLat(top[0] + 0.001, top[1], top[2])).sub(summit);
+  E = east.sub(U.scaleTo(east.dot(U))).normalize();
+  N = U.cross(E).normalize();
+}
+function eyeFromState() {
+  const h = camState.heading * Math.PI / 180, el = camState.elev * Math.PI / 180;
+  const view = E.scaleTo(Math.sin(h)).add(N.scaleTo(Math.cos(h)));           // горизонтальное направление взгляда
+  const toEye = view.scaleTo(-Math.cos(el)).add(U.scaleTo(Math.sin(el)));    // от вершины к камере
+  return summit.add(toEye.scaleTo(camState.dist));
+}
+function stateFromEye() {
+  const v = planet.camera.eye.sub(summit), d = v.length(), up = v.dot(U);
+  const hv = v.sub(U.scaleTo(up));
+  camState.dist = d;
+  camState.elev = Math.asin(Math.max(-1, Math.min(1, up / d))) * 180 / Math.PI;
+  camState.heading = Math.atan2(-hv.dot(E), -hv.dot(N)) * 180 / Math.PI;
+}
+function applyCam(look) {
+  const eye = eyeFromState();
+  planet.camera.set(eye, look || summit, planet.ellipsoid.getSurfaceNormal3v(eye));
+  planet.camera.update();
+}
+// смотрит ли камера сейчас на вершину (после того как её двигали пальцем — обычно нет)
+function looksAtSummit() {
+  const to = summit.sub(planet.camera.eye).normalize();
+  return to.dot(planet.camera.getForward()) > Math.cos(1.5 * Math.PI / 180);
 }
 
 let current = null, flyMode = false, orbiting = false, orbitCenter = null, orbitUp = null;
@@ -810,17 +942,23 @@ function goTo(i) {
   current = m;
   const keepOrbit = orbiting;                      // если облёт шёл — продолжим его на новой горе
   orbiting = false;
-  const { eye, look } = cameraFor(m);
-  // облёт — вокруг конечной точки подъёма (вершины маршрута)
+  // облёт, наклон и расстояние — относительно конечной точки подъёма (вершины маршрута)
   const top = m.route[m.route.length - 1];
-  orbitCenter = planet.ellipsoid.lonLatToCartesian(new LonLat(top[0], top[1], top[2]));
-  orbitUp = orbitCenter.normal();
+  setSummit(top);
+  orbitCenter = summit; orbitUp = U;
+  const c = cameraFor(m);
+  camState.heading = c.heading; camState.dist = c.dist; camState.elev = settings.tilt;
   planet.stopFlying();
   if (flyMode) {
-    planet.flyLonLat(eye, { look, up: localUp(eye), duration: 2500,
-      completeCallback: () => { if (keepOrbit && current === m) { orbiting = true; orbitStep(); } } });
+    const eye = eyeFromState();
+    planet.flyCartesian(eye, { look: summit, up: planet.ellipsoid.getSurfaceNormal3v(eye), duration: 2500,
+      completeCallback: () => {
+        if (current !== m) return;
+        applyCam();                                  // точно ставим по курсу/наклону/расстоянию
+        if (keepOrbit) { orbiting = true; orbitStep(); }
+      } });
   } else {
-    planet.viewLonLat(eye, look);                  // мгновенно, без анимации
+    applyCam();                                      // мгновенно, без анимации
     if (keepOrbit) { orbiting = true; orbitStep(); }
   }
   document.getElementById("mName").textContent = m.name;
@@ -831,15 +969,15 @@ function goTo(i) {
   showRouteDbg();
   Promise.all(m.routes.map(rt => drapeRoute(rt, m.name))).then(scheduleBackgroundDrape);
   document.querySelectorAll(".chip").forEach((c, k) => c.classList.toggle("on", k === i));
+  if (typeof applySun === "function" && sunState.on) applySun();
 }
 
-// Облёт: камера вращается вокруг вертикальной оси через вершину.
-// Шаг делается внутри цикла отрисовки движка (событие postdraw), а не в отдельном таймере,
-// и после поворота обязательно вызывается camera.update(): rotateAround сам матрицы
-// камеры не пересчитывает, из-за чего кадры рисовались то по старой, то по новой позиции — это и было мерцание.
 let orbitSpeed = settings.speed;   // рад/с; меняется ползунком в панели «Камера»
 const ORBIT_RAMP = 1.5;     // с — плавный разгон, чтобы облёт не начинался рывком
-let lastT = 0, orbitT = 0;
+let lastT = 0, orbitT = 0, lookFrom = null;
+// Облёт: курс камеры растёт, наклон и расстояние постоянны — камера идёт по кругу вокруг вершины.
+// Шаг делается внутри цикла отрисовки (postdraw). Если камера смотрела не на вершину (её сдвигали пальцем),
+// за время разгона взгляд плавно переводится на вершину — без скачка.
 planet.renderer.events.on("postdraw", () => {
   if (!orbiting) return;
   const now = performance.now();
@@ -848,10 +986,15 @@ planet.renderer.events.on("postdraw", () => {
   if (dt === 0) return;
   orbitT += dt;
   const k = Math.min(1, orbitT / ORBIT_RAMP), ease = k * k * (3 - 2 * k);
-  planet.camera.rotateAround(orbitSpeed * ease * dt, false, orbitCenter, orbitUp);
-  planet.camera.update();
+  camState.heading += orbitSpeed * ease * dt * 180 / Math.PI;
+  applyCam(lookFrom && k < 1 ? lookFrom.add(summit.sub(lookFrom).scaleTo(ease)) : summit);
 });
-function orbitStep() { lastT = 0; orbitT = 0; }
+function orbitStep() {
+  lastT = 0; orbitT = 0;
+  stateFromEye();
+  // точка, куда камера смотрит сейчас (на расстоянии до вершины) — от неё взгляд плавно переходит на вершину
+  lookFrom = looksAtSummit() ? null : planet.camera.eye.add(planet.camera.getForward().scaleTo(camState.dist));
+}
 function stopOrbit() {
   orbiting = false;
   document.getElementById("bOrbit").classList.remove("on");
@@ -881,7 +1024,7 @@ function startOrbit() {
 }
 document.getElementById("bOrbit").onclick = function () {
   if (orbiting) { stopOrbit(); return; }
-  if (!orbitCenter) return;
+  if (!summit) return;
   startOrbit();
 };
 // Пользователь трогает глобус — облёт выключается, чтобы не мешать
@@ -900,10 +1043,10 @@ const zoomFromSlider = t => Z_MIN * Math.pow(Z_MAX / Z_MIN, t / 1000);
 const sliderFromZoom = d => 1000 * Math.log(d / Z_MIN) / Math.log(Z_MAX / Z_MIN);
 
 function elevationDeg() {
-  const v = planet.camera.eye.sub(orbitCenter), n = orbitCenter.getNormal();
-  return Math.asin(Math.max(-1, Math.min(1, v.dot(n) / v.length()))) * 180 / Math.PI;
+  const v = planet.camera.eye.sub(summit);
+  return Math.asin(Math.max(-1, Math.min(1, v.dot(U) / v.length()))) * 180 / Math.PI;
 }
-const distToTop = () => planet.camera.eye.sub(orbitCenter).length();
+const distToTop = () => planet.camera.eye.sub(summit).length();
 const fmtDist = d => d >= 10000 ? Math.round(d / 1000) + " км" : (d / 1000).toFixed(1).replace(".", ",") + " км";
 
 function showCamVals() {
@@ -911,26 +1054,15 @@ function showCamVals() {
   document.getElementById("zoomVal").textContent = fmtDist(distToTop());
 }
 function syncCam() {
-  if (!orbitCenter) return;
+  if (!summit) return;
   document.getElementById("tilt").value = sliderFromTilt(elevationDeg());
   document.getElementById("zoom").value = sliderFromZoom(Math.min(Z_MAX, Math.max(Z_MIN, distToTop())));
   showCamVals();
 }
-function applyTilt(targetDeg) {
-  const cam = planet.camera;
-  // поворачиваем вокруг вершины; пару шагов — чтобы точно прийти к нужному углу при любой ориентации
-  for (let k = 0; k < 3; k++) {
-    const before = elevationDeg(), delta = (targetDeg - before) * Math.PI / 180;
-    if (Math.abs(delta) < 0.002) break;
-    cam.rotateVertical(delta, orbitCenter); cam.update();
-    if (Math.sign(elevationDeg() - before) !== Math.sign(delta)) { cam.rotateVertical(-2 * delta, orbitCenter); cam.update(); }
-  }
-}
-function applyZoom(d) {
-  const cam = planet.camera, v = cam.eye.sub(orbitCenter);
-  cam.eye = orbitCenter.add(v.scale(d / v.length()));
-  cam.update();
-}
+// Наклон и расстояние меняют только своё число в состоянии камеры; курс сохраняется.
+// Во время облёта состояние уже актуально; иначе берём его из текущего положения камеры.
+function applyTilt(deg) { if (!orbiting) stateFromEye(); camState.elev = deg; applyCam(); }
+function applyZoom(d) { if (!orbiting) stateFromEye(); camState.dist = d; applyCam(); }
 const tiltEl = document.getElementById("tilt"), zoomEl = document.getElementById("zoom");
 let dragging = false;
 [tiltEl, zoomEl].forEach(el => {
@@ -939,11 +1071,11 @@ let dragging = false;
 });
 window.addEventListener("pointerup", () => { dragging = false; });
 tiltEl.addEventListener("input", () => {
-  if (!orbitCenter) return;
+  if (!summit) return;
   settings.tilt = tiltFromSlider(+tiltEl.value); applyTilt(settings.tilt); showCamVals(); saveSettings();
 });
 zoomEl.addEventListener("input", () => {
-  if (!orbitCenter) return;
+  if (!summit) return;
   settings.dist = zoomFromSlider(+zoomEl.value); applyZoom(settings.dist); showCamVals(); saveSettings();
 });
 // Скорость облёта: логарифмическая шкала, показываем, за сколько секунд камера делает полный круг
@@ -972,6 +1104,7 @@ document.getElementById("camReset").onclick = () => {
 document.getElementById("bCam").onclick = function () {
   const p = document.getElementById("cam");
   p.hidden = !p.hidden;
+  if (!p.hidden) { document.getElementById("sun").hidden = true; document.getElementById("bSun").classList.toggle("on", sunState.on); }
   this.classList.toggle("on", !p.hidden);
   if (!p.hidden) syncCam();
 };
@@ -980,18 +1113,102 @@ planet.camera.events.on("viewchange", () => {
   if (!dragging && !document.getElementById("cam").hidden) syncCam();
 });
 
+// ---- Солнце ----
+// Включённое «освещение по солнцу» ставит свет движка (контрол Sun) в настоящее положение солнца
+// для выбранных даты и местного солнечного времени у выбранной горы: 12:00 — солнце в зените своего дня.
+// Видно, какие склоны освещены утром и вечером. Выключено — свет «от камеры», как раньше.
+const MONTHS = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
+const sunEl = { on: document.getElementById("sunOn"), time: document.getElementById("sunTime"), date: document.getElementById("sunDate") };
+const sunState = { on: false, minutes: 720, doy: 171 };
+try { Object.assign(sunState, JSON.parse(localStorage.getItem("mountains-demo-sun-v1") || "{}")); } catch (e) {}
+const saveSun = () => { try { localStorage.setItem("mountains-demo-sun-v1", JSON.stringify(sunState)); } catch (e) {} };
+function sunDateUTC() {
+  const year = new Date().getUTCFullYear();
+  const lon = current ? current.lon : 0;
+  return new Date(Date.UTC(year, 0, 1) + sunState.doy * 864e5 + (sunState.minutes - lon * 4) * 6e4);   // 4 мин на градус долготы
+}
+function applySun() {
+  const sun = planet.sun;
+  const mins = Math.floor(sunState.minutes);
+  const hh = Math.floor(mins / 60), mm = mins % 60;
+  document.getElementById("sunTimeVal").textContent = hh + ":" + String(mm).padStart(2, "0");
+  const d = new Date(Date.UTC(2001, 0, 1) + sunState.doy * 864e5);
+  document.getElementById("sunDateVal").textContent = d.getUTCDate() + " " + MONTHS[d.getUTCMonth()];
+  sunEl.on.checked = sunState.on; sunEl.time.value = sunState.minutes; sunEl.date.value = sunState.doy;
+  document.getElementById("bSun").classList.toggle("on", sunState.on || !document.getElementById("sun").hidden);
+  if (!sun) return;
+  sun.setDateTime(sunState.on ? sunDateUTC() : null);
+  planet.renderer.requestRedraw && planet.renderer.requestRedraw();
+}
+sunEl.on.onchange = () => { sunState.on = sunEl.on.checked; saveSun(); applySun(); };
+sunEl.time.oninput = () => { sunState.minutes = +sunEl.time.value; sunState.on = true; saveSun(); applySun(); };
+sunEl.date.oninput = () => { sunState.doy = +sunEl.date.value; sunState.on = true; saveSun(); applySun(); };
+document.getElementById("sunNow").onclick = () => {
+  const now = new Date(), lon = current ? current.lon : 0;
+  const solar = (now.getUTCHours() * 60 + now.getUTCMinutes() + lon * 4 + 1440) % 1440;
+  sunState.minutes = Math.round(solar / 5) * 5;
+  sunState.doy = Math.floor((now - Date.UTC(now.getUTCFullYear(), 0, 1)) / 864e5);
+  sunState.on = true; saveSun(); applySun();
+};
+// Проигрывание: сутки за 24 секунды, через цикл отрисовки
+let sunPlaying = false, sunLastT = 0;
+document.getElementById("sunPlay").onclick = function () {
+  sunPlaying = !sunPlaying; sunLastT = 0;
+  this.classList.toggle("on", sunPlaying);
+  this.textContent = sunPlaying ? "■ Стоп" : "▶ Сутки за 24 с";
+  if (sunPlaying) { sunState.on = true; applySun(); }
+};
+planet.renderer.events.on("postdraw", () => {
+  if (!sunPlaying) return;
+  const now = performance.now();
+  if (sunLastT) {
+    sunState.minutes = (sunState.minutes + (now - sunLastT) / 1000 * 60) % 1440;
+    applySun();
+  }
+  sunLastT = now;
+});
+document.getElementById("bSun").onclick = function () {
+  const p = document.getElementById("sun");
+  p.hidden = !p.hidden;
+  if (!p.hidden) document.getElementById("cam").hidden = true, document.getElementById("bCam").classList.remove("on");
+  applySun();
+};
+applySun();
+
 // ---- Диагностика: включаем/выключаем части сцены, чтобы найти источник мерцания ----
 document.getElementById("bDiag").onclick = () => {
   const d = document.getElementById("diag"); d.hidden = !d.hidden;
 };
-document.getElementById("dFrames").onchange = (e) => {
-  const on = e.target.checked;
-  planet.setBaseLayer(on ? base : fullBase);
-  mountainLayers.forEach(l => l.setVisibility(on));
-};
-document.getElementById("dTerrain").onchange = (e) => {
-  planet.setTerrain(e.target.checked ? terrain : new EmptyTerrain());
-};
+// Переключение снимков: показываем слои выбранного источника, прячем другие
+function applyImagery() {
+  const framesOn = document.getElementById("dFrames").checked;
+  for (const [kind, set] of Object.entries(IMAGERY)) {
+    const on = kind === mapSettings.imagery;
+    set.mountains.forEach(l => l.setVisibility(on && framesOn));
+    if (!on) { set.base.setVisibility(false); set.full.setVisibility(false); }
+  }
+  planet.setBaseLayer(framesOn ? IMAGERY[mapSettings.imagery].base : IMAGERY[mapSettings.imagery].full);
+  document.querySelectorAll("#segImg button").forEach(b => b.classList.toggle("on", b.dataset.v === mapSettings.imagery));
+}
+// Переключение рельефа: после смены маршруты заново укладываются по новому рельефу
+let terrainOff = false;
+function applyTerrain() {
+  planet.setTerrain(terrainOff ? new EmptyTerrain() : TERRAINS[mapSettings.terrain]);
+  hCache.clear();
+  drapeGen++;
+  MOUNTAINS.forEach(m => m.routes.forEach(rt => { rt.draped = false; }));
+  if (current) Promise.all(current.routes.map(rt => drapeRoute(rt, current.name))).then(scheduleBackgroundDrape);
+  document.querySelectorAll("#segTer button").forEach(b => b.classList.toggle("on", b.dataset.v === mapSettings.terrain));
+}
+document.querySelectorAll("#segImg button").forEach(b => b.onclick = () => { mapSettings.imagery = b.dataset.v; saveMap(); applyImagery(); });
+document.querySelectorAll("#segTer button").forEach(b => b.onclick = () => {
+  if (mapSettings.terrain === b.dataset.v) return;
+  mapSettings.terrain = b.dataset.v; saveMap(); applyTerrain();
+});
+document.querySelectorAll("#segImg button").forEach(b => b.classList.toggle("on", b.dataset.v === mapSettings.imagery));
+document.querySelectorAll("#segTer button").forEach(b => b.classList.toggle("on", b.dataset.v === mapSettings.terrain));
+document.getElementById("dFrames").onchange = () => applyImagery();
+document.getElementById("dTerrain").onchange = (e) => { terrainOff = !e.target.checked; applyTerrain(); };
 document.getElementById("dAtmos").onchange = (e) => {
   planet.atmosphereEnabled = e.target.checked;
 };
@@ -1006,8 +1223,9 @@ planet.renderer.events.on("postdraw", () => {
   }
 });
 
-// Старт на Эльбрусе, после того как движок готов
-setTimeout(() => goTo(0), 300);
+// Старт на первой горе: ставим камеру сразу и ещё раз, когда движок закончит инициализацию
+goTo(0);
+setTimeout(() => { if (current === MOUNTAINS[0] && !orbiting) applyCam(); }, 600);
 </script>
 </body>
 </html>
