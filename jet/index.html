@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Скоростной полёт</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/og.css">
+<style>
+  :root { --panel: rgba(16,20,26,0.80); --chip: #262d36; --chip-on: #d9a441; --fg: #eef1f4; --muted: #9aa5b1; --err: #ff7a6b; }
+  html, body { margin: 0; height: 100%; background: #05070a; color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; user-select: none; -webkit-user-select: none; }
+  #globus { position: absolute; inset: 0; }
+  #fx { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
+
+  #hud { position: absolute; left: 10px; top: calc(8px + env(safe-area-inset-top, 0px)); z-index: 10; pointer-events: none;
+    font: 600 13px/1.45 ui-monospace, "SF Mono", Menlo, monospace; text-shadow: 0 0 4px #000, 0 0 2px #000; white-space: pre; }
+  #hud b { font-size: 17px; }
+
+  #bar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 20; background: var(--panel); backdrop-filter: blur(6px);
+    padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 6px; }
+  #chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+  #chips::-webkit-scrollbar { display: none; }
+  .chip { flex: 0 0 auto; border: 0; border-radius: 999px; padding: 7px 12px; background: var(--chip); color: var(--fg); font-size: 13px; cursor: pointer; }
+  .row { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; color: var(--muted); gap: 8px; }
+  .row b { color: var(--fg); font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--chip-on); height: 24px; margin: 0; }
+  .ctl { display: flex; flex-direction: column; gap: 0; }
+
+  /* Руль: потянул вбок — поворот, отпустил — возвращается в центр, курс держится */
+  #steer { position: relative; height: 46px; border-radius: 23px; background: var(--chip); touch-action: none; margin-top: 2px; }
+  #steer::before { content: ""; position: absolute; left: 50%; top: 10px; bottom: 10px; width: 2px; margin-left: -1px; background: rgba(255,255,255,0.25); }
+  #steerKnob { position: absolute; top: 3px; left: 50%; width: 62px; height: 40px; margin-left: -31px; border-radius: 20px; background: var(--chip-on);
+    color: #1a1407; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+  #steer .lbl { position: absolute; top: 14px; font-size: 12px; color: var(--muted); pointer-events: none; }
+
+  #btns { display: flex; gap: 6px; }
+  #btns button { flex: 1; border: 0; border-radius: 10px; padding: 8px 6px; background: var(--chip); color: var(--fg); font-size: 13px; cursor: pointer; }
+  #btns button.on { background: #3b6e4f; }
+
+  /* «Голова»: круг-джойстик слева над панелью */
+  #head { position: absolute; left: 12px; bottom: 300px; z-index: 26; display: flex; flex-direction: column; align-items: center; gap: 8px; touch-action: none; }
+  #headPad { position: relative; width: var(--hs, 140px); height: var(--hs, 140px); border-radius: 50%; background: rgba(16,20,26,0.5);
+    border: 1px solid rgba(255,255,255,0.35); touch-action: none; }
+  #headPad::before, #headPad::after { content: ""; position: absolute; background: rgba(255,255,255,0.2); }
+  #headPad::before { left: 50%; top: 8px; bottom: 8px; width: 1px; }
+  #headPad::after { top: 50%; left: 8px; right: 8px; height: 1px; }
+  #headKnob { position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; background: var(--chip-on); opacity: 0.9; pointer-events: none; }
+  #head .hrow { display: flex; gap: 8px; }
+  #head .hbtn { width: 44px; height: 36px; border: 0; border-radius: 10px; background: rgba(16,20,26,0.75); color: var(--fg); font-size: 16px; cursor: pointer; }
+  #head .hbtn.on { background: #3b6e4f; }
+
+  #diag { position: absolute; left: 8px; right: 8px; top: calc(70px + env(safe-area-inset-top, 0px)); z-index: 25; max-width: 360px;
+    background: var(--panel); border-radius: 10px; padding: 8px 12px; font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
+  #diag[hidden], #head[hidden] { display: none; }
+  #diag .head { display: flex; justify-content: space-between; align-items: center; }
+  #diag .close { border: 0; background: var(--chip); color: var(--fg); border-radius: 8px; width: 32px; height: 28px; font-size: 15px; cursor: pointer; }
+  #diag .seg { display: flex; align-items: center; gap: 4px; }
+  #diag .seg span { flex: 1; }
+  #diag .seg button { border: 0; border-radius: 8px; padding: 6px 10px; background: var(--chip); color: var(--fg); font-size: 12px; cursor: pointer; }
+  #diag .seg button.on { background: var(--chip-on); color: #1a1407; font-weight: 600; }
+  #diag label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+  #diag .fps { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+  #diag a { color: var(--chip-on); font-size: 12px; }
+  #log { position: absolute; top: calc(8px + env(safe-area-inset-top, 0px)); left: 8px; right: 8px; z-index: 30; font: 12px/1.4 ui-monospace, monospace;
+    color: var(--err); background: rgba(0,0,0,0.75); border-radius: 8px; padding: 6px 8px; white-space: pre-wrap; }
+  #log:empty { display: none; }
+
+  /* «чистый экран»: всё скрыто, кроме головы и кнопки возврата интерфейса */
+  body.nui #bar, body.nui #diag, body.nui #hud, body.nui .og-compass-button, body.nui .og-zoomin-button, body.nui .og-zoomout-button,
+  body.nui .og-coordinates, body.nui .og-scale-container, body.nui .og-attribution, body.nui .og-control-container { display: none !important; }
+</style>
+</head>
+<body>
+<div id="globus"></div>
+<canvas id="fx"></canvas>
+<div id="log"></div>
+<div id="hud"></div>
+
+<div id="diag" hidden>
+  <div class="head"><b>Настройки</b><button class="close" id="diagClose" aria-label="Закрыть">✕</button></div>
+  <div class="seg" id="segImg"><span>Снимки</span><button data-v="esri">Esri</button><button data-v="bing">Bing</button></div>
+  <label><input type="checkbox" id="oFollow"> Следовать рельефу (высота — над землёй)</label>
+  <label><input type="checkbox" id="oFx"> Эффект скорости (полосы и расширение обзора)</label>
+  <label><input type="checkbox" id="oAtmo"> Атмосфера (красивее, но на телефоне может мерцать)</label>
+  <span class="fps" id="fps">FPS: —</span>
+  <span class="fps" id="ver">Версия: 11.10, 17:50</span>
+  <a href="../">← Горы мира (маршруты и полёты по трекам)</a>
+</div>
+
+<div id="head" hidden>
+  <div id="headPad"><div id="headKnob"></div></div>
+  <div class="hrow">
+    <button id="headLock" class="hbtn" aria-label="Зафиксировать взгляд">🔒</button>
+    <button id="headUi" class="hbtn" aria-label="Скрыть или показать интерфейс">👁</button>
+  </div>
+</div>
+
+<div id="bar">
+  <div id="chips"></div>
+  <div id="steer"><span class="lbl" style="left:14px">◀ влево</span><span class="lbl" style="right:14px">вправо ▶</span><div id="steerKnob">КУРС</div></div>
+  <div class="ctl"><div class="row"><span>Скорость</span><b id="spdVal">—</b></div><input type="range" id="spd" min="0" max="1000" step="1" value="500"></div>
+  <div class="ctl"><div class="row"><span>Высота <span id="altMode"></span></span><b id="altVal">—</b></div><input type="range" id="alt" min="0" max="1000" step="1" value="300"></div>
+  <div id="btns"><button id="bStop">Стоп</button><button id="bMax">Земля за 10 мин</button><button id="bDiag">⚙</button><button id="bUi" style="flex:0 0 44px" aria-label="Скрыть интерфейс">👁</button></div>
+</div>
+
+<script>
+  const logEl = document.getElementById("log");
+  const log = (m) => { logEl.textContent += m + "\n"; };
+  window.addEventListener("error", e => log("Ошибка: " + e.message));
+  window.addEventListener("unhandledrejection", e => log("Ошибка: " + (e.reason && e.reason.message || e.reason)));
+</script>
+
+<script type="module">
+import { Globe, XYZ, Bing, GlobusRgbTerrain, LonLat, Vec3 } from "https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/og.es.js";
+const OG_RES = "https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/res";
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+const $ = id => document.getElementById(id);
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const DEG = Math.PI / 180;
+
+// ---------------- Настройки (запоминаются в браузере) ----------------
+const KEY = "jet-settings-v1";
+const S = { imagery: "esri", atmo: false, follow: true, fx: true,
+  lon: 7.0, lat: 45.9, hdg: 90, spdT: 500, altT: 330 };
+try { Object.assign(S, JSON.parse(localStorage.getItem(KEY) || "{}")); } catch (e) {}
+const saveS = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
+
+// ---------------- Глобус ----------------
+const mk = (kind, vis) => kind === "bing"
+  ? new Bing("Bing", { isBaseLayer: true, visibility: vis })
+  : new XYZ("Esri", { url: ESRI, isBaseLayer: true, maxNativeZoom: 17, visibility: vis, attribution: "Esri World Imagery" });
+const LAYERS = { esri: mk("esri", S.imagery === "esri"), bing: mk("bing", S.imagery === "bing") };
+const globus = new Globe({
+  target: "globus", name: "Earth", terrain: new GlobusRgbTerrain(), layers: Object.values(LAYERS),
+  resourcesSrc: OG_RES, fontsSrc: OG_RES + "/fonts",
+  atmosphereEnabled: S.atmo, transitionOpacityEnabled: false,
+  maxAltitude: 4e7                       // по умолчанию движок не пускает выше 15 000 км, а нам нужно до 20 000
+});
+const planet = globus.planet;
+window.planet = planet;
+const ell = planet.ellipsoid;
+const cam = planet.camera;
+cam.maxAltitude = 4e7;
+
+// ---------------- Скорость и высота: шкалы ползунков ----------------
+const V_MAX = 240000;                         // км/ч: окружность Земли 40 075 км за 10 минут
+const EARTH_KM = 40075;
+const spdFrom = t => t <= 10 ? t / 10 * 50 : 50 * Math.pow(V_MAX / 50, (t - 10) / 990);   // км/ч (0…240 000)
+const spdTo = v => v <= 50 ? v / 50 * 10 : 10 + 990 * Math.log(v / 50) / Math.log(V_MAX / 50);
+const altFrom = t => 50 * Math.pow(4e5, t / 1000);                                          // м (50 м … 20 000 км)
+const fmtSpd = v => v >= 10000 ? Math.round(v / 100) * 100 : v >= 1000 ? Math.round(v / 10) * 10 : Math.round(v);
+const nf = n => Math.round(n).toLocaleString("ru-RU");
+const fmtAlt = a => a >= 100000 ? nf(a / 1000) + " км" : a >= 10000 ? (a / 1000).toFixed(0) + " км" : a >= 1000 ? (a / 1000).toFixed(1).replace(".", ",") + " км" : Math.round(a) + " м";
+function fmtLap(v) {                           // за сколько летишь вокруг Земли
+  if (v < 1) return "—";
+  const m = EARTH_KM / v * 60;                 // минут
+  return m >= 120 ? Math.round(m / 60) + " ч" : m >= 1.5 ? Math.round(m) + " мин" : Math.round(m * 60) + " с";
+}
+
+// ---------------- Состояние полёта ----------------
+// P — направление от центра Земли к самолёту, F — направление полёта (касательное). Летим по дуге большого круга:
+// поворот руля вращает F вокруг P. Так нет «особых мест» у полюсов и линии перемены даты.
+const mul = (v, k) => v.scaleTo(k);
+const unit = v => v.scaleTo(1 / v.length());
+let P = null, F = null;
+const fl = { v: 0, agl: 0, ground: 0, groundT: 0, steer: 0, bank: 0, fov: 47, lon: 0, lat: 0, hdg: 0, omega: 0, eyeAlt: 0, pitchBase: 0 };
+const cartAt = (lon, lat, h = 0) => ell.lonLatToCartesian(new LonLat(lon, lat, h));
+// локальный базис «север, восток, вверх» в точке (без особенностей на полюсах)
+function frameAt(lon, lat) {
+  const pn = cartAt(lon, lat, 0), n = unit(pn);
+  const lat2 = lat + 0.05 > 90 ? lat - 0.05 : lat + 0.05, sgn = lat2 > lat ? 1 : -1;
+  const a = mul(cartAt(lon, lat2, 0).sub(pn), sgn);
+  const N = unit(a.sub(mul(n, a.dot(n))));
+  return { n, N, E: unit(N.cross(n)) };
+}
+function setPos(lon, lat, hdg) {
+  const f = frameAt(lon, lat);
+  P = f.n; F = unit(mul(f.E, Math.sin(hdg * DEG)).add(mul(f.N, Math.cos(hdg * DEG))));
+}
+setPos(S.lon, S.lat, S.hdg);
+
+// ---------------- Рельеф под самолётом (для «следовать рельефу») ----------------
+const hCache = new Map();
+function heightAt(lon, lat, zoom) {
+  if (window.__heightStub) return window.__heightStub(lon, lat);
+  const key = zoom + ":" + lon.toFixed(3) + ":" + lat.toFixed(3);
+  if (hCache.has(key)) return hCache.get(key);
+  const ll = new LonLat(lon, lat);
+  const pr = new Promise(res => {
+    const t = planet.terrain;
+    if (!t || !t.getHeightAsync) return res(NaN);
+    const geo = t.geoid ? t.geoid.getHeightLonLat(ll) : 0;
+    const tryZ = z => t.getHeightAsync(ll, h => {
+      if (h !== 0 && isFinite(h)) return res(h + geo);
+      const next = z - 2; if (next >= 4) tryZ(next); else res(NaN);
+    }, z);
+    tryZ(zoom);
+  });
+  if (hCache.size > 4000) hCache.clear();
+  hCache.set(key, pr);
+  return pr;
+}
+let sampling = false;
+async function sampleGround() {
+  if (sampling || !P) return;
+  const alt = altFrom(+$("alt").value);
+  if (!S.follow || alt > 300000) { fl.groundT = 0; return; }       // высоко — рельеф не важен
+  sampling = true;
+  try {
+    const zoom = clamp(Math.round(12 - Math.log2(Math.max(alt, 100) / 200)), 4, 11);
+    const R = 6371000, v = fl.v / 3.6, pts = [];
+    for (const s of [0, 1.5, 4]) {                                   // сейчас, через 1,5 и через 4 секунды полёта
+      const th = v * s / R, q = P.scaleTo(Math.cos(th)).add(F.scaleTo(Math.sin(th)));
+      const ll = ell.cartesianToLonLat(q.scaleTo(R));
+      pts.push([ll.lon, ll.lat]);
+    }
+    const hs = (await Promise.all(pts.map(p => heightAt(p[0], p[1], zoom)))).filter(isFinite);
+    if (hs.length) fl.groundT = Math.max(0, ...hs);
+  } catch (e) {} finally { sampling = false; }
+}
+setInterval(sampleGround, 200);
+
+// ---------------- «Голова» ----------------
+const head = { yaw: 0, pitch: 0, vYaw: 0, vPitch: 0, tYaw: 0, tPitch: 0, drag: false, lock: false };
+let knobR = 48;
+function headKnobDraw() {
+  const t = head.drag || head.lock;
+  const yaw = t ? head.tYaw : head.yaw, pitch = t ? head.tPitch : head.pitch;
+  $("headKnob").style.transform = "translate(" + (yaw / Math.PI * knobR) + "px," + (-pitch / (Math.PI / 2 * 0.95) * knobR) + "px)";
+}
+function headFromPointer(e) {
+  const r = $("headPad").getBoundingClientRect();
+  let dx = (e.clientX - r.left - r.width / 2) / (r.width / 2 - 22), dy = (e.clientY - r.top - r.height / 2) / (r.height / 2 - 22);
+  const len = Math.hypot(dx, dy); if (len > 1) { dx /= len; dy /= len; }
+  head.tYaw = dx * Math.PI; head.tPitch = -dy * Math.PI / 2 * 0.95;
+  headKnobDraw();
+}
+$("headPad").addEventListener("pointerdown", e => { head.drag = true; e.currentTarget.setPointerCapture(e.pointerId); headFromPointer(e); e.preventDefault(); });
+$("headPad").addEventListener("pointermove", e => { if (head.drag) headFromPointer(e); });
+["pointerup", "pointercancel"].forEach(t => $("headPad").addEventListener(t, () => { head.drag = false; }));
+$("headLock").onclick = function () { head.lock = !head.lock; this.classList.toggle("on", head.lock); };
+function layoutHead() {
+  const nui = document.body.classList.contains("nui"), H = window.innerHeight;
+  const top = nui ? H : $("bar").getBoundingClientRect().top;
+  const size = clamp(top - 12 - 36 - 8 - 12 - 70, 84, 140);          // 70 — место под строки HUD сверху
+  $("head").style.bottom = (H - top + (nui ? 24 : 10)) + "px";
+  $("headPad").style.setProperty("--hs", size + "px");
+  knobR = size / 2 - 22; headKnobDraw();
+}
+function toggleUi() {
+  const on = document.body.classList.toggle("nui");
+  $("headUi").classList.toggle("on", on); $("bUi").classList.toggle("on", on);
+  window.dispatchEvent(new Event("resize")); try { planet.renderer.resize(); } catch (e) {}
+  layoutHead();
+}
+$("headUi").onclick = toggleUi; $("bUi").onclick = toggleUi;
+window.addEventListener("resize", layoutHead);
+$("head").hidden = false;
+
+// ---------------- Руль ----------------
+let steerDrag = false;
+function steerFromPointer(e) {
+  const r = $("steer").getBoundingClientRect();
+  fl.steer = clamp((e.clientX - r.left - r.width / 2) / (r.width / 2 - 36), -1, 1);
+}
+$("steer").addEventListener("pointerdown", e => { steerDrag = true; e.currentTarget.setPointerCapture(e.pointerId); steerFromPointer(e); e.preventDefault(); });
+$("steer").addEventListener("pointermove", e => { if (steerDrag) steerFromPointer(e); });
+["pointerup", "pointercancel"].forEach(t => $("steer").addEventListener(t, () => { steerDrag = false; }));
+const keys = new Set();
+window.addEventListener("keydown", e => { keys.add(e.key); });
+window.addEventListener("keyup", e => { keys.delete(e.key); });
+
+// ---------------- Органы управления ----------------
+$("spd").value = S.spdT; $("alt").value = S.altT;
+$("spd").oninput = () => { S.spdT = +$("spd").value; };
+$("alt").oninput = () => { S.altT = +$("alt").value; };
+$("bStop").onclick = () => { $("spd").value = 0; S.spdT = 0; };
+$("bMax").onclick = () => { $("spd").value = 1000; S.spdT = 1000; };
+const PLACES = [
+  ["Альпы", 6.865, 45.833], ["Эверест", 86.925, 27.988], ["Эльбрус", 42.439, 43.350], ["Москва", 37.62, 55.75], ["Крым", 34.2, 44.6],
+  ["Нью-Йорк", -74.0, 40.71], ["Большой каньон", -112.14, 36.1], ["Анды", -70.0, -32.65], ["Амазонка", -60.0, -3.1], ["Сахара", 10.0, 25.0],
+  ["Килиманджаро", 37.36, -3.07], ["Дубай", 55.3, 25.2], ["Токио", 139.7, 35.68], ["Н. Зеландия", 170.5, -43.6], ["Исландия", -19.0, 64.9], ["Антарктида", 0, -78]
+];
+PLACES.forEach(p => {
+  const b = document.createElement("button"); b.className = "chip"; b.textContent = p[0];
+  b.onclick = () => setPos(p[1], p[2], fl.hdg);
+  $("chips").appendChild(b);
+});
+$("bDiag").onclick = () => { $("diag").hidden = !$("diag").hidden; $("bDiag").classList.toggle("on", !$("diag").hidden); };
+$("diagClose").onclick = () => { $("diag").hidden = true; $("bDiag").classList.remove("on"); };
+function applyImagery() {
+  Object.entries(LAYERS).forEach(([k, l]) => l.setVisibility(k === S.imagery));
+  planet.setBaseLayer(LAYERS[S.imagery]);
+  document.querySelectorAll("#segImg button").forEach(b => b.classList.toggle("on", b.dataset.v === S.imagery));
+}
+document.querySelectorAll("#segImg button").forEach(b => b.onclick = () => { S.imagery = b.dataset.v; saveS(); applyImagery(); });
+applyImagery();
+$("oFollow").checked = S.follow; $("oFx").checked = S.fx; $("oAtmo").checked = S.atmo;
+$("oFollow").onchange = e => { S.follow = e.target.checked; if (!S.follow) fl.groundT = 0; saveS(); };
+$("oFx").onchange = e => { S.fx = e.target.checked; saveS(); };
+$("oAtmo").onchange = e => { S.atmo = e.target.checked; planet.atmosphereEnabled = S.atmo; saveS(); };
+
+// ---------------- Эффект скорости ----------------
+const fx = $("fx"), fg = fx.getContext("2d");
+const STREAKS = Array.from({ length: 80 }, () => ({ a: Math.random() * Math.PI * 2, r0: 0.12 + Math.random() * 0.9, ph: Math.random(), w: 0.6 + Math.random() * 1.4 }));
+function sizeFx() { fx.width = Math.round(window.innerWidth / 2); fx.height = Math.round(window.innerHeight / 2); }
+sizeFx(); window.addEventListener("resize", sizeFx);
+function drawFx(t) {
+  fg.clearRect(0, 0, fx.width, fx.height);
+  const k = S.fx ? clamp(Math.log10(Math.max(fl.omega, 1e-6) / 0.15) / 2.2, 0, 1) : 0;
+  if (k < 0.02) return;
+  const W = fx.width, H = fx.height, maxR = Math.hypot(W, H) / 2;
+  const pxRad = H / (fl.fov * DEG);
+  // точка, куда летим, на экране: курс — горизонт, камера смотрит вниз и повёрнута «головой»
+  const cx = clamp(W / 2 - head.yaw * pxRad, -W, 2 * W), cy = clamp(H / 2 - (0 - (fl.pitchBase + head.pitch)) * pxRad, -H, 2 * H);
+  fg.lineCap = "round";
+  for (const s of STREAKS) {
+    const ph = (s.ph + t * 0.0004 * (0.5 + k * 3) * s.w) % 1, rr = ph * ph;
+    const r = (0.08 + rr * 1.1) * maxR * s.r0 + rr * maxR * 0.3, len = (0.02 + k * 0.45) * maxR * rr + 2;
+    const ca = Math.cos(s.a), sa = Math.sin(s.a);
+    fg.strokeStyle = "rgba(255,255,255," + (0.55 * k * Math.min(1, rr * 2.2)).toFixed(3) + ")";
+    fg.lineWidth = 1 + k * 2 * rr;
+    fg.beginPath(); fg.moveTo(cx + ca * r, cy + sa * r); fg.lineTo(cx + ca * (r - len), cy + sa * (r - len)); fg.stroke();
+  }
+}
+
+// ---------------- Главный цикл: движение, камера, HUD ----------------
+let lastT = 0, hudT = 0, saveT = 0, headLast = 0, frames = 0, fpsT = performance.now();
+const HEAD_W_FOLLOW = 5, HEAD_W_RETURN = 3;
+const R_EARTH = 6371000;
+planet.renderer.events.on("postdraw", () => {
+  if (!P) return;
+  const now = performance.now(), dt = lastT ? Math.min((now - lastT) / 1000, 0.25) : 0; lastT = now;
+  frames++;
+  if (!dt) return;
+
+  // ---- ввод ----
+  if (keys.has("ArrowLeft") || keys.has("a")) fl.steer = clamp(fl.steer - dt * 3, -1, 1);
+  else if (keys.has("ArrowRight") || keys.has("d")) fl.steer = clamp(fl.steer + dt * 3, -1, 1);
+  else if (!steerDrag) fl.steer *= Math.exp(-dt * 7);                // руль сам возвращается в центр
+  if (Math.abs(fl.steer) < 0.003 && !steerDrag) fl.steer = 0;
+  if (keys.has("ArrowUp")) { S.spdT = clamp(S.spdT + dt * 250, 0, 1000); $("spd").value = S.spdT; }
+  if (keys.has("ArrowDown")) { S.spdT = clamp(S.spdT - dt * 250, 0, 1000); $("spd").value = S.spdT; }
+  if (keys.has("w")) { S.altT = clamp(S.altT + dt * 150, 0, 1000); $("alt").value = S.altT; }
+  if (keys.has("s")) { S.altT = clamp(S.altT - dt * 150, 0, 1000); $("alt").value = S.altT; }
+
+  // скорость плавно догоняет ползунок (разгон не рывком)
+  const vT = spdFrom(+$("spd").value);
+  fl.v += (vT - fl.v) * (1 - Math.exp(-dt * 2.5));
+  if (Math.abs(vT - fl.v) < 0.5) fl.v = vT;
+  // рельеф
+  fl.ground += (fl.groundT - fl.ground) * (1 - Math.exp(-dt * (fl.groundT > fl.ground ? 6 : 1.5)));
+  const aglT = altFrom(+$("alt").value);
+  fl.agl += (aglT - fl.agl) * (1 - Math.exp(-dt * 3));
+  const eyeAlt = (S.follow ? fl.ground : 0) + fl.agl;
+  fl.eyeAlt = eyeAlt;
+
+  // ---- движение по большому кругу и руль ----
+  const th = fl.v / 3.6 * dt / (R_EARTH + eyeAlt);
+  if (th > 0) {
+    const c = Math.cos(th), s = Math.sin(th);
+    const P2 = P.scaleTo(c).add(F.scaleTo(s)), F2 = F.scaleTo(c).sub(P.scaleTo(s));
+    P = unit(P2); F = F2;
+  }
+  const phi = -fl.steer * 22 * DEG * dt;                              // вправо — по часовой, до 22°/с
+  if (phi) { const c = Math.cos(phi), s = Math.sin(phi); F = F.scaleTo(c).add(P.cross(F).scaleTo(s)); }
+  F = unit(F.sub(P.scaleTo(F.dot(P))));
+  fl.bank += (fl.steer * 28 * DEG - fl.bank) * (1 - Math.exp(-dt * 4));
+
+  // ---- положение, курс ----
+  const ll = ell.cartesianToLonLat(P.scaleTo(R_EARTH));
+  fl.lon = ll.lon; fl.lat = ll.lat;
+  const eye = cartAt(ll.lon, ll.lat, eyeAlt);
+  const fr = frameAt(ll.lon, ll.lat);
+  let hd = Math.atan2(F.dot(fr.E), F.dot(fr.N)) / DEG; if (hd < 0) hd += 360; fl.hdg = hd;
+  const n = ell.getSurfaceNormal3v(eye);
+  const fh = unit(F.sub(n.scaleTo(F.dot(n)))), r = unit(fh.cross(n));
+
+  // ---- «голова» с инерцией ----
+  if (!head.drag && !head.lock) { head.tYaw = 0; head.tPitch = 0; }
+  {
+    const w = head.drag || head.lock ? HEAD_W_FOLLOW : HEAD_W_RETURN;
+    const step = (x, v, tg) => { v += (w * w * (tg - x) - 2 * w * v) * dt; return [x + v * dt, v]; };
+    [head.yaw, head.vYaw] = step(head.yaw, head.vYaw, head.tYaw);
+    [head.pitch, head.vPitch] = step(head.pitch, head.vPitch, head.tPitch);
+    if (Math.abs(head.yaw - head.tYaw) + Math.abs(head.pitch - head.tPitch) + Math.abs(head.vYaw) + Math.abs(head.vPitch) < 0.002) {
+      head.yaw = head.tYaw; head.pitch = head.tPitch; head.vYaw = head.vPitch = 0;
+    }
+    headKnobDraw();
+  }
+
+  // ---- камера ----
+  // наклон «вниз»: чем выше, тем сильнее смотрим вниз, чтобы горизонт и земля были в кадре (у горизонта — dip)
+  const dip = Math.acos(R_EARTH / (R_EARTH + eyeAlt)) / DEG;
+  fl.pitchBase = -clamp(1.05 * dip + 4, 4, 88) * DEG;
+  const pitch = clamp(fl.pitchBase + head.pitch, -1.5, 1.5), yaw = head.yaw;
+  const dir = fh.scaleTo(Math.cos(pitch) * Math.cos(yaw)).add(r.scaleTo(Math.cos(pitch) * Math.sin(yaw))).add(n.scaleTo(Math.sin(pitch)));
+  const up = n.scaleTo(Math.cos(fl.bank)).add(r.scaleTo(Math.sin(fl.bank)));       // крен в повороте
+  // угловая скорость «земли под нами» — по ней и эффект скорости
+  fl.omega = fl.v / 3.6 / Math.max(30, S.follow ? fl.agl : eyeAlt);
+  const fovT = S.fx ? 47 + 28 * clamp(Math.log10(Math.max(fl.omega, 1e-6) / 0.05) / 2, 0, 1) : 47;
+  fl.fov += (fovT - fl.fov) * (1 - Math.exp(-dt * 3));
+  if (Math.abs(cam.viewAngle - fl.fov) > 0.05) cam.setViewAngle(fl.fov);
+  cam.set(eye, eye.add(dir.scaleTo(1000)), up);
+  cam.update();
+
+  drawFx(now);
+
+  // ---- HUD ----
+  if (now - hudT > 120) {
+    hudT = now;
+    const dirs = ["С", "СВ", "В", "ЮВ", "Ю", "ЮЗ", "З", "СЗ"], dl = dirs[Math.round(hd / 45) % 8];
+    const mach = fl.v / 1225;
+    $("hud").innerHTML = "<b>" + nf(fmtSpd(fl.v)) + " км/ч</b>" + (mach >= 0.5 ? "  М " + (mach >= 10 ? Math.round(mach) : mach.toFixed(1).replace(".", ",")) : "") +
+      "\nЗемля за " + fmtLap(fl.v) + "\nВысота " + fmtAlt(eyeAlt) + (S.follow ? " (над землёй " + fmtAlt(fl.agl) + ")" : "") +
+      "\nКурс " + String(Math.round(hd) % 360).padStart(3, "0") + "° " + dl +
+      "\n" + Math.abs(ll.lat).toFixed(2) + (ll.lat >= 0 ? "°с.ш. " : "°ю.ш. ") + Math.abs(ll.lon).toFixed(2) + (ll.lon >= 0 ? "°в.д." : "°з.д.");
+    $("spdVal").textContent = nf(fmtSpd(vT)) + " км/ч · Земля за " + fmtLap(vT);
+    $("altVal").textContent = fmtAlt(aglT);
+    $("altMode").textContent = S.follow ? "над землёй" : "над уровнем моря";
+    $("steerKnob").style.transform = "translateX(" + (fl.steer * ($("steer").clientWidth / 2 - 36)) + "px)";
+    $("steerKnob").textContent = fl.steer === 0 ? "КУРС " + String(Math.round(hd) % 360).padStart(3, "0") + "°" : (fl.steer > 0 ? "▶ " : "◀ ") + Math.round(Math.abs(fl.steer) * 22) + "°/с";
+  }
+  // запоминаем положение
+  if (now - saveT > 3000) { saveT = now; S.lon = fl.lon; S.lat = fl.lat; S.hdg = fl.hdg; saveS(); }
+  if (now - fpsT > 1000) { $("fps").textContent = "FPS: " + Math.round(frames * 1000 / (now - fpsT)) + " · кадр " + planet.renderer.handler.canvas.width + "×" + planet.renderer.handler.canvas.height; frames = 0; fpsT = now; }
+});
+window.addEventListener("pagehide", () => { S.lon = fl.lon; S.lat = fl.lat; S.hdg = fl.hdg; saveS(); });
+layoutHead();
+window.__jet = { fl, S, head, setPos, get P() { return P; }, get F() { return F; } };
+</script>
+</body>
+</html>
