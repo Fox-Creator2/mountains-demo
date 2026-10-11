@@ -77,7 +77,7 @@
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps">Версия: 11.10, 03:05</span>
+  <span class="fps">Версия: 11.10, 03:15</span>
 </div>
 
 <div id="cam" hidden>
@@ -465,7 +465,7 @@ async function drapeRoute(rt, mountainName) {
     //  2) добавляем провисание по параболе: до 4% длины пролёта, но не больше, чем позволяет рельеф под тросом.
     const CLEAR = 15, SAG = 0.04;
     const PYL_MAX = 60, PYL_H = 35;   // трос не выше 60 м над склоном — иначе опора высотой 35 м
-    const fixed = ground.slice(), pylons = [];
+    const fixed = ground.slice(), pylons = [], onCable = new Set();
     const kx = 111320 * Math.cos(pts[0][1] * Math.PI / 180), ky = 111320;
     // отрезки, которые не удалось обойти: линия не опускается ниже прямой между концами (на 10 м)
     for (const seg of eff.bridges) {
@@ -522,12 +522,30 @@ async function drapeRoute(rt, mountainName) {
           span(worst, kB, hp, hB, depth + 1);
           return;
         }
-        for (let k = kA + 1; k < kB; k++) fixed[idx[k]] = curve[k - kA - 1];
+        for (let k = kA + 1; k < kB; k++) { fixed[idx[k]] = curve[k - kA - 1]; onCable.add(idx[k]); }
       };
       fixed[i0] = g0;
       span(0, jEnd, g0, hEnd, 0);
       fixed[idx[jEnd]] = hEnd;
       for (let k = jEnd + 1; k < idx.length; k++) fixed[idx[k]] = ground[idx[k]];   // после бровки — по земле
+    }
+    // Эвристика «без нырков»: узкие глубокие провалы в линии засыпаем.
+    // Тропа не ныряет на сотни метров вниз, чтобы через несколько сотен метров выбраться обратно, —
+    // такой V-образный провал почти всегда значит, что прямая между грубыми точками срезала угол над ущельем.
+    // Считаем «закрытие» профиля окном ±DIP_WIN точек (≈ ±300 м): сначала максимум по окну, потом минимум.
+    // Оно заполняет только провалы уже окна и не трогает обычные подъёмы и спуски. Где провал глубже
+    // DIP_FILL, линия идёт по закрытому профилю (поверху), в остальных местах — как раньше по рельефу.
+    {
+      const DIP_WIN = 6, DIP_FILL = 80, n = fixed.length, P = 2 * DIP_WIN;
+      // края профиля продлеваем крайними значениями, иначе у начала и конца маршрута закрытие даёт ложный подъём
+      const f = [...Array(P).fill(fixed[0]), ...fixed, ...Array(P).fill(fixed[n - 1])];
+      const win = (arr, k, op) => { let m = op === "max" ? -Infinity : Infinity;
+        for (let j = Math.max(0, k - DIP_WIN); j <= Math.min(arr.length - 1, k + DIP_WIN); j++) m = op === "max" ? Math.max(m, arr[j]) : Math.min(m, arr[j]);
+        return m; };
+      const dil = f.map((_, k) => win(f, k, "max"));
+      const cloP = dil.map((_, k) => win(dil, k, "min"));
+      const clo = cloP.slice(P, P + n);
+      for (let k = 0; k < n; k++) if (!onCable.has(k) && clo[k] - fixed[k] > DIP_FILL) fixed[k] = clo[k];
     }
     // вертикальные отрезки — опоры
     (rt.pylons || []).forEach(e => routeLayer.removeEntity(e));
