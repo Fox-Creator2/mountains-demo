@@ -75,9 +75,10 @@
   <label>Вернуть автопилот через <select id="sResume"><option value="0">никогда</option><option value="2">2 с</option><option value="4">4 с</option><option value="8">8 с</option></select></label>
   <label>Помощь у земли в ручном <input type="checkbox" id="sAssist"></label>
   <label>Инвертировать вверх/вниз <input type="checkbox" id="sInv"></label>
+  <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 11.10, 23:27</small>
+  <small id="ver">версия 11.10, 23:59</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -116,13 +117,14 @@ float hgt(float x,float z,float sc){
 }`;
 const jsSrc = H_SRC.replace(/float (\w+)(?=\s*[,)])/g, "$1").replace(/float\s+(\w+)\s*\(/g, "function $1(").replace(/float\s+(\w+)\s*=/g, "let $1 =");
 const hgtRaw = new Function("const abs=Math.abs,sin=Math.sin;" + jsSrc + ";return hgt;")();
+const nzRaw = new Function("const abs=Math.abs,sin=Math.sin;" + jsSrc + ";return nz;")();
 
 /* ================= трасса ================= */
 function rng(seed) { let a = seed >>> 0; return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
 function paramsFor(vmax) {
   const SC = Math.pow(vmax / 250, 0.8);
-  return { vmax, SC, AMAX: Math.max(45, vmax / 8), ACC: vmax / 6, BRK: vmax / 4, R: 40000 * SC, Rg: 40 + 35 * SC, cs: 1 + 0.7 * SC };
+  return { vmax, SC, AMAX: Math.max(70, vmax / 4), ACC: vmax / 6, BRK: vmax / 4, R: 40000 * SC, Rg: 40 + 35 * SC, cs: 1 + 0.7 * SC };
 }
 const ground = (x, z, SC) => Math.max(0, hgtRaw(x, z, SC));
 
@@ -136,14 +138,14 @@ function maxCirc(a, w) { const n = a.length, out = new Float64Array(n); for (let
 
 function computeProfile(T, k) {
   const { N, ds, kap, vmax, AMAX, ACC, BRK } = T;
-  const vl = new Float64Array(N), vcap = vmax * (0.8 + 0.2 * k), aE = AMAX * 0.8 * k;
+  const vl = new Float64Array(N), vcap = vmax * (0.8 + 0.2 * k), aE = AMAX * 0.7 * k;
   for (let i = 0; i < N; i++) vl[i] = Math.min(vcap, Math.sqrt(aE / Math.max(kap[i], 1e-9)));
   for (let it = 0; it < 3; it++) {
     for (let i = N - 1 + N; i >= N; i--) { const a = i % N, b = (i + 1) % N; vl[a] = Math.min(vl[a], Math.sqrt(vl[b] * vl[b] + 2 * BRK * 0.8 * ds)); }
     for (let i = N; i < 2 * N; i++) { const a = i % N, b = (i - 1) % N; vl[a] = Math.min(vl[a], Math.sqrt(vl[b] * vl[b] + 2 * ACC * 0.9 * ds)); }
   }
   T.vl = vl; T.k = k;
-  let s = 0; for (let i = 0; i < N; i++) s += vl[i]; T.vAvg = s / N;
+  let s = 0, mn = 1e18; for (let i = 0; i < N; i++) { s += vl[i]; mn = Math.min(mn, vl[i]); } T.vAvg = s / N; T.vMin = mn;
 }
 
 function buildTrack(preset, seed, skill) {
@@ -151,16 +153,20 @@ function buildTrack(preset, seed, skill) {
   const Lt = vmax * 100, Rb = Lt / (2 * Math.PI) / 1.1;
   let best = null;
   for (let att = 0; att < 40; att++) {
-    const rnd = rng(seed * 7919 + att * 104729 + 13), damp = Math.pow(0.95, att);
+    const rnd = rng(seed * 7919 + att * 104729 + 13), damp = 0.9 + 0.05 * att;
     const c0 = 60 + 0.6 * vmax;
-    const M = 480, ph = [rnd() * 6.28, rnd() * 6.28, rnd() * 6.28, rnd() * 6.28];
-    const fr = [2, 3, 4, 5], am = [0.42 * damp * (0.7 + rnd() * 0.6), 0.28 * damp * (0.5 + rnd()), 0.17 * damp * (0.3 + rnd()), 0.10 * damp * rnd()];
+    const M = 600, ph = Array.from({ length: 6 }, () => rnd() * 6.28);
+    const fr = [2, 3, 4, 5, 7, 9], am = [0.40, 0.34, 0.28, 0.22, 0.16, 0.12].map(a => a * damp * (0.5 + rnd()));
+    const dips = Array.from({ length: 3 + Math.floor(rnd() * 3) }, () => ({ a: rnd() * 6.283, d: (0.30 + rnd() * 0.3) * Math.min(1, 0.6 + att * 0.1), w: 0.08 + rnd() * 0.08 }));
     const xz = [];
     for (let j = 0; j < M; j++) {
       const th = 2 * Math.PI * j / M; let r = 1;
-      for (let q = 0; q < 4; q++) r += am[q] * Math.sin(fr[q] * th + ph[q]);
+      for (let q = 0; q < 6; q++) r += am[q] * Math.sin(fr[q] * th + ph[q]);
+      for (const dp of dips) { let da = Math.abs(th - dp.a); da = Math.min(da, 6.283 - da); r -= dp.d * Math.exp(-(da / dp.w) * (da / dp.w)); }
+      r = Math.max(0.28, r);
       xz.push([Rb * r * Math.cos(th), Rb * r * Math.sin(th) * (0.8 + 0.3 * rnd() * 0 + 0.1)]);
     }
+    { let len = 0; for (let j = 0; j < M; j++) { const a = xz[j], b = xz[(j + 1) % M]; len += Math.hypot(b[0] - a[0], b[1] - a[1]); } const f = Lt * 1.2 / len; for (const q of xz) { q[0] *= f; q[1] *= f; } }
     // высота: максимум рельефа в окне + запас + плавные волны
     const sp = Lt / M, win = Math.max(2, Math.round(4000 * SC / sp));
     const g = new Float64Array(M); for (let j = 0; j < M; j++) g[j] = ground(xz[j][0], xz[j][1], SC);
@@ -175,7 +181,7 @@ function buildTrack(preset, seed, skill) {
       const L = cum[cum.length - 1], out = []; let seg = 0;
       for (let i = 0; i < N; i++) { const t = L * i / N; while (cum[seg + 1] < t) seg++; const a = pts[seg], b = pts[(seg + 1) % pts.length], u = (t - cum[seg]) / (cum[seg + 1] - cum[seg] || 1); out.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u]); }
       // сглаживание
-      const sig = pass === 0 ? Math.max(3, Math.round(N / 120)) : 2;
+      const sig = pass === 0 ? Math.max(2, Math.round(N / 330)) : 2;
       const cols = [0, 1, 2].map(c => blurCirc(Float64Array.from(out, p => p[c]), sig));
       pts = out.map((_, i) => [cols[0][i], cols[1][i], cols[2][i]]);
     }
@@ -198,8 +204,9 @@ function buildTrack(preset, seed, skill) {
     for (let i = 0; i < N; i++) { const tx = Tn[3 * i], tz = Tn[3 * i + 2]; let rx = -tz, rz = tx; const l = Math.hypot(rx, rz) || 1; T.Rn[3 * i] = rx / l; T.Rn[3 * i + 1] = 0; T.Rn[3 * i + 2] = rz / l; }
     computeProfile(T, skill);
     const ratio = T.vAvg / vmax;
-    if (!best || ratio > best.ratio) best = { T, ratio };
-    if (ratio >= 0.72) { best = { T, ratio }; break; }
+    const okMin = T.vMin >= 0.32 * vmax, sc2 = Math.abs(ratio - 0.66) + (okMin ? 0 : 1);
+    if (!best || sc2 < best.sc2) best = { T, ratio, sc2 };
+    if (ratio >= 0.55 && ratio <= 0.8 && okMin) { best = { T, ratio, sc2 }; break; }
   }
   const T = best.T;
   // ворота
@@ -252,7 +259,9 @@ class Plane {
 const _t = new THREE.Vector3(), _d = new THREE.Vector3();
 function aiControl(p, off, speedK, skill) {
   const T = p.T; p.nearest();
-  const v = Math.max(p.v, T.vmax * 0.2), Ld = Math.max(0.85 * v, 120 * Math.pow(T.SC, 0.9));
+  const v = Math.max(p.v, T.vmax * 0.2); let kmax = 0;
+  for (let q = 0; q <= 6; q++) { const j = (p.si + Math.round(q * 0.85 * v / 6 / T.ds)) % T.N; kmax = Math.max(kmax, T.kap[j]); }
+  const Ld = Math.max(0.85 * Math.min(v, 1.1 / Math.max(kmax, 1e-9) / 0.85), 45 * Math.pow(T.SC, 0.9));
   trackPoint(T, p.si + Ld / T.ds, _t, off);
   _d.subVectors(_t, p.pos); const dd = _d.dot(p.f); _d.addScaledVector(p.f, -dd);
   const L2 = Math.max(Ld * Ld * 0.5, _t.distanceToSquared(p.pos));
@@ -264,7 +273,7 @@ function aiControl(p, off, speedK, skill) {
 }
 
 /* ================= сцена ================= */
-let T, SCN, renderer, camera, player, rival, terrain, sky, gates, trail = {}, streaks, planeMesh = {}, nextGate = 0, lapStart = 0, lapCount = 0, lapManual = 0, tNow = 0, started = false, firstPass = false, bestLap = null, lastLap = null, misses = 0, gatesPassed = 0, crashes = 0;
+let life, T, SCN, renderer, camera, player, rival, terrain, sky, gates, trail = {}, streaks, planeMesh = {}, nextGate = 0, lapStart = 0, lapCount = 0, lapManual = 0, tNow = 0, started = false, firstPass = false, bestLap = null, lastLap = null, misses = 0, gatesPassed = 0, crashes = 0;
 const ctl = { steerMan: false, spdMan: false, sx: 0, sy: 0, thr: 0.75, lastStick: -1e9, stickDown: false, keys: {} };
 const camState = { f: new THREE.Vector3(0, 0, -1), up: new THREE.Vector3(0, 1, 0), pos: new THREE.Vector3(), shake: 0 };
 const fogC = new THREE.Color(0.74, 0.82, 0.94);
@@ -313,11 +322,59 @@ void main(){ vec3 n=normalize(vN); float d=length(vW-uCam); float hs=vW.y/uSC; v
  col=mix(col,vec3(.3,.95,1.),line*.16);
  float f=1.-exp(-pow(d*uFD,2.)); col=mix(col,uFog,clamp(f,0.,1.)); gl_FragColor=vec4(col,1.); }` }));
   terrain.frustumCulled = false; SCN.add(terrain);
+
+  /* жизнь на земле: лес и дома. GPU-инстансинг — одна геометрия, тысячи копий одним вызовом;
+     положение каждой копии считается в шейдере из координат ячейки (без затрат процессора и памяти) */
+  const mergeGeo = parts => { const pos = [], nor = [], col = [], idx = []; let off = 0;
+    for (const q of parts) { const g = q.g.clone(); g.applyMatrix4(q.m); const a = g.attributes, n = a.position.count;
+      for (let i = 0; i < n; i++) { pos.push(a.position.getX(i), a.position.getY(i), a.position.getZ(i)); nor.push(a.normal.getX(i), a.normal.getY(i), a.normal.getZ(i)); col.push(q.c.r, q.c.g, q.c.b); }
+      if (g.index) for (let i = 0; i < g.index.count; i++) idx.push(g.index.getX(i) + off); else for (let i = 0; i < n; i++) idx.push(i + off);
+      off += n; }
+    const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3)); g.setAttribute("aCol", new THREE.Float32BufferAttribute(col, 3)); g.setIndex(idx); return g; };
+  const quad = new THREE.BufferGeometry(); quad.setAttribute("position", new THREE.Float32BufferAttribute([-.5, 0, 0, .5, 0, 0, -.5, 1, 0, .5, 1, 0], 3)); quad.setAttribute("uv", new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 1, 1], 2)); quad.setIndex([0, 1, 2, 2, 1, 3]);
+  const mtx = new THREE.Matrix4();
+  const house = mergeGeo([
+    { g: new THREE.BoxGeometry(1, .55, 1.5), m: mtx.clone().makeTranslation(0, .275, 0), c: new THREE.Color(.88, .84, .76) },
+    { g: new THREE.ConeGeometry(.95, .5, 4), m: mtx.clone().makeRotationY(Math.PI / 4).premultiply(new THREE.Matrix4().makeScale(1, 1, 1.5)).premultiply(new THREE.Matrix4().makeTranslation(0, .8, 0)), c: new THREE.Color(.62, .2, .14) }]);
+  const lifeCommon = `precision highp float; uniform vec2 uC; uniform vec3 uCam; uniform float uSC,uCell,uSize,uRad,uIn0,uIn1,uOut0,uOut1,uWide; attribute vec2 aIdx;
+${H_SRC}
+float hsh(vec2 p){ p=mod(p,997.); return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }`;
+  const fogFrag = `float f=1.-exp(-pow(length(vW-uCam)*uFD,2.)); col=mix(col,uFog,clamp(f,0.,1.)); gl_FragColor=vec4(col,1.);`;
+  const treeMat = () => new THREE.ShaderMaterial({ uniforms: Object.assign({ uCell: { value: 45 }, uSize: { value: 22 }, uRad: { value: 2250 }, uIn0: { value: -2 }, uIn1: { value: -1 }, uOut0: { value: .72 }, uOut1: { value: 1 }, uWide: { value: .62 } }, { uC: u.uC, uSC: u.uSC, uCam: u.uCam, uSun: u.uSun, uFog: u.uFog, uFD: u.uFD }),
+    vertexShader: lifeCommon + `varying vec2 vUv; varying vec3 vW; varying float vSh,vHs;
+void main(){ vec2 cell=floor(uC/uCell)+aIdx; float h1=hsh(cell),h2=hsh(cell+17.3),h3=hsh(cell+41.7); vec2 cp=(cell+vec2(.15+.7*h1,.15+.7*h2))*uCell; float d=length(cp-uC)/uRad;
+ float vis=smoothstep(uIn0,uIn1,d)*(1.-smoothstep(uOut0,uOut1,d)); float pn=nz(cp.x/uSC*4e-4,cp.y/uSC*4e-4,.7,-.7,3.3)*.5+.5; float dens=smoothstep(.34,.58,pn)*.85+.06;
+ vUv=vec2(0.); vW=vec3(0.); vSh=0.; vHs=0.;
+ if(vis<.02||h3>dens){ gl_Position=vec4(9.,9.,9.,1.); return; }
+ float gh=hgt(cp.x,cp.y,uSC); float hs=gh/uSC; if(hs<18.||hs>800.){ gl_Position=vec4(9.,9.,9.,1.); return; }
+ float sz=uSize*(.7+.6*h2)*vis; vec2 dv=uCam.xz-cp; float L=max(length(dv),1.); vec3 rt=vec3(dv.y,0.,-dv.x)/L;
+ vec3 wp=vec3(cp.x,gh,cp.y)+rt*position.x*sz*uWide+vec3(0.,1.,0.)*position.y*sz; vW=wp; vUv=uv; vSh=.7+.5*h3; vHs=hs; gl_Position=projectionMatrix*viewMatrix*vec4(wp,1.); }`,
+    fragmentShader: `precision highp float; varying vec2 vUv; varying vec3 vW; varying float vSh,vHs; uniform vec3 uCam,uFog; uniform float uFD;
+void main(){ float y=vUv.y, x=vUv.x-.5, t=.5; if(y<.13){ if(abs(x)>.04) discard; } else { float yn=(y-.13)/.87; t=fract(yn*3.); float w=(1.-yn)*.5*(.62+.38*(1.-t)); if(abs(x)>w) discard; }
+ vec3 col=mix(vec3(.07,.26,.09),vec3(.05,.17,.1),clamp(vHs/900.,0.,1.))*vSh*(.6+.6*t); if(y<.13) col=vec3(.25,.16,.09);
+ ${fogFrag} }` });
+  const houseMat = new THREE.ShaderMaterial({ uniforms: Object.assign({ uCell: { value: 120 }, uSize: { value: 18 }, uRad: { value: 4560 }, uIn0: { value: -2 }, uIn1: { value: -1 }, uOut0: { value: .72 }, uOut1: { value: 1 }, uWide: { value: 1 } }, { uC: u.uC, uSC: u.uSC, uCam: u.uCam, uSun: u.uSun, uFog: u.uFog, uFD: u.uFD }),
+    vertexShader: lifeCommon + `attribute vec3 aCol; varying vec3 vCol,vN,vW;
+void main(){ vec2 cell=floor(uC/uCell)+aIdx; float h1=hsh(cell),h2=hsh(cell+17.3),h3=hsh(cell+41.7); vec2 cp=(cell+vec2(.15+.7*h1,.15+.7*h2))*uCell; float d=length(cp-uC)/uRad;
+ float vis=smoothstep(uIn0,uIn1,d)*(1.-smoothstep(uOut0,uOut1,d)); float pn=nz(cp.x/uSC*2.3e-4,cp.y/uSC*2.3e-4,.5,.86,1.7)*.5+.5;
+ vCol=vec3(0.); vN=vec3(0.,1.,0.); vW=vec3(0.);
+ if(vis<.02||pn<.56||h3>.55){ gl_Position=vec4(9.,9.,9.,1.); return; }
+ float gh=hgt(cp.x,cp.y,uSC); float hs=gh/uSC; if(hs<4.||hs>170.){ gl_Position=vec4(9.,9.,9.,1.); return; }
+ float a=h1*6.2832, ca=cos(a), sa=sin(a); float sz=uSize*(.8+.5*h2)*vis; vec2 lp=vec2(ca*position.x+sa*position.z,-sa*position.x+ca*position.z)*sz;
+ vec3 wp=vec3(cp.x+lp.x,gh+position.y*sz-.05*sz,cp.y+lp.y); vec2 nr=vec2(ca*normal.x+sa*normal.z,-sa*normal.x+ca*normal.z); vN=normalize(vec3(nr.x,normal.y,nr.y));
+ vCol=aCol*(.85+.3*h3); vW=wp; gl_Position=projectionMatrix*viewMatrix*vec4(wp,1.); }`,
+    fragmentShader: `precision highp float; varying vec3 vCol,vN,vW; uniform vec3 uCam,uFog,uSun; uniform float uFD;
+void main(){ vec3 col=vCol*(.38+.75*max(dot(normalize(vN),uSun),0.)); ${fogFrag} }` });
+  const mkLayer = (geo, mat, NG) => { const g = new THREE.InstancedBufferGeometry(); g.index = geo.index; for (const k in geo.attributes) g.setAttribute(k, geo.attributes[k]);
+    const a = new Float32Array(NG * NG * 2); let k = 0; for (let j = 0; j < NG; j++) for (let i = 0; i < NG; i++) { a[k++] = i - NG / 2; a[k++] = j - NG / 2; }
+    g.setAttribute("aIdx", new THREE.InstancedBufferAttribute(a, 2)); g.instanceCount = NG * NG; const m = new THREE.Mesh(g, mat); m.frustumCulled = false; SCN.add(m); return m; };
+  life = { A: mkLayer(quad, treeMat(), 100), B: mkLayer(quad, treeMat(), 84), C: mkLayer(house, houseMat, 76) };
+  life.A.userData = { cell: 45, size: 22, NG: 100 }; life.B.userData = { cell: 260, size: 70, NG: 84, wide: .9 }; life.C.userData = { cell: 120, size: 12, NG: 76 };
   // небо
   sky = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 12), new THREE.ShaderMaterial({ side: THREE.BackSide, depthWrite: false, fog: false,
     uniforms: { uSun: u.uSun, uHor: { value: fogC } },
     vertexShader: `varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*viewMatrix*modelMatrix*vec4(position,1.); }`,
-    fragmentShader: `varying vec3 vP; uniform vec3 uSun,uHor; void main(){ vec3 d=normalize(vP); float t=clamp(d.y,0.,1.); vec3 c=mix(uHor,vec3(.12,.3,.62),pow(t,.5)); float s=max(dot(d,uSun),0.); c+=vec3(1.,.85,.6)*(pow(s,600.)*3.+pow(s,12.)*.25); gl_FragColor=vec4(c,1.); }` }));
+    fragmentShader: `varying vec3 vP; uniform vec3 uSun,uHor; void main(){ vec3 d=normalize(vP); float t=clamp(d.y,0.,1.); vec3 c=mix(uHor,vec3(.12,.3,.62),pow(t,.5)); float s=max(dot(d,uSun),0.); c+=vec3(1.,.85,.6)*(pow(s,600.)*3.+pow(s,16.)*.15); gl_FragColor=vec4(c,1.); }` }));
   sky.renderOrder = -10; sky.frustumCulled = false; SCN.add(sky);
   SCN.fog = new THREE.FogExp2(fogC, 1e-4);
   planeMesh.p = makePlane(0xff7a2a, 0xffffff); planeMesh.r = makePlane(0x2aa9ff, 0xdfe9ff); SCN.add(planeMesh.p, planeMesh.r);
@@ -371,6 +428,11 @@ function startGame() {
   const fd = 2.2 / (T.R * 0.9); terrain.material.uniforms.uFD.value = fd; SCN.fog.density = fd;
   camera.near = 2 * T.cs; camera.far = T.R * 1.7; camera.updateProjectionMatrix(); sky.scale.setScalar(T.R * 1.5);
   planeMesh.p.scale.setScalar(T.cs); planeMesh.r.scale.setScalar(T.cs);
+
+  { const A = life.A.userData, B = life.B.userData, C = life.C.userData, SC = T.SC, rA = A.NG / 2 * A.cell * SC, rB = B.NG / 2 * B.cell * SC;
+    const set = (m, d, o) => { const un = m.material.uniforms; un.uCell.value = d.cell * SC; un.uSize.value = d.size * SC; un.uRad.value = d.NG / 2 * d.cell * SC; if (d.wide) un.uWide.value = d.wide; for (const k in o) un[k].value = o[k]; };
+    set(life.A, A, {}); set(life.B, B, { uIn0: .6 * rA / rB, uIn1: .95 * rA / rB }); set(life.C, C, {});
+    const on = S.life !== 0; life.A.visible = life.B.visible = life.C.visible = on; }
   player = new Plane(T); rival = new Plane(T);
   const startI = T.N - Math.round(T.vmax * 3 / T.ds);
   player.place(startI, T.Rg * 0.12, T.vmax * 0.55); rival.place(startI - 3, -T.Rg * 0.4, T.vmax * 0.55);
@@ -409,10 +471,15 @@ function playerControl() {
 }
 
 function checkGates() {
-  const g = T.gates[nextGate], p = player, a = _a.subVectors(p.prev, g.p).dot(g.t), b = _a.subVectors(p.pos, g.p).dot(g.t);
+  const g = T.gates[nextGate], p = player, a = _a.subVectors(p.prev, g.p).dot(g.t), b = _a.subVectors(p.pos, g.p).dot(g.t), G = T.gates.length;
+  let passed = false, missed = false;
   if (a < 0 && b >= 0) {
-    const u = a / (a - b), cx = p.prev.x + (p.pos.x - p.prev.x) * u - g.p.x, cy = p.prev.y + (p.pos.y - p.prev.y) * u - g.p.y, cz = p.prev.z + (p.pos.z - p.prev.z) * u - g.p.z, d = Math.hypot(cx, cy, cz);
-    if (d <= T.Rg * 1.05) gatesPassed++; else { misses++; lapStart -= 2; toast("Мимо ворот! +2 с", 900); }
+    const u = a / (a - b), cx = p.prev.x + (p.pos.x - p.prev.x) * u - g.p.x, cy = p.prev.y + (p.pos.y - p.prev.y) * u - g.p.y, cz = p.prev.z + (p.pos.z - p.prev.z) * u - g.p.z;
+    if (Math.hypot(cx, cy, cz) <= T.Rg * 1.05) passed = true;
+  }
+  if (!passed) { const ahead = (p.si - g.i + T.N) % T.N; if (ahead > 0.4 * T.N / G && ahead < T.N / 2) missed = true; }
+  if (passed || missed) {
+    if (passed) gatesPassed++; else { misses++; lapStart -= 2; toast("Мимо ворот! +2 с", 900); }
     if (nextGate === 0) {
       if (!firstPass) { firstPass = true; lapStart = tNow; lapManual = 0; }
       else { const lt = tNow - lapStart, manual = lapManual / lt > 0.5; lastLap = { t: lt, manual }; lapCount++;
@@ -420,7 +487,7 @@ function checkGates() {
         if (manual && (!bestLap || lt < bestLap.t)) { bestLap = { t: lt }; try { localStorage.setItem("race-best-" + S.preset + "-" + S.seed, JSON.stringify(bestLap)); } catch {} msg += " · рекорд!"; }
         toast(msg, 3000); lapStart = tNow; lapManual = 0; }
     }
-    nextGate = (nextGate + 1) % T.gates.length; colorGates();
+    nextGate = (nextGate + 1) % G; colorGates();
   }
 }
 
@@ -485,7 +552,7 @@ function hud(t) {
   mk.style.display = "block"; mk.style.transform = `translate(${x.toFixed(0)}px,${y.toFixed(0)}px)`; $("markArrow").parentNode.style.transform = inside ? "scale(.55) rotate(180deg)" : `rotate(${rot}rad)`;
   if (t - hudT < 0.1) return; hudT = t;
   const dist = pl.pos.distanceTo(g.p); $("markT").textContent = dist > 1000 ? (dist / 1000).toFixed(1) + " км" : dist.toFixed(0) + " м";
-  $("vS").textContent = Math.round(pl.v * 3.6).toLocaleString("ru"); $("mach").textContent = "M " + (pl.v / 340).toFixed(1);
+  $("vS").textContent = Math.round(pl.v * 3.6).toLocaleString("ru"); $("mach").textContent = "M " + (pl.v / 340).toFixed(1) + " · крен " + Math.abs(Math.round(pl.roll * 57.3)) + "°";
   $("lapT").textContent = firstPass ? fmtT(tNow - lapStart) : "к старту";
   $("gateS").textContent = "ворота " + (nextGate + 1) + "/" + T.gates.length + (misses ? " · мимо " + misses : "");
   $("best").textContent = (bestLap ? "рекорд " + fmtT(bestLap.t) + " " : "") + (lastLap ? "· прошл. " + fmtT(lastLap.t) : "");
@@ -518,7 +585,7 @@ addEventListener("keyup", e => { ctl.keys[e.key.length === 1 ? e.key.toLowerCase
 
 /* ================= панель ================= */
 const sP = $("sPreset"); PRESETS.forEach(p => sP.add(new Option(p.name, p.id)));
-function syncPanel() { sP.value = S.preset; $("sSkill").value = S.skill; $("sRival").checked = !!S.rival; $("sResume").value = S.resume; $("sAssist").checked = !!S.assist; $("sInv").checked = !!S.inv; $("sFx").value = S.fx; $("sQ").value = S.q; }
+function syncPanel() { sP.value = S.preset; $("sSkill").value = S.skill; $("sRival").checked = !!S.rival; $("sResume").value = S.resume; $("sAssist").checked = !!S.assist; $("sInv").checked = !!S.inv; $("sFx").value = S.fx; $("sLife").value = S.life === 0 ? 0 : 1; $("sQ").value = S.q; }
 $("bSet").onclick = () => { syncPanel(); $("panel").style.display = "block"; };
 $("bClose").onclick = () => $("panel").style.display = "none";
 sP.onchange = () => { S.preset = sP.value; saveS(); startGame(); };
@@ -527,6 +594,7 @@ $("sRival").onchange = e => { S.rival = e.target.checked; saveS(); planeMesh.r.v
 $("sResume").onchange = e => { S.resume = +e.target.value; saveS(); };
 $("sAssist").onchange = e => { S.assist = e.target.checked; saveS(); };
 $("sInv").onchange = e => { S.inv = e.target.checked; saveS(); };
+$("sLife").onchange = e => { S.life = +e.target.value; saveS(); const on = S.life !== 0; life.A.visible = life.B.visible = life.C.visible = on; };
 $("sFx").onchange = e => { S.fx = +e.target.value; saveS(); buildStreaks(); };
 $("sQ").onchange = e => { S.q = +e.target.value; saveS(); resize(); };
 $("bNew").onclick = () => { S.seed = 1 + Math.floor(Math.random() * 9999); saveS(); startGame(); $("panel").style.display = "none"; };
@@ -537,7 +605,7 @@ initScene(); startGame(); renderer.setAnimationLoop(frame);
 
 /* отладка и тесты */
 window.__race = {
-  get T() { return T; }, get player() { return player; }, get rival() { return rival; }, ctl, S, ground: (x, z) => ground(x, z, T.SC),
+  get life() { return life; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, ctl, S, ground: (x, z) => ground(x, z, T.SC),
   /* симуляция без рендера: автопилот, статистика */
   sim(seconds, dt = 1 / 60) {
     const st = { t: 0, maxErr: 0, sumErr: 0, n: 0, minAgl: 1e18, crashes0: crashes, misses0: misses, passed0: gatesPassed, laps0: lapCount, maxV: 0, minV: 1e18, rollMax: 0 };
