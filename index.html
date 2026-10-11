@@ -77,7 +77,7 @@
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps">Версия: 11.10, 03:45</span>
+  <span class="fps">Версия: 11.10, 03:55</span>
   <div class="fps" id="routeDbg" style="max-width:300px;white-space:pre-wrap;font-size:11px"></div>
 </div>
 
@@ -309,7 +309,7 @@ window.planet = planet;   // для отладки из консоли брау�
 
 // ---------------- Маршруты восхождения ----------------
 const ROUTE_LIFT = 12;     // на сколько метров поднять линию над рельефом, чтобы она не тонула в склоне
-const LABEL_LIFT = 70;     // подписи точек — чуть выше
+const LABEL_LIFT = 20;     // кружки и подписи точек — чуть над поверхностью
 
 // Сгущаем маршрут: точка каждые ~50 м, высота сначала линейная между ключевыми точками
 function densify(route) {
@@ -408,33 +408,57 @@ function sampleLine(a, b, kx, ky) {
 // от прямой и берём ту, через которую путь идёт ровнее (без провала и без лишнего подъёма на гребни).
 const DIP_LIMIT = 80;
 
-// Подгонка ключевых точек по известной высоте.
+// Подгонка ключевых точек по известной высоте — вдоль маршрута.
 // Высоты станций, хижин и лагерей известны хорошо, а координаты — грубо. Если рельеф в точке отличается
-// от её высоты больше чем на SNAP_TOL (точка «повисла в воздухе» перед обрывом или ушла под склон),
-// ищем рядом, в радиусе SNAP_R, место с самой подходящей высотой и переносим точку туда.
-const SNAP_TOL = 60, SNAP_R = 450, SNAP_STEP = 50;
+// от её высоты больше чем на SNAP_TOL (точка висит в воздухе перед обрывом или ушла под склон),
+// двигаем её вдоль самого маршрута: сначала вперёд — к следующей точке, потом назад — к предыдущей,
+// шагом SNAP_STEP, и останавливаемся там, где рельеф впервые выходит на нужную высоту
+// (точно в месте пересечения, чтобы точка легла на поверхность, а не внутрь склона).
+// Вперёд предпочтительнее: назад берём, только если вперёд подходящего места нет или оно вдвое дальше.
+const SNAP_TOL = 30, SNAP_STEP = 10, SNAP_MAX = 2000;
 async function snapPoints(rt) {
-  const kx = 111320 * Math.cos(rt.pts[0][1] * Math.PI / 180), ky = 111320;
-  const hs = await heightsAt(rt.pts);
-  const out = rt.pts.map(p => p.slice());
+  const P = rt.pts, kx = 111320 * Math.cos(P[0][1] * Math.PI / 180), ky = 111320;
+  const hs = await heightsAt(P);
+  const out = P.map(p => p.slice());
+  const report = [];
   let moved = 0;
-  for (let i = 0; i < out.length; i++) {
-    const p = out[i], h = hs[i];
-    if (!isFinite(h) || Math.abs(h - p[2]) <= SNAP_TOL) continue;
-    const cand = [];
-    for (let dx = -SNAP_R; dx <= SNAP_R; dx += SNAP_STEP) for (let dy = -SNAP_R; dy <= SNAP_R; dy += SNAP_STEP) {
-      const d = Math.hypot(dx, dy); if (d === 0 || d > SNAP_R) continue;
-      cand.push([p[0] + dx / kx, p[1] + dy / ky, d]);
+  // ищем вдоль направления from → to первое место, где рельеф пересекает высоту target
+  const searchAlong = async (from, to, target, h0) => {
+    const L = Math.hypot((to[0] - from[0]) * kx, (to[1] - from[1]) * ky);
+    const maxD = Math.min(SNAP_MAX, L * 0.9);
+    const ds = [];
+    for (let d = SNAP_STEP; d <= maxD; d += SNAP_STEP) ds.push(d);
+    if (!ds.length) return null;
+    const at = d => [from[0] + (to[0] - from[0]) * d / L, from[1] + (to[1] - from[1]) * d / L];
+    const hh = await heightsAt(ds.map(at));
+    let prevD = 0, prevH = h0;
+    for (let k = 0; k < ds.length; k++) {
+      const h = hh[k]; if (!isFinite(h)) return null;
+      if (Math.abs(h - target) <= SNAP_TOL || Math.sign(h - target) !== Math.sign(prevH - target)) {
+        // уточняем место пересечения между соседними шагами
+        const f = (prevH === h) ? 1 : Math.min(1, Math.max(0, (target - prevH) / (h - prevH)));
+        const d = prevD + (ds[k] - prevD) * f;
+        return { d, pos: at(d) };
+      }
+      prevD = ds[k]; prevH = h;
     }
-    const ch = await heightsAt(cand);
-    let best = null;
-    cand.forEach((c, k) => {
-      if (!isFinite(ch[k])) return;
-      const score = Math.abs(ch[k] - p[2]) + 0.04 * c[2];    // ближе по высоте, а при равенстве — ближе по месту
-      if (!best || score < best.score) best = { score, c, err: Math.abs(ch[k] - p[2]) };
-    });
-    if (best && best.err < SNAP_TOL && best.err < Math.abs(h - p[2]) / 2) { out[i] = [best.c[0], best.c[1], p[2], p[3]]; moved++; }
+    return null;
+  };
+  for (let i = 0; i < out.length; i++) {
+    const p = P[i], h = hs[i];
+    if (!isFinite(h)) { report.push(p[3] + ": рельеф не загрузился"); continue; }
+    if (Math.abs(h - p[2]) <= SNAP_TOL) continue;
+    const fwd = i < P.length - 1 ? await searchAlong(p, P[i + 1], p[2], h) : null;
+    const back = i > 0 ? await searchAlong(p, P[i - 1], p[2], h) : null;
+    const pick = fwd && (!back || fwd.d <= back.d * 2) ? { ...fwd, dir: "вперёд" } : back ? { ...back, dir: "назад" } : null;
+    if (pick) {
+      out[i] = [pick.pos[0], pick.pos[1], p[2], p[3]]; moved++;
+      report.push(p[3] + ": рельеф " + Math.round(h) + " м вместо " + p[2] + " → сдвинута " + pick.dir + " по маршруту на " + Math.round(pick.d) + " м");
+    } else {
+      report.push(p[3] + ": рельеф " + Math.round(h) + " м вместо " + p[2] + ", вдоль маршрута нужной высоты не нашлось");
+    }
   }
+  rt.snapReport = report;
   return { pts: out, moved };
 }
 
@@ -600,6 +624,7 @@ function showRouteDbg() {
     let t = "• " + rt.name + ": уложен за " + d.ms + " мс";
     if (d.noTerrain) t += ", без рельефа " + d.noTerrain + " точ.";
     if (d.moved) t += ", подогнано по высоте точек: " + d.moved;
+    (rt.snapReport || []).forEach(line => { t += "\n   ◦ " + line; });
     if (d.detours) t += ", обходов " + d.detours;
     if (d.bridges) t += ", поверху отрезков " + d.bridges;
     if (d.filled) t += ", засыпано провалов " + d.filled + " точ.";
