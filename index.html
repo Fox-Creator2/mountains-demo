@@ -66,6 +66,24 @@
   #fly { position: absolute; left: 12px; right: 12px; bottom: calc(168px + env(safe-area-inset-bottom, 0px)); z-index: 25;
     background: var(--panel); border-radius: 12px; padding: 8px 14px; display: flex; flex-direction: column; gap: 0; }
   #fly[hidden] { display: none; }
+  /* «голова»: круг-джойстик, перетаскиваешь — камера поворачивается, отпускаешь — возвращается вперёд по курсу */
+  #head { position: absolute; right: 12px; top: 28%; z-index: 26; display: flex; flex-direction: column; align-items: center; gap: 8px; touch-action: none; }
+  #head[hidden] { display: none; }
+  #headPad { position: relative; width: 140px; height: 140px; border-radius: 50%; background: rgba(16,20,26,0.55);
+    border: 1px solid rgba(255,255,255,0.35); touch-action: none; }
+  #headPad::before, #headPad::after { content: ""; position: absolute; background: rgba(255,255,255,0.2); }
+  #headPad::before { left: 50%; top: 8px; bottom: 8px; width: 1px; }
+  #headPad::after { top: 50%; left: 8px; right: 8px; height: 1px; }
+  #headKnob { position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%;
+    background: var(--chip-on); opacity: 0.9; pointer-events: none; }
+  #head .hrow { display: flex; gap: 8px; }
+  #head .hbtn { width: 44px; height: 36px; border: 0; border-radius: 10px; background: rgba(16,20,26,0.75); color: var(--fg); font-size: 16px; cursor: pointer; }
+  #head .hbtn.on { background: #3b6e4f; }
+  /* режим «чистый экран»: всё скрыто, кроме головы (и кнопки возврата интерфейса) */
+  body.nui #bar, body.nui #fly, body.nui #cam, body.nui #sun, body.nui #diag, body.nui #toast { display: none !important; }
+  body.nui #globus { bottom: 0; }
+  body.nui .og-compass-button, body.nui .og-zoomin-button, body.nui .og-zoomout-button,
+  body.nui .og-coordinates, body.nui .og-scale-container, body.nui .og-attribution, body.nui .og-control-container { display: none !important; }
   #fly .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
   #fly .row b { color: var(--fg); font-variant-numeric: tabular-nums; }
   #fly input[type=range] { width: 100%; accent-color: var(--chip-on); height: 26px; margin: 0 0 4px; }
@@ -117,7 +135,7 @@
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <button id="gpxClear" class="mini" style="align-self:flex-start;border:0;border-radius:8px;padding:6px 10px;background:var(--chip);color:var(--fg);font-size:12px;cursor:pointer">Удалить все загруженные GPX-треки</button>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps" id="ver">Версия: 11.10, 16:40</span>
+  <span class="fps" id="ver">Версия: 11.10, 17:05</span>
   <span class="fps" id="nodes">Узлов: —</span>
   <details><summary>Отчёт об укладке маршрутов</summary>
     <div class="fps" id="routeDbg" style="white-space:pre-wrap;font-size:11px"></div>
@@ -151,7 +169,15 @@
   <input type="range" id="flyAgl" min="0" max="1000" step="1" value="400">
   <div class="row"><span>Пройдено</span><b id="flyProgVal">0%</b></div>
   <input type="range" id="flyProg" min="0" max="1000" step="1" value="0">
-  <div class="row" style="gap:6px"><button id="flyPlay" class="mini">▶ Лететь</button><button id="flyStart" class="mini">⏮ В начало</button><button id="flyClose" class="mini" style="flex:0 0 44px" aria-label="Свернуть">▾</button></div>
+  <div class="row" style="gap:6px"><button id="flyPlay" class="mini">▶ Лететь</button><button id="flyStart" class="mini">⏮ В начало</button><button id="flyEnd" class="mini" style="flex:0 0 44px" aria-label="Закончить полёт">■</button><button id="flyClose" class="mini" style="flex:0 0 44px" aria-label="Свернуть">▾</button></div>
+</div>
+
+<div id="head" hidden>
+  <div id="headPad"><div id="headKnob"></div></div>
+  <div class="hrow">
+    <button id="headLock" class="hbtn" aria-label="Зафиксировать взгляд">🔒</button>
+    <button id="headUi" class="hbtn" aria-label="Скрыть или показать интерфейс">👁</button>
+  </div>
 </div>
 
 <div id="bar">
@@ -1296,7 +1322,7 @@ planet.renderer.events.on("postdraw", () => {
   const now = performance.now();
   if (now - fpsT > 1000) {
     document.getElementById("fps").textContent = "FPS: " + Math.round(frames * 1000 / (now - fpsT));
-    document.getElementById("ver").textContent = "Версия: 11.10, 16:40 · движок " + ENGINE +
+    document.getElementById("ver").textContent = "Версия: 11.10, 17:05 · движок " + ENGINE +
       " · кадр " + planet.renderer.handler.canvas.width + "×" + planet.renderer.handler.canvas.height + " пикс.";
     document.getElementById("nodes").textContent = "Узлов: " + planet._createdNodesCount + " (очистка после " + planet._maxNodes + ")";
     frames = 0; fpsT = now;
@@ -1312,7 +1338,7 @@ const FLY_KEY = "mountains-demo-fly-v1";
 const fly = { panel: false, on: false, playing: false, rt: null, tr: null, s: 0, last: 0, ramp: 0, speed: 60, agl: 200 };
 try { Object.assign(fly, JSON.parse(localStorage.getItem(FLY_KEY) || "{}")); } catch (e) {}
 const FLY_AHEAD = 600;                         // м — на какую точку впереди смотрим
-const FS_MIN = 10, FS_MAX = 300, FA_MIN = 30, FA_MAX = 1000;
+const FS_MIN = 10, FS_MAX = 600, FA_MIN = 30, FA_MAX = 1000;
 const flySpeedFrom = t => FS_MIN * Math.pow(FS_MAX / FS_MIN, t / 1000), flySliderFromSpeed = v => 1000 * Math.log(v / FS_MIN) / Math.log(FS_MAX / FS_MIN);
 const flyAglFrom = t => FA_MIN * Math.pow(FA_MAX / FA_MIN, t / 1000), flySliderFromAgl = v => 1000 * Math.log(v / FA_MIN) / Math.log(FA_MAX / FA_MIN);
 const $f = id => document.getElementById(id);
@@ -1337,12 +1363,24 @@ function flyAt(tr, s) {
   const t = (s - cum[lo]) / ((cum[hi] - cum[lo]) || 1);
   return [tr.lon[lo] + (tr.lon[hi] - tr.lon[lo]) * t, tr.lat[lo] + (tr.lat[hi] - tr.lat[lo]) * t, tr.h[lo] + (tr.h[hi] - tr.h[lo]) * t];
 }
+// «Голова»: поворот взгляда относительно направления полёта. yaw — вправо (рад), pitch — вверх от курса (рад)
+const head = { yaw: 0, pitch: 0, drag: false, lock: false };
 function flyFrame() {
   const tr = fly.tr; if (!tr) return;
   const a = flyAt(tr, fly.s), b = flyAt(tr, fly.s + FLY_AHEAD);
   const eye = planet.ellipsoid.lonLatToCartesian(new LonLat(a[0], a[1], a[2] + fly.agl));
-  const look = planet.ellipsoid.lonLatToCartesian(new LonLat(b[0], b[1], b[2]));
-  planet.camera.set(eye, look, planet.ellipsoid.getSurfaceNormal3v(eye));
+  let look = planet.ellipsoid.lonLatToCartesian(new LonLat(b[0], b[1], b[2]));
+  const n = planet.ellipsoid.getSurfaceNormal3v(eye);
+  if (head.yaw || head.pitch) {
+    const f = look.sub(eye).normalize();
+    const fh = f.sub(n.scaleTo(f.dot(n))).normalize();         // горизонтальное направление полёта
+    const r = fh.cross(n).normalize();                          // вправо
+    const p0 = Math.asin(Math.max(-1, Math.min(1, f.dot(n))));
+    const p = Math.max(-1.5, Math.min(1.5, p0 + head.pitch));
+    const dir = fh.scaleTo(Math.cos(p) * Math.cos(head.yaw)).add(r.scaleTo(Math.cos(p) * Math.sin(head.yaw))).add(n.scaleTo(Math.sin(p)));
+    look = eye.add(dir.scaleTo(1000));
+  }
+  planet.camera.set(eye, look, n);
   planet.camera.update();
   const pr = Math.min(1, fly.s / (tr.L || 1));
   $f("flyProg").value = Math.round(pr * 1000);
@@ -1354,9 +1392,10 @@ function flyUi() {
   $f("flyPlay").textContent = fly.playing ? "❚❚ Пауза" : "▶ Лететь";
   $f("flyPlay").classList.toggle("on", fly.playing);
   $f("bFly").classList.toggle("on", fly.panel || fly.playing);
+  $f("head").hidden = !fly.on;                  // «голова» появляется, когда полёт начат
 }
 const saveFly = () => { try { localStorage.setItem(FLY_KEY, JSON.stringify({ speed: fly.speed, agl: fly.agl })); } catch (e) {} };
-function stopFly() { fly.playing = false; fly.on = false; fly.last = 0; flyUi(); }
+function stopFly() { fly.playing = false; fly.on = false; fly.last = 0; head.yaw = head.pitch = 0; document.body.classList.remove("nui"); flyUi(); }
 function closeFlyPanel() { fly.panel = false; $f("fly").hidden = true; flyUi(); }
 function fillFlyRoutes() {
   const sel = $f("flyRoute"), keep = fly.rt && current ? current.routes.indexOf(fly.rt) : -1;
@@ -1383,6 +1422,40 @@ $f("flyProg").oninput = async e => {
 };
 $f("flyRoute").onchange = () => { stopFly(); fly.rt = null; fly.tr = null; };
 $f("flyStart").onclick = async () => { if (!(await ensureFlight())) return; fly.s = 0; fly.ramp = 0; flyFrame(); };
+
+$f("flyEnd").onclick = stopFly;
+// ---- «Голова»: перетаскивание круга ----
+const KNOB_R = 70 - 22;                          // ход ручки внутри круга, пикс.
+function headKnobDraw() {
+  const k = $f("headKnob");
+  k.style.transform = "translate(" + (head.yaw / Math.PI * KNOB_R) + "px," + (-head.pitch / (Math.PI / 2 * 0.95) * KNOB_R) + "px)";
+}
+function headFromPointer(e) {
+  const r = $f("headPad").getBoundingClientRect();
+  let dx = (e.clientX - r.left - r.width / 2) / (r.width / 2 - 22), dy = (e.clientY - r.top - r.height / 2) / (r.height / 2 - 22);
+  const len = Math.hypot(dx, dy); if (len > 1) { dx /= len; dy /= len; }
+  head.yaw = dx * Math.PI;                       // вправо/влево до ±180° — можно оглянуться назад
+  head.pitch = -dy * Math.PI / 2 * 0.95;         // вверх/вниз до ~±85°
+  headKnobDraw();
+  if (fly.on && !fly.playing) flyFrame();        // на паузе кадр обновляем сразу
+}
+$f("headPad").addEventListener("pointerdown", e => { head.drag = true; e.currentTarget.setPointerCapture(e.pointerId); headFromPointer(e); e.preventDefault(); });
+$f("headPad").addEventListener("pointermove", e => { if (head.drag) headFromPointer(e); });
+["pointerup", "pointercancel"].forEach(t => $f("headPad").addEventListener(t, () => { head.drag = false; }));
+$f("headLock").onclick = function () { head.lock = !head.lock; this.classList.toggle("on", head.lock); };
+// «Чистый экран»: скрывает всё, кроме головы
+$f("headUi").onclick = function () { const on = document.body.classList.toggle("nui"); this.classList.toggle("on", on); window.dispatchEvent(new Event("resize")); try { planet.renderer.resize(); } catch (e) {} };
+// возврат взгляда вперёд, когда голову отпустили
+planet.renderer.events.on("postdraw", () => {
+  if (head.drag || head.lock || (!head.yaw && !head.pitch)) { headLast = 0; return; }
+  const now = performance.now(), dt = headLast ? Math.min((now - headLast) / 1000, 0.25) : 0; headLast = now;
+  const k = 1 - Math.exp(-dt * 5);
+  head.yaw -= head.yaw * k; head.pitch -= head.pitch * k;
+  if (Math.abs(head.yaw) < 0.002 && Math.abs(head.pitch) < 0.002) head.yaw = head.pitch = 0;
+  headKnobDraw();
+  if (fly.on && !fly.playing) flyFrame();
+});
+let headLast = 0;
 
 // Готовим выбранный маршрут: он должен быть уложен на рельеф (линия берётся оттуда)
 async function ensureFlight() {
