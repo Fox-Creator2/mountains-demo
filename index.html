@@ -77,7 +77,7 @@
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps">Версия: 11.10, 03:55</span>
+  <span class="fps">Версия: 11.10, 04:05</span>
   <div class="fps" id="routeDbg" style="max-width:300px;white-space:pre-wrap;font-size:11px"></div>
 </div>
 
@@ -309,7 +309,8 @@ window.planet = planet;   // для отладки из консоли брау�
 
 // ---------------- Маршруты восхождения ----------------
 const ROUTE_LIFT = 12;     // на сколько метров поднять линию над рельефом, чтобы она не тонула в склоне
-const LABEL_LIFT = 20;     // кружки и подписи точек — чуть над поверхностью
+const LABEL_LIFT = 20;     // кружки точек — чуть над поверхностью
+const TEXT_LIFT = 120;     // подписи — заметно выше, чтобы не врезались в склон
 
 // Сгущаем маршрут: точка каждые ~50 м, высота сначала линейная между ключевыми точками
 function densify(route) {
@@ -365,16 +366,21 @@ MOUNTAINS.forEach(m => {
       if (nearLabeled(labeled, p)) return null;      // эту точку уже подписал другой маршрут
       labeled.push(p);
       const top = i === rt.pts.length - 1;
+      // кружок — у самой поверхности, подпись — отдельно и повыше, чтобы не врезалась в склон
       const e = new Entity({
         lonlat: [p[0], p[1], p[2] + LABEL_LIFT],
-        billboard: { src: top ? DOT_TOP : DOTS[ri % DOTS.length], size: [14, 14] },
+        billboard: { src: top ? DOT_TOP : DOTS[ri % DOTS.length], size: [14, 14] }
+      });
+      e.textEntity = new Entity({
+        lonlat: [p[0], p[1], p[2] + TEXT_LIFT],
         label: {
           text: p[3] + ", " + p[2] + " м",
           size: top ? 15 : 13, color: "#ffffff", outline: 0.28, outlineColor: "rgba(0,0,0,0.85)",
-          offset: [10, -4]
+          offset: [8, 0]
         }
       });
       routeLayer.add(e);
+      routeLayer.add(e.textEntity);
       return e;
     });
   });
@@ -383,16 +389,30 @@ MOUNTAINS.forEach(m => {
 function setRouteVisible(rt, on) {
   rt.visible = on;
   rt.line.setVisibility(on);
-  rt.points.forEach(e => e && e.setVisibility(on));
+  rt.points.forEach(e => { if (e) { e.setVisibility(on); e.textEntity.setVisibility(on); } });
 }
 
 // Уточняем высоты по настоящему рельефу — для маршрутов выбранной горы и только один раз
-async function heightsAt(points) {
-  const out = [];
-  for (let i = 0; i < points.length; i += 40) {
-    out.push(...await Promise.all(points.slice(i, i + 40).map(p => planet.getHeightAboveELL(new LonLat(p[0], p[1])))));
-  }
-  return out;
+// Высоты рельефа для набора точек — все запросы разом (плитки рельефа движок грузит один раз и кэширует).
+// zoom: для перебора вариантов (подгонка точек, обходы) берём более крупные плитки SEARCH_ZOOM —
+// их в разы меньше, и ответ приходит быстрее; окончательную линию кладём по самым подробным.
+const SEARCH_ZOOM = 12;
+const hCache = new Map();
+function heightAt(lon, lat, zoom) {
+  if (window.__heightStub) return window.__heightStub(lon, lat);   // для проверок без сети
+  const key = (zoom || 0) + ":" + lon.toFixed(5) + ":" + lat.toFixed(5);
+  if (hCache.has(key)) return hCache.get(key);
+  const ll = new LonLat(lon, lat);
+  const pr = new Promise(res => {
+    const t = planet.terrain;
+    if (!t || !t.getHeightAsync) return res(NaN);
+    t.getHeightAsync(ll, h => res(h + (t.geoid ? t.geoid.getHeightLonLat(ll) : 0)), zoom);
+  });
+  hCache.set(key, pr);
+  return pr;
+}
+async function heightsAt(points, zoom) {
+  return Promise.all(points.map(p => heightAt(p[0], p[1], zoom)));
 }
 // точки отрезка через каждые ~50 м, но не больше 60 (без концов) — чтобы перебор на длинных отрезках не тормозил
 function sampleLine(a, b, kx, ky) {
@@ -418,7 +438,7 @@ const DIP_LIMIT = 80;
 const SNAP_TOL = 30, SNAP_STEP = 10, SNAP_MAX = 2000;
 async function snapPoints(rt) {
   const P = rt.pts, kx = 111320 * Math.cos(P[0][1] * Math.PI / 180), ky = 111320;
-  const hs = await heightsAt(P);
+  const hs = await heightsAt(P, SEARCH_ZOOM);
   const out = P.map(p => p.slice());
   const report = [];
   let moved = 0;
@@ -430,7 +450,7 @@ async function snapPoints(rt) {
     for (let d = SNAP_STEP; d <= maxD; d += SNAP_STEP) ds.push(d);
     if (!ds.length) return null;
     const at = d => [from[0] + (to[0] - from[0]) * d / L, from[1] + (to[1] - from[1]) * d / L];
-    const hh = await heightsAt(ds.map(at));
+    const hh = await heightsAt(ds.map(at), SEARCH_ZOOM);
     let prevD = 0, prevH = h0;
     for (let k = 0; k < ds.length; k++) {
       const h = hh[k]; if (!isFinite(h)) return null;
@@ -444,28 +464,29 @@ async function snapPoints(rt) {
     }
     return null;
   };
-  for (let i = 0; i < out.length; i++) {
-    const p = P[i], h = hs[i];
-    if (!isFinite(h)) { report.push(p[3] + ": рельеф не загрузился"); continue; }
-    if (Math.abs(h - p[2]) <= SNAP_TOL) continue;
-    const fwd = i < P.length - 1 ? await searchAlong(p, P[i + 1], p[2], h) : null;
-    const back = i > 0 ? await searchAlong(p, P[i - 1], p[2], h) : null;
+  await Promise.all(P.map(async (p, i) => {
+    const h = hs[i];
+    if (!isFinite(h)) { report[i] = p[3] + ": рельеф не загрузился"; return; }
+    if (Math.abs(h - p[2]) <= SNAP_TOL) return;
+    const [fwd, back] = await Promise.all([
+      i < P.length - 1 ? searchAlong(p, P[i + 1], p[2], h) : null,
+      i > 0 ? searchAlong(p, P[i - 1], p[2], h) : null ]);
     const pick = fwd && (!back || fwd.d <= back.d * 2) ? { ...fwd, dir: "вперёд" } : back ? { ...back, dir: "назад" } : null;
     if (pick) {
       out[i] = [pick.pos[0], pick.pos[1], p[2], p[3]]; moved++;
-      report.push(p[3] + ": рельеф " + Math.round(h) + " м вместо " + p[2] + " → сдвинута " + pick.dir + " по маршруту на " + Math.round(pick.d) + " м");
+      report[i] = p[3] + ": рельеф " + Math.round(h) + " м вместо " + p[2] + " → сдвинута " + pick.dir + " по маршруту на " + Math.round(pick.d) + " м";
     } else {
-      report.push(p[3] + ": рельеф " + Math.round(h) + " м вместо " + p[2] + ", вдоль маршрута нужной высоты не нашлось");
+      report[i] = p[3] + ": рельеф " + Math.round(h) + " м вместо " + p[2] + ", вдоль маршрута нужной высоты не нашлось";
     }
-  }
-  rt.snapReport = report;
+  }));
+  rt.snapReport = report.filter(Boolean);
   return { pts: out, moved };
 }
 
 async function findDetours(rt, P) {
   const air = new Set(rt.air || []);
   const kx = 111320 * Math.cos(P[0][1] * Math.PI / 180), ky = 111320;
-  const ends = await heightsAt(P);
+  const ends = await heightsAt(P, SEARCH_ZOOM);
   const pts = [], orig = [], airEff = [], bridges = [];
   for (let s = 0; s < P.length; s++) {
     if (air.has(s)) airEff.push(pts.length);
@@ -475,21 +496,24 @@ async function findDetours(rt, P) {
     if (!(isFinite(ha) && isFinite(hb))) continue;
     const base = Math.min(ha, hb), top = Math.max(ha, hb);
     const straight = sampleLine(A, B, kx, ky);
-    const hsS = await heightsAt(straight.pts);
+    const hsS = await heightsAt(straight.pts, SEARCH_ZOOM);
     const dip0 = base - Math.min(...hsS);
     if (!(dip0 > DIP_LIMIT)) continue;
     // перебор: точка на 35/50/65% пути, сдвиг вбок до 1,2 км
     const ux = (B[0] - A[0]) * kx / straight.L, uy = (B[1] - A[1]) * ky / straight.L;
-    let best = null;
+    const cands = [];
     for (const t of [0.35, 0.5, 0.65]) for (const d of [-1200, -800, -500, -300, -150, 150, 300, 500, 800, 1200]) {
-      const C = [A[0] + (B[0] - A[0]) * t + (-uy * d) / kx, A[1] + (B[1] - A[1]) * t + (ux * d) / ky];
-      const s1 = sampleLine(A, C, kx, ky), s2 = sampleLine(C, B, kx, ky);
-      const hh = await heightsAt([...s1.pts, C, ...s2.pts]);
-      if (hh.some(h => !isFinite(h))) continue;
-      const dip = Math.max(0, base - Math.min(...hh)), over = Math.max(0, Math.max(...hh) - top - 30);
-      const cost = dip + over + 0.03 * (s1.L + s2.L - straight.L);
-      if (!best || cost < best.cost) best = { cost, C, h: hh[s1.pts.length] };
+      cands.push([A[0] + (B[0] - A[0]) * t + (-uy * d) / kx, A[1] + (B[1] - A[1]) * t + (ux * d) / ky]);
     }
+    const scored = await Promise.all(cands.map(async C => {
+      const s1 = sampleLine(A, C, kx, ky), s2 = sampleLine(C, B, kx, ky);
+      const hh = await heightsAt([...s1.pts, C, ...s2.pts], SEARCH_ZOOM);
+      if (hh.some(h => !isFinite(h))) return null;
+      const dip = Math.max(0, base - Math.min(...hh)), over = Math.max(0, Math.max(...hh) - top - 30);
+      return { cost: dip + over + 0.03 * (s1.L + s2.L - straight.L), C, h: hh[s1.pts.length] };
+    }));
+    let best = null;
+    scored.forEach(r => { if (r && (!best || r.cost < best.cost)) best = r; });
     if (best && best.cost < dip0 * 0.5) { pts.push([best.C[0], best.C[1], best.h, ""]); orig.push(-1); }
     else bridges.push(pts.length - 1);   // обойти не удалось — этот отрезок проведём поверху, не ныряя в провал
   }
@@ -499,6 +523,7 @@ async function findDetours(rt, P) {
 async function drapeRoute(rt, mountainName) {
   if (rt.draped || rt.draping) return;
   rt.draping = true;
+  const T0 = performance.now();
   try {
     const snapped = await snapPoints(rt);
     const eff = await findDetours(rt, snapped.pts);
@@ -510,7 +535,7 @@ async function drapeRoute(rt, mountainName) {
     //    если такая прямая где-то ушла под землю — поднимаем её над поверхностью;
     //  • если рельеф в точке не загрузился (вернул 0 или мусор) — берём расчётную высоту.
     const air = new Set(eff.air);
-    const dbg = { t0: performance.now(), noTerrain: 0, moved: snapped.moved, detours: eff.pts.length - rt.pts.length, bridges: eff.bridges.length, filled: 0, spans: [] };
+    const dbg = { t0: T0, noTerrain: 0, moved: snapped.moved, detours: eff.pts.length - rt.pts.length, bridges: eff.bridges.length, filled: 0, spans: [] };
     const ground = dense.map((p, i) => {
       const h = hs[i];
       if (isFinite(h) && h > Math.min(p[2] * 0.5, p[2] - 300)) return h;
@@ -600,7 +625,10 @@ async function drapeRoute(rt, mountainName) {
     rt.line.polyline.setPathLonLat([dense.map((p, i) => [p[0], p[1], fixed[i] + ROUTE_LIFT])]);
     dense.forEach((p, i) => {
       const o = p[3] >= 0 ? eff.orig[p[3]] : -1;
-      if (o >= 0 && rt.points[o]) rt.points[o].setLonLat(new LonLat(p[0], p[1], fixed[i] + LABEL_LIFT));
+      if (o >= 0 && rt.points[o]) {
+        rt.points[o].setLonLat(new LonLat(p[0], p[1], fixed[i] + LABEL_LIFT));
+        rt.points[o].textEntity.setLonLat(new LonLat(p[0], p[1], fixed[i] + TEXT_LIFT));
+      }
     });
     rt.draped = true;
     dbg.ms = Math.round(performance.now() - dbg.t0);
