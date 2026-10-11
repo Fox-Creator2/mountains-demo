@@ -87,12 +87,14 @@
   <b>Настройки карты</b>
   <div class="seg" id="segImg"><span>Снимки</span><button data-v="bing">Bing</button><button data-v="esri">Esri</button></div>
   <div class="seg" id="segTer"><span>Рельеф</span><button data-v="globus">Обычный</button><button data-v="mapterhorn">Подробный</button></div>
+  <div class="seg" id="segDef"><span>Отложенный рендеринг</span><button data-v="on">Вкл</button><button data-v="off">Выкл</button></div>
+  <a href="old/" style="color:var(--chip-on);font-size:12px">Старая версия на движке 0.28.7 — для сравнения</a>
   <b style="margin-top:6px">Диагностика</b>
   <label><input type="checkbox" id="dFrames" checked> Грубая подложка + рамки гор</label>
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps">Версия: 11.10, 14:50</span>
+  <span class="fps">Версия: 11.10, 15:00 · движок 1.0.0-rc30</span>
   <span class="fps" id="nodes">Узлов: —</span>
   <div class="fps" id="routeDbg" style="max-width:300px;white-space:pre-wrap;font-size:11px"></div>
 </div>
@@ -303,7 +305,7 @@ MOUNTAINS.forEach(m => { m.route = m.routes[0].pts; });
 
 // ---- Настройки карты (снимки и рельеф) — запоминаются в браузере ----
 const MAP_KEY = "mountains-demo-map-v1";
-const mapSettings = { imagery: "bing", terrain: "globus" };
+const mapSettings = { imagery: "bing", terrain: "globus", deferred: true };
 try { Object.assign(mapSettings, JSON.parse(localStorage.getItem(MAP_KEY) || "{}")); } catch (e) {}
 const saveMap = () => { try { localStorage.setItem(MAP_KEY, JSON.stringify(mapSettings)); } catch (e) {} };
 
@@ -380,7 +382,9 @@ const globus = new Globe({
   resourcesSrc: OG_RES,
   fontsSrc: OG_RES + "/fonts",
   atmosphereEnabled: false,          // атмосфера давала мерцание при облёте на телефоне
-  transitionOpacityEnabled: false    // без плавной подмены тайлов — она даёт мигание при движении камеры
+  transitionOpacityEnabled: false,   // без плавной подмены тайлов — она даёт мигание при движении камеры
+  // отложенный (deferred) рендеринг rc30 — красивее, но тяжелее для видеокарты телефона; переключатель в ⚙
+  deferredDisabled: !mapSettings.deferred
   // стартовый viewExtent не задаём: в rc30 он применяется позже и перебивал нашу камеру (вид строго сверху)
 });
 const planet = globus.planet;
@@ -1218,6 +1222,15 @@ document.querySelectorAll("#segTer button").forEach(b => b.onclick = () => {
 document.querySelectorAll("#segImg button").forEach(b => b.classList.toggle("on", b.dataset.v === mapSettings.imagery));
 document.querySelectorAll("#segTer button").forEach(b => b.classList.toggle("on", b.dataset.v === mapSettings.terrain));
 document.getElementById("dFrames").onchange = () => applyImagery();
+// Отложенный рендеринг задаётся при создании движка — переключение перезагружает страницу
+document.querySelectorAll("#segDef button").forEach(b => {
+  b.classList.toggle("on", (b.dataset.v === "on") === mapSettings.deferred);
+  b.onclick = () => {
+    const v = b.dataset.v === "on";
+    if (v === mapSettings.deferred) return;
+    mapSettings.deferred = v; saveMap(); location.reload();
+  };
+});
 document.getElementById("dTerrain").onchange = (e) => { terrainOff = !e.target.checked; applyTerrain(); };
 document.getElementById("dAtmos").onchange = (e) => {
   planet.atmosphereEnabled = e.target.checked;

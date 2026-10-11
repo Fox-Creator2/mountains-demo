@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Горы мира — 0.28.7</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/og.css">
+<style>
+  /* Полноэкранный глобус, снизу панель с горами */
+  :root {
+    --panel: rgba(16, 20, 26, 0.86);
+    --chip: #262d36;
+    --chip-on: #d9a441;
+    --fg: #eef1f4;
+    --muted: #9aa5b1;
+    --err: #ff7a6b;
+  }
+  html, body { margin: 0; height: 100%; background: #0b0e12; color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #globus { position: absolute; top: 0; left: 0; right: 0; bottom: calc(160px + env(safe-area-inset-bottom, 0px)); }
+
+  #bar {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 20;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: var(--panel); backdrop-filter: blur(6px);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  #info { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 14px; }
+  #info b { font-size: 16px; }
+  #info span { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  #routes { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-top: -2px; }
+  #routes::-webkit-scrollbar { display: none; }
+  .rchip { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; border: 1px solid #3a4350; border-radius: 999px;
+    padding: 4px 10px; background: transparent; color: var(--fg); font-size: 12px; cursor: pointer; }
+  .rchip i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .rchip.off { color: var(--muted); text-decoration: line-through; opacity: 0.6; }
+  #chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  #chips::-webkit-scrollbar { display: none; }
+  .chip { flex: 0 0 auto; border: 0; border-radius: 999px; padding: 9px 14px;
+    background: var(--chip); color: var(--fg); font-size: 14px; cursor: pointer; }
+  .chip.on { background: var(--chip-on); color: #1a1407; font-weight: 600; }
+
+  #ctrls { display: flex; gap: 6px; }
+  #ctrls button { flex: 1; border: 0; border-radius: 10px; padding: 9px 6px;
+    background: var(--chip); color: var(--fg); font-size: 13px; cursor: pointer; }
+  #ctrls button.on { background: #3b6e4f; }
+
+  #diag { position: absolute; left: 8px; top: calc(8px + env(safe-area-inset-top, 0px)); z-index: 25;
+    background: var(--panel); border-radius: 10px; padding: 10px 12px; font-size: 13px;
+    display: flex; flex-direction: column; gap: 6px; min-width: 200px; }
+  #diag[hidden] { display: none; }
+  #cam { position: absolute; left: 12px; right: 12px; bottom: calc(168px + env(safe-area-inset-bottom, 0px)); z-index: 25;
+    background: var(--panel); border-radius: 12px; padding: 8px 14px; display: flex; flex-direction: column; gap: 0; }
+  #cam[hidden] { display: none; }
+  #cam .reset { align-self: flex-end; border: 0; background: none; color: var(--muted); font-size: 12px;
+    padding: 2px 0; cursor: pointer; text-decoration: underline; }
+  #cam .row { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+  #cam .row b { color: var(--fg); font-variant-numeric: tabular-nums; }
+  #tilt, #zoom, #speed { width: 100%; accent-color: var(--chip-on); height: 26px; margin: 0 0 4px; }
+  #diag label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+  #diag .fps { color: var(--muted); font-variant-numeric: tabular-nums; }
+  #log { position: absolute; top: calc(8px + env(safe-area-inset-top, 0px)); left: 8px; right: 8px; z-index: 30;
+    font: 12px/1.4 ui-monospace, monospace; color: var(--err); background: rgba(0,0,0,0.75);
+    border-radius: 8px; padding: 6px 8px; white-space: pre-wrap; }
+  #log:empty { display: none; }
+
+</style>
+</head>
+<body>
+<div id="globus"></div>
+<div id="log"></div>
+
+<div id="diag" hidden>
+  <b>Диагностика мерцания</b>
+  <label><input type="checkbox" id="dFrames" checked> Грубая подложка + рамки гор</label>
+  <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
+  <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
+  <span class="fps" id="fps">FPS: —</span>
+  <span class="fps">Старая сборка: движок 0.28.7, Esri (как до перехода на rc30)</span>
+  <div class="fps" id="routeDbg" style="max-width:300px;white-space:pre-wrap;font-size:11px"></div>
+</div>
+
+<div id="cam" hidden>
+  <div class="row"><span>Наклон к горизонту · 0° сбоку, 85° сверху</span><b id="tiltVal">—</b></div>
+  <input type="range" id="tilt" min="0" max="1000" step="1" value="400">
+  <div class="row"><span>Расстояние до вершины</span><b id="zoomVal">—</b></div>
+  <input type="range" id="zoom" min="0" max="1000" step="1" value="500">
+  <div class="row"><span>Скорость облёта</span><b id="speedVal">—</b></div>
+  <input type="range" id="speed" min="0" max="1000" step="1" value="500">
+  <button id="camReset" class="reset">Сбросить настройки камеры</button>
+</div>
+
+<div id="bar">
+  <div style="font-size:11px;color:#d9a441">Старая версия · движок 0.28.7 · <a href="../" style="color:#d9a441">новая</a></div>
+  <div id="info"><b id="mName">Загрузка…</b><span id="mMeta"></span></div>
+  <div id="routes"></div>
+  <div id="chips"></div>
+  <div id="ctrls">
+    <button id="bMode">Телепорт</button>
+    <button id="bOrbit">Облёт ⟳</button>
+    <button id="bCam">Камера</button>
+    <button id="bDiag" style="flex:0 0 44px">⚙</button>
+  </div>
+</div>
+
+<script>
+  // Любая ошибка видна прямо на экране — удобно на телефоне без консоли
+  const logEl = document.getElementById("log");
+  const log = (m) => { logEl.textContent += m + "\n"; };
+  window.addEventListener("error", e => log("Ошибка: " + e.message));
+  window.addEventListener("unhandledrejection", e => log("Ошибка: " + (e.reason && e.reason.message || e.reason)));
+</script>
+
+<script type="module">
+import { Globe, XYZ, Vector, Entity, GlobusRgbTerrain, EmptyTerrain, LonLat } from
+  "https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/og.es.js";
+
+const OG_RES = "https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/res";
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+
+// Вершины: долгота, широта, высота (м). r — полуразмер рамки в градусах.
+// routes — известные маршруты восхождения, первый — основной (по нему ставится камера).
+// Каждый маршрут — ключевые точки [долгота, широта, высота, название] по хижинам, лагерям и перевалам.
+// Это схема, а не GPS-трек: точность — порядка сотен метров.
+const MOUNTAINS = [
+  { name: "Эльбрус", lon: 42.4392, lat: 43.3499, h: 5642, r: 0.12, routes: [
+    { name: "Южный (классика)", pts: [
+      [42.4740, 43.2645, 2350, "Азау"], [42.4600, 43.2890, 3500, "Мир"], [42.4660, 43.3015, 3800, "Гара-Баши"],
+      [42.4640, 43.3130, 4100, "Приют 11"], [42.4605, 43.3290, 4700, "Скалы Пастухова"],
+      [42.4560, 43.3400, 5100, "Косая полка"], [42.4470, 43.3488, 5416, "Седловина"], [42.4392, 43.3499, 5642, "Западная вершина"] ] },
+    { name: "Северный (с Джилы-Су)", pts: [
+      [42.5450, 43.4280, 2400, "Джилы-Су"], [42.5100, 43.4060, 3200, "Морена"], [42.4950, 43.3930, 3800, "Северный приют"],
+      [42.4800, 43.3720, 4600, "Скалы Ленца"], [42.4660, 43.3600, 5200, "Ледовое плато"],
+      [42.4573, 43.3527, 5621, "Восточная вершина"], [42.4470, 43.3488, 5416, "Седловина"], [42.4392, 43.3499, 5642, "Западная вершина"] ] } ] },
+  { name: "Казбек", lon: 44.5180, lat: 42.6997, h: 5054, r: 0.13, routes: [
+    { name: "Через Гергети", pts: [
+      [44.6205, 42.6625, 2170, "Церковь Гергети"], [44.6000, 42.6745, 2950, "Перевал Арша"],
+      [44.5735, 42.6845, 3650, "Метеостанция"], [44.5470, 42.6915, 4400, "Плато"],
+      [44.5265, 42.6975, 4900, "Седловина"], [44.5180, 42.6997, 5054, "Вершина"] ] } ] },
+  { name: "Эверест", lon: 86.9250, lat: 27.9881, h: 8849, r: 0.16, routes: [
+    { name: "Через Южное седло (Непал)", pts: [
+      [86.8530, 28.0025, 5364, "Базовый лагерь"], [86.8700, 27.9965, 5600, "Ледопад Кхумбу"],
+      [86.8880, 27.9900, 6065, "Лагерь I"], [86.9010, 27.9840, 6400, "Лагерь II"], [86.9170, 27.9785, 7160, "Лагерь III"],
+      [86.9300, 27.9735, 7906, "Южное седло"], [86.9290, 27.9800, 8400, "Балкон"],
+      [86.9262, 27.9852, 8749, "Южная вершина"], [86.9250, 27.9881, 8849, "Вершина"] ] },
+    { name: "Северный гребень (Тибет)", pts: [
+      [86.8513, 28.1405, 5150, "Северный базовый лагерь"], [86.8920, 28.0880, 5800, "Промежуточный лагерь"],
+      [86.9300, 28.0530, 6400, "Передовой базовый лагерь"], [86.9335, 28.0235, 7020, "Северное седло"],
+      [86.9300, 28.0130, 7700, "Лагерь 2"], [86.9280, 28.0040, 8300, "Лагерь 3"],
+      [86.9262, 27.9965, 8610, "Вторая ступень"], [86.9250, 27.9881, 8849, "Вершина"] ] } ] },
+  { name: "Фудзи", lon: 138.7274, lat: 35.3606, h: 3776, r: 0.12, routes: [
+    { name: "Ёсида", pts: [
+      [138.7330, 35.3955, 2305, "5-я станция Ёсида"], [138.7375, 35.3880, 2390, "6-я станция"],
+      [138.7365, 35.3790, 2700, "7-я станция"], [138.7340, 35.3710, 3100, "8-я станция"],
+      [138.7320, 35.3650, 3710, "Край кратера"], [138.7274, 35.3606, 3776, "Кэнгаминэ"] ] },
+    { name: "Субасири", pts: [
+      [138.7810, 35.3633, 2000, "5-я станция Субасири"], [138.7620, 35.3640, 2700, "7-я станция"],
+      [138.7450, 35.3650, 3250, "8-я станция"], [138.7380, 35.3655, 3400, "Слияние с Ёсида"],
+      [138.7320, 35.3650, 3710, "Край кратера"], [138.7274, 35.3606, 3776, "Кэнгаминэ"] ] },
+    { name: "Готемба", pts: [
+      [138.7950, 35.3360, 1440, "Новая 5-я станция Готемба"], [138.7700, 35.3450, 2450, "6-я станция"],
+      [138.7500, 35.3530, 3050, "7-я станция"], [138.7380, 35.3570, 3450, "8-я станция"],
+      [138.7310, 35.3580, 3700, "Край кратера"], [138.7274, 35.3606, 3776, "Кэнгаминэ"] ] },
+    { name: "Фудзиномия", pts: [
+      [138.7333, 35.3340, 2400, "5-я станция Фудзиномия"], [138.7325, 35.3420, 2700, "Новая 7-я станция"],
+      [138.7318, 35.3495, 3250, "8-я станция"], [138.7310, 35.3550, 3460, "9-я станция"],
+      [138.7300, 35.3580, 3710, "Край кратера"], [138.7274, 35.3606, 3776, "Кэнгаминэ"] ] } ] },
+  { name: "Килиманджаро", lon: 37.3556, lat: -3.0674, h: 5895, r: 0.20, routes: [
+    { name: "Марангу", pts: [
+      [37.5215, -3.2325, 1860, "Ворота Марангу"], [37.5170, -3.1960, 2720, "Хижина Мандара"],
+      [37.4660, -3.1050, 3720, "Хижина Хоромбо"], [37.3920, -3.0835, 4720, "Хижина Кибо"],
+      [37.3684, -3.0753, 5685, "Гиллманс-Пойнт"], [37.3610, -3.0710, 5756, "Стелла-Пойнт"],
+      [37.3556, -3.0674, 5895, "Ухуру"] ] },
+    { name: "Мачаме", pts: [
+      [37.2420, -3.1700, 1800, "Ворота Мачаме"], [37.2580, -3.1150, 2850, "Лагерь Мачаме"],
+      [37.2730, -3.0730, 3850, "Плато Шира"], [37.3060, -3.0690, 4600, "Лава-Тауэр"],
+      [37.3240, -3.0900, 3960, "Барранко"], [37.3500, -3.0980, 4035, "Каранга"],
+      [37.3700, -3.0920, 4640, "Барафу"], [37.3610, -3.0710, 5756, "Стелла-Пойнт"],
+      [37.3556, -3.0674, 5895, "Ухуру"] ] } ] },
+  { name: "Маттерхорн", lon: 7.6586, lat: 45.9763, h: 4478, r: 0.08, routes: [
+    { name: "Гребень Хёрнли (Швейцария)", pts: [
+      [7.7080, 45.9908, 2583, "Шварцзее"], [7.6806, 45.9822, 3260, "Хижина Хёрнли"],
+      [7.6672, 45.9795, 4003, "Хижина Сольве"], [7.6620, 45.9776, 4250, "Плечо"], [7.6586, 45.9763, 4478, "Вершина"] ] },
+    { name: "Гребень Льва (Италия)", pts: [
+      [7.6290, 45.9340, 2050, "Брёй-Червиния"], [7.6420, 45.9560, 2800, "Приют Абруцци"],
+      [7.6510, 45.9700, 3830, "Хижина Карреля"], [7.6550, 45.9740, 4241, "Пик Тиндаля"], [7.6586, 45.9763, 4478, "Вершина"] ] } ] },
+  { name: "Монблан", lon: 6.8652, lat: 45.8326, h: 4806, r: 0.10, routes: [
+    { name: "Маршрут Гуте", pts: [
+      [6.8130, 45.8810, 2372, "Ни-д’Эгль"], [6.8185, 45.8600, 3167, "Тет-Русс"], [6.8325, 45.8505, 3835, "Хижина Гуте"],
+      [6.8410, 45.8433, 4304, "Дом-дю-Гуте"], [6.8485, 45.8390, 4362, "Валло"], [6.8580, 45.8350, 4550, "Боссы"],
+      [6.8652, 45.8326, 4806, "Вершина"] ] },
+    { name: "Три горы (с Эгюий-дю-Миди)", pts: [
+      [6.8873, 45.8786, 3842, "Эгюий-дю-Миди"], [6.8870, 45.8700, 3530, "Коль-дю-Миди"],
+      [6.8875, 45.8565, 4248, "Монблан-дю-Такюль"], [6.8800, 45.8480, 4035, "Коль-Моди"],
+      [6.8760, 45.8455, 4345, "Мон-Моди"], [6.8710, 45.8400, 4303, "Коль-де-ла-Бренва"],
+      [6.8652, 45.8326, 4806, "Вершина"] ] } ] },
+  { name: "Денали", lon: -151.0074, lat: 63.0695, h: 6190, r: 0.20, routes: [
+    { name: "Вест-Баттресс", pts: [
+      [-151.1760, 62.9690, 2200, "Базовый лагерь"], [-151.1350, 62.9950, 2400, "Лагерь 7800"],
+      [-151.1150, 63.0240, 3350, "Лагерь 11 000"], [-151.0900, 63.0450, 4330, "Лагерь 14 000"],
+      [-151.0560, 63.0575, 5240, "Хай-кэмп 17 000"], [-151.0310, 63.0630, 5550, "Перевал Денали"],
+      [-151.0074, 63.0695, 6190, "Вершина"] ] } ] },
+  { name: "Аконкагуа", lon: -70.0109, lat: -32.6532, h: 6961, r: 0.15, routes: [
+    { name: "Нормальный (Оркониос)", pts: [
+      [-70.0640, -32.6510, 4300, "Пласа-де-Мулас"], [-70.0400, -32.6420, 5050, "Канада"],
+      [-70.0270, -32.6340, 5560, "Нидо-де-Кондорес"], [-70.0170, -32.6420, 5940, "Колера"],
+      [-70.0140, -32.6460, 6380, "Индепенденсия"], [-70.0120, -32.6510, 6700, "Каналета"],
+      [-70.0109, -32.6532, 6961, "Вершина"] ] },
+    { name: "Польский траверс (Вакас)", pts: [
+      [-69.9500, -32.6390, 4200, "Пласа-Архентина"], [-69.9720, -32.6330, 4900, "Лагерь 1"],
+      [-69.9900, -32.6320, 5500, "Лагерь 2"], [-70.0050, -32.6380, 5900, "Лагерь 3"],
+      [-70.0170, -32.6420, 5940, "Колера"], [-70.0140, -32.6460, 6380, "Индепенденсия"],
+      [-70.0120, -32.6510, 6700, "Каналета"], [-70.0109, -32.6532, 6961, "Вершина"] ] } ] },
+  { name: "Арарат", lon: 44.2983, lat: 39.7017, h: 5137, r: 0.10, routes: [
+    { name: "Южный", pts: [
+      [44.2950, 39.6440, 2200, "Эли"], [44.2960, 39.6700, 3200, "Лагерь 1"],
+      [44.2985, 39.6875, 4200, "Лагерь 2"], [44.2983, 39.7017, 5137, "Вершина"] ] } ] },
+  // ---- Крым ----
+  { name: "Ай-Петри", lon: 34.0528, lat: 44.4511, h: 1234, r: 0.08, routes: [
+    // Сосновый Бор — по опубликованной координате (N 44°25.535′ E 34°4.198′); верхняя станция — по длине
+    // верхнего пролёта 1670 м в сторону вершины; нижняя станция и зубцы — по описаниям и Википедии.
+    { name: "Канатная дорога из Мисхора", air: [0, 1], pts: [
+      [34.0770, 44.4160, 86, "Мисхор, нижняя станция"], [34.0700, 44.4256, 300, "Сосновый Бор"],
+      [34.0621, 44.4373, 1153, "Верхняя станция"], [34.0528, 44.4511, 1234, "Зубцы Ай-Петри"] ] },
+    { name: "Таракташская тропа", pts: [
+      [34.1290, 44.4810, 390, "Водопад Учан-Су"], [34.1150, 44.4740, 750, "Таракташский хребет"],
+      [34.0980, 44.4680, 1050, "Скалы Таракташ"], [34.0780, 44.4600, 1150, "Край яйлы"],
+      [34.0528, 44.4511, 1234, "Зубцы Ай-Петри"] ] } ] },
+  { name: "Чатыр-Даг", lon: 34.2856, lat: 44.7481, h: 1527, r: 0.08, routes: [
+    { name: "От Ангарского перевала", pts: [
+      [34.3408, 44.7583, 752, "Ангарский перевал"], [34.3200, 44.7560, 1000, "Лесная тропа"],
+      [34.3050, 44.7530, 1250, "Край верхнего плато"], [34.2930, 44.7500, 1400, "Верхнее плато"],
+      [34.2856, 44.7481, 1527, "Эклизи-Бурун"] ] },
+    { name: "От Мраморной пещеры", pts: [
+      [34.2953, 44.8037, 920, "Мраморная пещера"], [34.2950, 44.7850, 1050, "Нижнее плато"],
+      [34.2930, 44.7680, 1150, "Подъём на верхнее плато"], [34.2890, 44.7560, 1400, "Верхнее плато"],
+      [34.2856, 44.7481, 1527, "Эклизи-Бурун"] ] } ] },
+  { name: "Демерджи", lon: 34.4158, lat: 44.7466, h: 1239, r: 0.09, routes: [
+    { name: "Из Лучистого через Долину привидений", pts: [
+      [34.3990, 44.7370, 500, "Лучистое"], [34.4070, 44.7420, 700, "Долина привидений"],
+      [34.4120, 44.7450, 1000, "Подъём по склону"], [34.4158, 44.7466, 1239, "Южная Демерджи"] ] },
+    { name: "От Ангарского перевала через Северную Демерджи", pts: [
+      [34.3408, 44.7583, 752, "Ангарский перевал"], [34.3700, 44.7640, 1000, "Поляна"],
+      [34.3950, 44.7690, 1356, "Северная Демерджи"], [34.4080, 44.7570, 1100, "Седловина"],
+      [34.4158, 44.7466, 1239, "Южная Демерджи"] ] } ] },
+  // ---- Горы с несколькими классическими маршрутами ----
+  { name: "Кения", lon: 37.3150, lat: -0.1557, h: 4985, r: 0.22, routes: [
+    { name: "Наро-Мору", pts: [
+      [37.1300, -0.1730, 2400, "Ворота Наро-Мору"], [37.2050, -0.1690, 3050, "Метеостанция"],
+      [37.2900, -0.1590, 4200, "Лагерь Макиндера"], [37.3120, -0.1580, 4790, "Австрийская хижина"],
+      [37.3150, -0.1557, 4985, "Пик Ленана"] ] },
+    { name: "Сиримон", pts: [
+      [37.2290, 0.0260, 2650, "Ворота Сиримон"], [37.2370, 0.0010, 3300, "Олд-Мозес"],
+      [37.2650, -0.0450, 3990, "Лики-Норт"], [37.3050, -0.1200, 4200, "Лагерь Шиптона"],
+      [37.3150, -0.1557, 4985, "Пик Ленана"] ] },
+    { name: "Чогория", pts: [
+      [37.5050, -0.2050, 2950, "Ворота Чогория"], [37.4500, -0.1900, 3300, "Конец дороги"],
+      [37.3600, -0.1700, 3950, "Озеро Майклсон"], [37.3400, -0.1650, 4300, "Холл-Тарнс"],
+      [37.3150, -0.1557, 4985, "Пик Ленана"] ] } ] },
+  { name: "Рейнир", lon: -121.7604, lat: 46.8529, h: 4392, r: 0.14, routes: [
+    { name: "Дисаппойнтмент-Кливер", pts: [
+      [-121.7350, 46.7860, 1650, "Парадайс"], [-121.7300, 46.8000, 2070, "Панорама-Пойнт"],
+      [-121.7323, 46.8355, 3100, "Лагерь Мьюир"], [-121.7350, 46.8420, 3400, "Ингрэм-Флэтс"],
+      [-121.7430, 46.8450, 3700, "Дисаппойнтмент-Кливер"], [-121.7560, 46.8520, 4300, "Край кратера"],
+      [-121.7604, 46.8529, 4392, "Коламбия-Крест"] ] },
+    { name: "Эммонс — Уинтроп", pts: [
+      [-121.6430, 46.9020, 1340, "Уайт-Ривер"], [-121.6950, 46.8930, 1830, "Глейшер-Бейсин"],
+      [-121.7270, 46.8650, 2900, "Лагерь Шурман"], [-121.7400, 46.8620, 3300, "Эммонс-Флэтс"],
+      [-121.7604, 46.8529, 4392, "Коламбия-Крест"] ] },
+    { name: "Ледник Каутц", pts: [
+      [-121.7350, 46.7860, 1650, "Парадайс"], [-121.7500, 46.8050, 2100, "Глейшер-Виста"],
+      [-121.7650, 46.8285, 3500, "Лагерь Хазард"], [-121.7700, 46.8370, 3800, "Ледовый жёлоб Каутц"],
+      [-121.7604, 46.8529, 4392, "Коламбия-Крест"] ] } ] },
+];
+// основной маршрут — первый в списке
+MOUNTAINS.forEach(m => { m.route = m.routes[0].pts; });
+
+// 1) Глобальная подложка — только грубые тайлы (максимум 5-й зум), это «вид с орбиты».
+const base = new XYZ("Esri низкое", {
+  isBaseLayer: true, url: ESRI, maxNativeZoom: 5, visibility: true, attribution: "Esri World Imagery"
+});
+
+// 2) Для каждой горы — свой слой с extent. За пределами рамки он ничего не грузит.
+const mountainLayers = MOUNTAINS.map(m => new XYZ("Гора " + m.name, {
+  isBaseLayer: false, url: ESRI, maxNativeZoom: 17, visibility: true, hideInLayerSwitcher: true,
+  extent: [[m.lon - m.r, m.lat - m.r], [m.lon + m.r, m.lat + m.r]]
+}));
+
+// Обычная подложка без ограничений — для сравнения в диагностике
+const fullBase = new XYZ("Esri полная", {
+  isBaseLayer: true, url: ESRI, maxNativeZoom: 17, visibility: false, attribution: "Esri World Imagery"
+});
+const terrain = new GlobusRgbTerrain();
+
+const first = MOUNTAINS[0];
+const globus = new Globe({
+  target: "globus",
+  name: "Earth",
+  terrain: terrain,
+  layers: [base, fullBase, ...mountainLayers],
+  resourcesSrc: OG_RES,
+  fontsSrc: OG_RES + "/fonts",
+  atmosphereEnabled: false,          // атмосфера давала мерцание при облёте на телефоне
+  transitionOpacityEnabled: false,   // без плавной подмены тайлов — она даёт мигание при движении камеры
+  viewExtent: [first.lon - first.r, first.lat - first.r, first.lon + first.r, first.lat + first.r]
+});
+const planet = globus.planet;
+window.planet = planet;   // для отладки из консоли браузера
+
+// ---------------- Маршруты восхождения ----------------
+const ROUTE_LIFT = 12;     // на сколько метров поднять линию над рельефом, чтобы она не тонула в склоне
+const LABEL_LIFT = 20;     // кружки точек — чуть над поверхностью
+const TEXT_LIFT = 150;     // подписи — заметно выше окружающего рельефа
+
+// Сгущаем маршрут: точка каждые ~50 м, высота сначала линейная между ключевыми точками
+function densify(route) {
+  const out = [];
+  for (let i = 0; i < route.length - 1; i++) {
+    const [lo1, la1, h1] = route[i], [lo2, la2, h2] = route[i + 1];
+    const dx = (lo2 - lo1) * 111320 * Math.cos(la1 * Math.PI / 180), dy = (la2 - la1) * 111320;
+    const n = Math.max(1, Math.round(Math.hypot(dx, dy) / 50));
+    for (let k = 0; k < n; k++) {
+      const t = k / n;
+      out.push([lo1 + (lo2 - lo1) * t, la1 + (la2 - la1) * t, h1 + (h2 - h1) * t, k === 0 ? i : -1, i]);
+    }
+  }
+  const last = route[route.length - 1];
+  out.push([last[0], last[1], last[2], route.length - 1, route.length - 2]);
+  return out;   // [lon, lat, h, индекс ключевой точки или -1, номер отрезка]
+}
+
+// Цвета маршрутов: первый — основной, остальные по порядку
+const ROUTE_COLORS = ["#ff5a2e", "#3fa9ff", "#6fdc4a", "#c77dff", "#ffd23f"];
+
+// Кружок для отметки точки маршрута
+function dot(color) {
+  const c = document.createElement("canvas"); c.width = c.height = 32;
+  const g = c.getContext("2d");
+  g.beginPath(); g.arc(16, 16, 12, 0, Math.PI * 2);
+  g.fillStyle = color; g.fill(); g.lineWidth = 4; g.strokeStyle = "#ffffff"; g.stroke();
+  return c.toDataURL();
+}
+const DOTS = ROUTE_COLORS.map(dot), DOT_TOP = dot("#ffc533");
+
+const routeLayer = new Vector("Маршруты", {
+  pickingEnabled: false, hideInLayerSwitcher: true, polygonOffsetUnits: -4
+});
+planet.addLayer(routeLayer);
+
+// Точки, общие для нескольких маршрутов (вершина, седловина, слияние троп), подписываем один раз
+function nearLabeled(labeled, p) {
+  return labeled.some(q => Math.abs(q[0] - p[0]) * 111320 * Math.cos(p[1] * Math.PI / 180) < 150 && Math.abs(q[1] - p[1]) * 111320 < 150);
+}
+
+MOUNTAINS.forEach(m => {
+  const labeled = [];
+  m.routes.forEach((rt, ri) => {
+    rt.color = ROUTE_COLORS[ri % ROUTE_COLORS.length];
+    rt.visible = true;
+    rt.dense = densify(rt.pts);
+    rt.line = new Entity({
+      polyline: { pathLonLat: [rt.dense.map(p => [p[0], p[1], p[2] + ROUTE_LIFT])], thickness: 4, color: rt.color }
+    });
+    routeLayer.add(rt.line);
+    rt.points = rt.pts.map((p, i) => {
+      if (nearLabeled(labeled, p)) return null;      // эту точку уже подписал другой маршрут
+      labeled.push(p);
+      const top = i === rt.pts.length - 1;
+      // кружок — у самой поверхности, подпись — отдельно и повыше, чтобы не врезалась в склон
+      const e = new Entity({
+        lonlat: [p[0], p[1], p[2] + LABEL_LIFT],
+        billboard: { src: top ? DOT_TOP : DOTS[ri % DOTS.length], size: [14, 14] }
+      });
+      e.textEntity = new Entity({
+        lonlat: [p[0], p[1], p[2] + TEXT_LIFT],
+        label: {
+          text: p[3] + ", " + p[2] + " м",
+          size: top ? 15 : 13, color: "#ffffff", outline: 0.28, outlineColor: "rgba(0,0,0,0.85)",
+          offset: [8, 0]
+        }
+      });
+      routeLayer.add(e);
+      routeLayer.add(e.textEntity);
+      return e;
+    });
+  });
+});
+
+function setRouteVisible(rt, on) {
+  rt.visible = on;
+  rt.line.setVisibility(on);
+  rt.points.forEach(e => { if (e) { e.setVisibility(on); e.textEntity.setVisibility(on); } });
+}
+
+// Уточняем высоты по настоящему рельефу — для маршрутов выбранной горы и только один раз
+// Высоты рельефа для набора точек — все запросы разом (плитки рельефа движок грузит один раз и кэширует).
+// zoom: для перебора вариантов (подгонка точек, обходы) берём более крупные плитки SEARCH_ZOOM —
+// их в разы меньше, и ответ приходит быстрее; окончательную линию кладём по самым подробным.
+const SEARCH_ZOOM = 12;
+const DRAPE_ZOOM = 13;   // окончательная линия: шаг рельефа ~10–20 м, а плиток вчетверо меньше, чем на самом подробном зуме
+const hCache = new Map();
+function heightAt(lon, lat, zoom) {
+  if (window.__heightStub) return window.__heightStub(lon, lat);   // для проверок без сети
+  const key = (zoom || 0) + ":" + lon.toFixed(5) + ":" + lat.toFixed(5);
+  if (hCache.has(key)) return hCache.get(key);
+  const ll = new LonLat(lon, lat);
+  // Если подробной плитки рельефа нет (рельеф вернул 0), пробуем всё более крупные плитки.
+  // Это важно севернее 60° (Денали): подробные данные рельефа там есть не везде.
+  const pr = new Promise(res => {
+    const t = planet.terrain;
+    if (!t || !t.getHeightAsync) return res(NaN);
+    const geo = t.geoid ? t.geoid.getHeightLonLat(ll) : 0;
+    const tryZ = z => t.getHeightAsync(ll, h => {
+      if (h !== 0 && isFinite(h)) return res(h + geo);
+      const next = (z || t.maxZoom || 14) - 2;
+      if (next >= 6) tryZ(next); else res(NaN);
+    }, z);
+    tryZ(zoom);
+  });
+  if (hCache.size > 50000) hCache.clear();   // проверки видимости подписей при облёте рождают много новых точек
+  hCache.set(key, pr);
+  return pr;
+}
+async function heightsAt(points, zoom) {
+  return Promise.all(points.map(p => heightAt(p[0], p[1], zoom)));
+}
+// точки отрезка через каждые ~50 м, но не больше 60 (без концов) — чтобы перебор на длинных отрезках не тормозил
+function sampleLine(a, b, kx, ky) {
+  const L = Math.hypot((b[0] - a[0]) * kx, (b[1] - a[1]) * ky), n = Math.min(60, Math.max(2, Math.round(L / 50))), out = [];
+  for (let k = 1; k < n; k++) out.push([a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n]);
+  return { pts: out, L };
+}
+
+// Автообход провалов на пеших отрезках.
+// Ключевые точки маршрутов грубые, и прямая между двумя соседними точками иногда срезает угол через ущелье
+// или обрыв, которые настоящая тропа обходит (так было у Ай-Петри между верхней станцией и зубцами).
+// Если линия проваливается глубже DIP_LIMIT ниже нижнего из концов, перебираем промежуточные точки сбоку
+// от прямой и берём ту, через которую путь идёт ровнее (без провала и без лишнего подъёма на гребни).
+const DIP_LIMIT = 80;
+
+// Подгонка ключевых точек по известной высоте — вдоль маршрута.
+// Высоты станций, хижин и лагерей известны хорошо, а координаты — грубо. Если рельеф в точке отличается
+// от её высоты больше чем на SNAP_TOL (точка висит в воздухе перед обрывом или ушла под склон),
+// двигаем её вдоль самого маршрута: сначала вперёд — к следующей точке, потом назад — к предыдущей,
+// шагом SNAP_STEP, и останавливаемся там, где рельеф впервые выходит на нужную высоту
+// (точно в месте пересечения, чтобы точка легла на поверхность, а не внутрь склона).
+// Вперёд предпочтительнее: назад берём, только если вперёд подходящего места нет или оно вдвое дальше.
+const SNAP_TOL = 30, SNAP_STEP = 10, SNAP_MAX = 2000;
+async function snapPoints(rt) {
+  const P = rt.pts, kx = 111320 * Math.cos(P[0][1] * Math.PI / 180), ky = 111320;
+  const hs = await heightsAt(P, SEARCH_ZOOM);
+  const out = P.map(p => p.slice());
+  const report = [];
+  let moved = 0;
+  // ищем вдоль направления from → to первое место, где рельеф пересекает высоту target
+  const searchAlong = async (from, to, target, h0) => {
+    const L = Math.hypot((to[0] - from[0]) * kx, (to[1] - from[1]) * ky);
+    const maxD = Math.min(SNAP_MAX, L * 0.9);
+    const ds = [];
+    for (let d = SNAP_STEP; d <= maxD; d += SNAP_STEP) ds.push(d);
+    if (!ds.length) return null;
+    const at = d => [from[0] + (to[0] - from[0]) * d / L, from[1] + (to[1] - from[1]) * d / L];
+    const hh = await heightsAt(ds.map(at), SEARCH_ZOOM);
+    let prevD = 0, prevH = h0;
+    for (let k = 0; k < ds.length; k++) {
+      const h = hh[k]; if (!isFinite(h)) return null;
+      if (Math.abs(h - target) <= SNAP_TOL || Math.sign(h - target) !== Math.sign(prevH - target)) {
+        // уточняем место пересечения между соседними шагами
+        const f = (prevH === h) ? 1 : Math.min(1, Math.max(0, (target - prevH) / (h - prevH)));
+        const d = prevD + (ds[k] - prevD) * f;
+        return { d, pos: at(d) };
+      }
+      prevD = ds[k]; prevH = h;
+    }
+    return null;
+  };
+  await Promise.all(P.map(async (p, i) => {
+    const h = hs[i];
+    if (!isFinite(h)) { report[i] = p[3] + ": рельеф не загрузился"; return; }
+    if (Math.abs(h - p[2]) <= SNAP_TOL) return;
+    const [fwd, back] = await Promise.all([
+      i < P.length - 1 ? searchAlong(p, P[i + 1], p[2], h) : null,
+      i > 0 ? searchAlong(p, P[i - 1], p[2], h) : null ]);
+    const pick = fwd && (!back || fwd.d <= back.d * 2) ? { ...fwd, dir: "вперёд" } : back ? { ...back, dir: "назад" } : null;
+    if (pick) {
+      out[i] = [pick.pos[0], pick.pos[1], p[2], p[3]]; moved++;
+      report[i] = p[3] + ": рельеф " + Math.round(h) + " м вместо " + p[2] + " → сдвинута " + pick.dir + " по маршруту на " + Math.round(pick.d) + " м";
+    } else {
+      report[i] = p[3] + ": рельеф " + Math.round(h) + " м вместо " + p[2] + ", вдоль маршрута нужной высоты не нашлось";
+    }
+  }));
+  rt.snapReport = report.filter(Boolean);
+  return { pts: out, moved };
+}
+
+async function findDetours(rt, P) {
+  const air = new Set(rt.air || []);
+  const kx = 111320 * Math.cos(P[0][1] * Math.PI / 180), ky = 111320;
+  const ends = await heightsAt(P, SEARCH_ZOOM);
+  const pts = [], orig = [], airEff = [], bridges = [];
+  for (let s = 0; s < P.length; s++) {
+    if (air.has(s)) airEff.push(pts.length);
+    pts.push(P[s]); orig.push(s);
+    if (s === P.length - 1 || air.has(s)) continue;
+    const A = P[s], B = P[s + 1], ha = ends[s], hb = ends[s + 1];
+    if (!(isFinite(ha) && isFinite(hb))) continue;
+    const base = Math.min(ha, hb), top = Math.max(ha, hb);
+    const straight = sampleLine(A, B, kx, ky);
+    const hsS = await heightsAt(straight.pts, SEARCH_ZOOM);
+    const dip0 = base - Math.min(...hsS);
+    if (!(dip0 > DIP_LIMIT)) continue;
+    // перебор: точка на 35/50/65% пути, сдвиг вбок до 1,2 км
+    const ux = (B[0] - A[0]) * kx / straight.L, uy = (B[1] - A[1]) * ky / straight.L;
+    const cands = [];
+    for (const t of [0.35, 0.5, 0.65]) for (const d of [-1200, -800, -500, -300, -150, 150, 300, 500, 800, 1200]) {
+      cands.push([A[0] + (B[0] - A[0]) * t + (-uy * d) / kx, A[1] + (B[1] - A[1]) * t + (ux * d) / ky]);
+    }
+    const scored = await Promise.all(cands.map(async C => {
+      const s1 = sampleLine(A, C, kx, ky), s2 = sampleLine(C, B, kx, ky);
+      const hh = await heightsAt([...s1.pts, C, ...s2.pts], SEARCH_ZOOM);
+      if (hh.some(h => !isFinite(h))) return null;
+      const dip = Math.max(0, base - Math.min(...hh)), over = Math.max(0, Math.max(...hh) - top - 30);
+      return { cost: dip + over + 0.03 * (s1.L + s2.L - straight.L), C, h: hh[s1.pts.length] };
+    }));
+    let best = null;
+    scored.forEach(r => { if (r && (!best || r.cost < best.cost)) best = r; });
+    if (best && best.cost < dip0 * 0.5) { pts.push([best.C[0], best.C[1], best.h, ""]); orig.push(-1); }
+    // обойти не удалось — оставляем по рельефу. Раньше такой отрезок проводился поверху прямой, но на длинных
+    // отрезках через настоящие долины (Демерджи, от Ангарского перевала) линия повисала в воздухе.
+    // Узкие V-образные провалы теперь всё равно засыпает эвристика «без нырков» ниже.
+  }
+  return { pts, orig, air: airEff, bridges };
+}
+
+async function drapeRoute(rt, mountainName) {
+  if (rt.draped || rt.draping) return;
+  rt.draping = true;
+  const T0 = performance.now();
+  try {
+    const snapped = await snapPoints(rt);
+    const eff = await findDetours(rt, snapped.pts);
+    const pts = eff.pts, dense = densify(pts);
+    const hs = await heightsAt(dense, DRAPE_ZOOM);
+    // Высота каждой точки линии — по рельефу. Высоты ключевых точек в данных грубые, поэтому им не верим:
+    //  • пешие отрезки и все станции/точки маршрута лежат на поверхности (если линия «задрана», она прижимается);
+    //  • отрезки по воздуху (канатная дорога) — прямая между станциями, а станции стоят на рельефе;
+    //    если такая прямая где-то ушла под землю — поднимаем её над поверхностью;
+    //  • если рельеф в точке не загрузился (вернул 0 или мусор) — берём расчётную высоту.
+    const air = new Set(eff.air);
+    const dbg = { t0: T0, noTerrain: 0, moved: snapped.moved, detours: eff.pts.length - rt.pts.length, bridges: eff.bridges.length, filled: 0, spans: [] };
+    const ground = dense.map((p, i) => {
+      const h = hs[i];
+      // раньше здесь отбрасывались высоты намного ниже расчётной — и линия над настоящими глубокими долинами
+      // (Демерджи: поляна → Северная Демерджи) оставалась висеть по прямой. Пустые плитки heightAt и так
+      // отсеивает (возвращает NaN), поэтому верим любой полученной высоте.
+      if (isFinite(h)) return h;
+      dbg.noTerrain++; return p[2];
+    });
+    // Воздушные отрезки (канатная дорога): трос — плавная кривая от станции к станции.
+    //  1) концы ставим на рельеф, но если прямая между ними задевает склон (например, перегиб у края
+    //     обрыва), приподнимаем конец ровно настолько, чтобы трос прошёл над склоном с запасом CLEAR —
+    //     так не получается «невидимого столба», когда линия карабкается по склону, а потом уходит в пропасть;
+    //  2) добавляем провисание по параболе: до 4% длины пролёта, но не больше, чем позволяет рельеф под тросом.
+    const CLEAR = 15, SAG = 0.04;
+    const fixed = ground.slice(), onCable = new Set();
+    const kx = 111320 * Math.cos(pts[0][1] * Math.PI / 180), ky = 111320;
+    // отрезки, которые не удалось обойти: линия не опускается ниже прямой между концами (на 10 м)
+    for (const seg of eff.bridges) {
+      const idx = [];
+      dense.forEach((p, i) => { if (p[4] === seg || (p[3] === seg + 1)) idx.push(i); });
+      const hA = ground[idx[0]], hB = ground[idx[idx.length - 1]];
+      idx.forEach((i, k) => { const u = k / (idx.length - 1); fixed[i] = Math.max(ground[i], hA + (hB - hA) * u - 10); });
+    }
+    for (const seg of air) {
+      const idx = [];
+      dense.forEach((p, i) => { if (p[4] === seg || (p[3] === seg + 1)) idx.push(i); });
+      if (idx.length < 2) continue;
+      const i0 = idx[0], i1 = idx[idx.length - 1];
+      const [lo1, la1] = pts[seg], [lo2, la2] = pts[seg + 1];
+      const L = Math.hypot((lo2 - lo1) * kx, (la2 - la1) * ky) || 1;
+      const tt = idx.map(i => Math.hypot((dense[i][0] - lo1) * kx, (dense[i][1] - la1) * ky) / L);
+      const g0 = ground[i0], g1 = ground[i1];
+      // Если склон у верхней станции встаёт круче, чем прямая к ней (станция стоит за краем обрыва),
+      // трос заканчиваем на краю — там, куда «смотрит» самый крутой луч от нижней станции, —
+      // а дальше до станции линия идёт по земле. Так устроены настоящие канатки: станция на бровке.
+      let jEnd = idx.length - 1, hEnd = g1;
+      let bestS = (g1 - g0) / L;
+      idx.forEach((i, k) => {
+        const t = tt[k]; if (t < 0.6 || t > 0.999) return;
+        if (ground[i] < g0 + (g1 - g0) * t + CLEAR) return;   // склон здесь ниже прямой — всё в порядке
+        const sl = (ground[i] + CLEAR - g0) / (t * L);
+        if (sl > bestS) { bestS = sl; jEnd = k; hEnd = ground[i] + CLEAR; }
+      });
+      // Каждый воздушный отрезок — один пролёт без опор: плавная кривая от станции до станции (или до бровки)
+      // с провисанием до 4% длины. Провисание уменьшается, если иначе трос задел бы склон. Никаких изломов:
+      // если склон торчит выше даже прямой (редкий случай грубых точек), трос всё равно рисуется гладким.
+      const clr = u => CLEAR * Math.min(1, u / 0.1, (1 - u) / 0.1);
+      const span = (kA, kB, hA, hB) => {
+        const tA = tt[kA], tB = tt[kB], dt = (tB - tA) || 1;
+        let sag = SAG * L * dt;
+        for (let k = kA + 1; k < kB; k++) {
+          const u = (tt[k] - tA) / dt, w = 4 * u * (1 - u);
+          if (w > 0.05) sag = Math.min(sag, Math.max(0, (hA + (hB - hA) * u - ground[idx[k]] - clr(u)) / w));
+        }
+        let above = 0;
+        for (let k = kA + 1; k < kB; k++) {
+          const u = (tt[k] - tA) / dt;
+          fixed[idx[k]] = hA + (hB - hA) * u - 4 * sag * u * (1 - u);
+          onCable.add(idx[k]);
+          above = Math.max(above, fixed[idx[k]] - ground[idx[k]]);
+        }
+        return { sag, above };
+      };
+      fixed[i0] = g0;
+      const tEnd = tt[jEnd];
+      const r = span(0, jEnd, g0, hEnd);
+      dbg.spans.push({ len: Math.round(L * tEnd), sag: Math.round(r.sag), above: Math.round(r.above),
+        edge: jEnd < idx.length - 1, g0: Math.round(g0), g1: Math.round(g1), hEnd: Math.round(hEnd) });
+      fixed[idx[jEnd]] = hEnd;
+      for (let k = jEnd + 1; k < idx.length; k++) fixed[idx[k]] = ground[idx[k]];   // после бровки — по земле
+    }
+    // Эвристика «без нырков»: узкие глубокие провалы в линии засыпаем.
+    // Тропа не ныряет на сотни метров вниз, чтобы через несколько сотен метров выбраться обратно, —
+    // такой V-образный провал почти всегда значит, что прямая между грубыми точками срезала угол над ущельем.
+    // Считаем «закрытие» профиля окном ±DIP_WIN точек (≈ ±300 м): сначала максимум по окну, потом минимум.
+    // Оно заполняет только провалы уже окна и не трогает обычные подъёмы и спуски. Где провал глубже
+    // DIP_FILL, линия идёт по закрытому профилю (поверху), в остальных местах — как раньше по рельефу.
+    {
+      const DIP_WIN = 6, DIP_FILL = 80, n = fixed.length, P = 2 * DIP_WIN;
+      // края профиля продлеваем крайними значениями, иначе у начала и конца маршрута закрытие даёт ложный подъём
+      const f = [...Array(P).fill(fixed[0]), ...fixed, ...Array(P).fill(fixed[n - 1])];
+      const win = (arr, k, op) => { let m = op === "max" ? -Infinity : Infinity;
+        for (let j = Math.max(0, k - DIP_WIN); j <= Math.min(arr.length - 1, k + DIP_WIN); j++) m = op === "max" ? Math.max(m, arr[j]) : Math.min(m, arr[j]);
+        return m; };
+      const dil = f.map((_, k) => win(f, k, "max"));
+      const cloP = dil.map((_, k) => win(dil, k, "min"));
+      const clo = cloP.slice(P, P + n);
+      for (let k = 0; k < n; k++) if (!onCable.has(k) && clo[k] - fixed[k] > DIP_FILL) { fixed[k] = clo[k]; dbg.filled++; }
+    }
+    rt.line.polyline.setPathLonLat([dense.map((p, i) => [p[0], p[1], fixed[i] + ROUTE_LIFT])]);
+    dense.forEach((p, i) => {
+      const o = p[3] >= 0 ? eff.orig[p[3]] : -1;
+      if (o >= 0 && rt.points[o]) {
+        rt.points[o].setLonLat(new LonLat(p[0], p[1], fixed[i] + LABEL_LIFT));
+        rt.points[o].labelPos = [p[0], p[1], fixed[i]];
+      }
+    });
+    await placeLabels(rt);
+    rt.draped = true;
+    dbg.ms = Math.round(performance.now() - dbg.t0);
+    rt.dbg = dbg;
+    showRouteDbg();
+  } catch (e) {
+    log("Маршрут «" + rt.name + "» (" + mountainName + "): не удалось уточнить высоты (" + e.message + ")");
+  } finally {
+    rt.draping = false;
+  }
+}
+
+window.__dbg = { MOUNTAINS, drapeRoute };
+
+// Что получилось при раскладке маршрутов выбранной горы по рельефу — видно в панели ⚙
+function showRouteDbg() {
+  const el = document.getElementById("routeDbg"); if (!el || !current) return;
+  el.textContent = current.routes.map(rt => {
+    if (!rt.dbg) return "• " + rt.name + ": " + (rt.draping ? "считается…" : "ещё не уложен на рельеф");
+    const d = rt.dbg;
+    let t = "• " + rt.name + ": уложен за " + d.ms + " мс";
+    if (d.noTerrain) t += ", без рельефа " + d.noTerrain + " точ.";
+    if (d.moved) t += ", подогнано по высоте точек: " + d.moved;
+    (rt.snapReport || []).forEach(line => { t += "\n   ◦ " + line; });
+    if (d.detours) t += ", обходов " + d.detours;
+    if (d.bridges) t += ", поверху отрезков " + d.bridges;
+    if (d.filled) t += ", засыпано провалов " + d.filled + " точ.";
+    d.spans.forEach((sp, i) => {
+      t += "\n   пролёт " + (i + 1) + ": " + sp.len + " м, станции " + sp.g0 + "→" + sp.g1 + " м" +
+        (sp.edge ? ", трос до бровки " + sp.hEnd + " м" : "") + ", провис " + sp.sag + " м, макс. над склоном " + sp.above + " м";
+    });
+    return t;
+  }).join("\n");
+}   // для отладки из консоли браузера
+
+// ---- Подписи точек ----
+// 1) Базовая высота подписи — над самым высоким местом рельефа в радиусе ~300 м вокруг точки (+TEXT_LIFT),
+//    а не над самой точкой: иначе на склоне подпись утыкается в гору выше по склону.
+// 2) Динамика: когда камера останавливается (и раз в секунду во время облёта), для каждой подписи выбранной
+//    горы проверяем, видна ли она с камеры — нет ли рельефа на линии «камера → подпись». Если подпись
+//    закрыта склоном, поднимаем её ступенями по 100 м (до +600 м), пока не станет видна.
+async function placeLabels(rt) {
+  const kx = 111320 * Math.cos(rt.pts[0][1] * Math.PI / 180), ky = 111320;
+  await Promise.all(rt.points.map(async e => {
+    if (!e || !e.labelPos) return;
+    const [lon, lat, h] = e.labelPos, ring = [];
+    for (const r of [150, 300]) for (let a = 0; a < 360; a += 45) {
+      ring.push([lon + r * Math.cos(a * Math.PI / 180) / kx, lat + r * Math.sin(a * Math.PI / 180) / ky]);
+    }
+    const hh = (await heightsAt(ring, SEARCH_ZOOM)).filter(isFinite);
+    e.labelBase = Math.max(h, ...hh) + TEXT_LIFT;
+    e.labelLift = 0;
+    e.textEntity.setLonLat(new LonLat(lon, lat, e.labelBase));
+  }));
+}
+let losBusy = false, losLast = 0;
+async function updateLabelsLOS() {
+  if (losBusy || !current) return;
+  losBusy = true; losLast = performance.now();
+  try {
+    const cam = planet.camera.getLonLat();
+    const kx = 111320 * Math.cos(cam.lat * Math.PI / 180), ky = 111320;
+    for (const rt of current.routes) {
+      if (!rt.visible) continue;
+      for (const e of rt.points) {
+        if (!e || e.labelBase == null) continue;
+        const [lon, lat] = e.labelPos;
+        let lift = 0;
+        for (; lift <= 600; lift += 100) {
+          const h = e.labelBase + lift;
+          const dist = Math.hypot((lon - cam.lon) * kx, (lat - cam.lat) * ky);
+          const n = Math.min(40, Math.max(8, Math.round(dist / 250)));
+          const samples = [];
+          for (let k = 1; k < n; k++) {               // ближнюю к подписи часть (последние 150 м) не проверяем
+            const f = k / n; if ((1 - f) * dist < 150) continue;
+            samples.push([cam.lon + (lon - cam.lon) * f, cam.lat + (lat - cam.lat) * f, cam.height + (h - cam.height) * f]);
+          }
+          const hh = await heightsAt(samples, SEARCH_ZOOM);
+          if (!samples.some((sp, k) => isFinite(hh[k]) && hh[k] > sp[2] - 10)) break;   // ничего не мешает
+        }
+        lift = Math.min(lift, 600);
+        if (lift !== e.labelLift) { e.labelLift = lift; e.textEntity.setLonLat(new LonLat(lon, lat, e.labelBase + lift)); }
+      }
+    }
+  } finally { losBusy = false; }
+}
+planet.camera.events.on("moveend", () => updateLabelsLOS());
+planet.camera.events.on("viewchange", () => { if (performance.now() - losLast > 1000) updateLabelsLOS(); });
+
+// Фоновая укладка: когда выбранная гора готова, по одной укладываем остальные горы,
+// чтобы при переключении маршруты сразу лежали на рельефе.
+let bgRunning = false;
+function scheduleBackgroundDrape() {
+  if (bgRunning) return;
+  bgRunning = true;
+  const next = async () => {
+    const m = MOUNTAINS.find(x => x.routes.some(rt => !rt.draped && !rt.draping));
+    if (!m) { bgRunning = false; return; }
+    await Promise.all(m.routes.map(rt => drapeRoute(rt, m.name)));
+    (window.requestIdleCallback || (f => setTimeout(f, 300)))(next);
+  };
+  setTimeout(next, 1500);
+}
+
+// Список маршрутов выбранной горы под её названием: цветная метка, тап — скрыть/показать маршрут
+function renderRouteList(m) {
+  const box = document.getElementById("routes");
+  box.innerHTML = "";
+  m.routes.forEach(rt => {
+    const b = document.createElement("button");
+    b.className = "rchip" + (rt.visible ? "" : " off");
+    b.innerHTML = '<i style="background:' + rt.color + '"></i>';
+    b.appendChild(document.createTextNode(rt.name));
+    b.onclick = () => { setRouteVisible(rt, !rt.visible); b.classList.toggle("off", !rt.visible); };
+    box.appendChild(b);
+  });
+}
+
+// Камера стоит позади начала маршрута и чуть сбоку и смотрит на вершину:
+// на вертикальном экране путь идёт снизу вверх к вершине в центре кадра.
+// Облёт, наклон и приближение работают относительно вершины, поэтому она сразу в центре.
+// ---- Настройки камеры: сохраняются при переключении гор и между заходами на страницу ----
+const DEFAULTS = { tilt: 22, speed: 2 * Math.PI / 20, dist: null };   // 22°, круг за 20 с, расстояние — авто
+const SETTINGS_KEY = "mountains-demo-settings-v1";
+const settings = { ...DEFAULTS };
+try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}")); } catch (e) {}
+function saveSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+}
+function cameraFor(m) {
+  const r = m.route, s0 = r[0], top = r[r.length - 1];
+  const kx = 111320 * Math.cos(m.lat * Math.PI / 180), ky = 111320;
+  const dx = (top[0] - s0[0]) * kx, dy = (top[1] - s0[1]) * ky;
+  const len = Math.max(Math.hypot(dx, dy), 1500);
+  const ux = dx / len, uy = dy / len;                 // направление «старт → вершина»
+  const cLon = (s0[0] + top[0]) / 2, cLat = (s0[1] + top[1]) / 2, cH = (s0[2] + top[2]) / 2;
+  const back = len * 0.5 + Math.max(4000, len * 0.55);   // насколько отойти назад от середины
+  const side = len * 0.25;                               // небольшой сдвиг вбок для объёма
+  const ex = -ux * back + uy * side, ey = -uy * back - ux * side;
+  // направление от вершины к камере берём из расчёта выше; угол над горизонтом — из настроек,
+  // расстояние — из настроек, если его меняли ползунком, иначе подбирается под длину маршрута
+  const ox = cLon * kx + ex - top[0] * kx, oy = cLat * ky + ey - top[1] * ky;   // смещение камеры от вершины, м
+  const hd0 = Math.hypot(ox, oy), D = settings.dist || Math.hypot(hd0, Math.max(3000, len * 0.55));
+  const el = settings.tilt * Math.PI / 180, hd = D * Math.cos(el);
+  return {
+    eye: new LonLat(top[0] + ox / hd0 * hd / kx, top[1] + oy / hd0 * hd / ky, top[2] + D * Math.sin(el)),
+    look: new LonLat(top[0], top[1], top[2]),
+    center: new LonLat(cLon, cLat, cH)
+  };
+}
+
+// «Верх» для камеры — местная вертикаль (нормаль к поверхности в точке камеры).
+// Без этого движок в полёте берёт за верх ось Земли, и камера заваливается на бок,
+// если смотрит на восток или запад.
+function localUp(lonlat) {
+  return planet.ellipsoid.lonLatToCartesian(new LonLat(lonlat.lon, lonlat.lat, 0)).normal();
+}
+
+let current = null, flyMode = false, orbiting = false, orbitCenter = null, orbitUp = null;
+
+function goTo(i) {
+  const m = MOUNTAINS[i];
+  current = m;
+  const keepOrbit = orbiting;                      // если облёт шёл — продолжим его на новой горе
+  orbiting = false;
+  const { eye, look } = cameraFor(m);
+  // облёт — вокруг конечной точки подъёма (вершины маршрута)
+  const top = m.route[m.route.length - 1];
+  orbitCenter = planet.ellipsoid.lonLatToCartesian(new LonLat(top[0], top[1], top[2]));
+  orbitUp = orbitCenter.normal();
+  planet.stopFlying();
+  if (flyMode) {
+    planet.flyLonLat(eye, { look, up: localUp(eye), duration: 2500,
+      completeCallback: () => { if (keepOrbit && current === m) { orbiting = true; orbitStep(); } } });
+  } else {
+    planet.viewLonLat(eye, look);                  // мгновенно, без анимации
+    if (keepOrbit) { orbiting = true; orbitStep(); }
+  }
+  document.getElementById("mName").textContent = m.name;
+  const n = m.routes.length;
+  document.getElementById("mMeta").textContent =
+    m.h.toLocaleString("ru-RU") + " м · " + n + " " + (n === 1 ? "маршрут" : n < 5 ? "маршрута" : "маршрутов");
+  renderRouteList(m);
+  showRouteDbg();
+  Promise.all(m.routes.map(rt => drapeRoute(rt, m.name))).then(scheduleBackgroundDrape);
+  document.querySelectorAll(".chip").forEach((c, k) => c.classList.toggle("on", k === i));
+}
+
+// Облёт: камера вращается вокруг вертикальной оси через вершину.
+// Шаг делается внутри цикла отрисовки движка (событие postdraw), а не в отдельном таймере,
+// и после поворота обязательно вызывается camera.update(): rotateAround сам матрицы
+// камеры не пересчитывает, из-за чего кадры рисовались то по старой, то по новой позиции — это и было мерцание.
+let orbitSpeed = settings.speed;   // рад/с; меняется ползунком в панели «Камера»
+const ORBIT_RAMP = 1.5;     // с — плавный разгон, чтобы облёт не начинался рывком
+let lastT = 0, orbitT = 0;
+planet.renderer.events.on("postdraw", () => {
+  if (!orbiting) return;
+  const now = performance.now();
+  const dt = lastT ? Math.min((now - lastT) / 1000, 0.05) : 0;
+  lastT = now;
+  if (dt === 0) return;
+  orbitT += dt;
+  const k = Math.min(1, orbitT / ORBIT_RAMP), ease = k * k * (3 - 2 * k);
+  planet.camera.rotateAround(orbitSpeed * ease * dt, false, orbitCenter, orbitUp);
+  planet.camera.update();
+});
+function orbitStep() { lastT = 0; orbitT = 0; }
+function stopOrbit() {
+  orbiting = false;
+  document.getElementById("bOrbit").classList.remove("on");
+  document.getElementById("bOrbit").textContent = "Облёт ⟳";
+}
+
+const chips = document.getElementById("chips");
+MOUNTAINS.forEach((m, i) => {
+  const b = document.createElement("button");
+  b.className = "chip";
+  b.textContent = m.name;
+  b.onclick = () => goTo(i);
+  chips.appendChild(b);
+});
+
+document.getElementById("bMode").onclick = function () {
+  flyMode = !flyMode;
+  this.textContent = flyMode ? "Пролёт" : "Телепорт";
+};
+// Облёт начинается прямо с текущего положения и масштаба камеры — никаких перелётов.
+// Камера вращается вокруг вертикальной оси, проходящей через вершину (конечную точку маршрута).
+function startOrbit() {
+  const btn = document.getElementById("bOrbit");
+  btn.classList.add("on"); btn.textContent = "Стоп ■";
+  planet.stopFlying();
+  orbiting = true; orbitStep();
+}
+document.getElementById("bOrbit").onclick = function () {
+  if (orbiting) { stopOrbit(); return; }
+  if (!orbitCenter) return;
+  startOrbit();
+};
+// Пользователь трогает глобус — облёт выключается, чтобы не мешать
+document.getElementById("globus").addEventListener("pointerdown", () => { if (orbiting) stopOrbit(); });
+
+// ---- Наклон и расстояние камеры относительно вершины ----
+// Обе ручки работают от вершины (конечной точки маршрута), а не от центра экрана:
+//  • наклон — камера поворачивается вверх-вниз вокруг вершины, расстояние до неё не меняется;
+//  • расстояние — камера едет прямо к вершине или от неё, угол не меняется.
+// Ориентация камеры при этом не перестраивается, поэтому картинка не дёргается.
+const TILT_MAX = 85, TILT_POW = 1.8;        // у ползунка наклона больше хода в диапазоне 0–30°
+const tiltFromSlider = t => TILT_MAX * Math.pow(t / 1000, TILT_POW);
+const sliderFromTilt = e => 1000 * Math.pow(Math.max(0, e) / TILT_MAX, 1 / TILT_POW);
+const Z_MIN = 1000, Z_MAX = 120000;          // м, логарифмическая шкала
+const zoomFromSlider = t => Z_MIN * Math.pow(Z_MAX / Z_MIN, t / 1000);
+const sliderFromZoom = d => 1000 * Math.log(d / Z_MIN) / Math.log(Z_MAX / Z_MIN);
+
+function elevationDeg() {
+  const v = planet.camera.eye.sub(orbitCenter), n = orbitCenter.getNormal();
+  return Math.asin(Math.max(-1, Math.min(1, v.dot(n) / v.length()))) * 180 / Math.PI;
+}
+const distToTop = () => planet.camera.eye.sub(orbitCenter).length();
+const fmtDist = d => d >= 10000 ? Math.round(d / 1000) + " км" : (d / 1000).toFixed(1).replace(".", ",") + " км";
+
+function showCamVals() {
+  document.getElementById("tiltVal").textContent = Math.round(elevationDeg()) + "°";
+  document.getElementById("zoomVal").textContent = fmtDist(distToTop());
+}
+function syncCam() {
+  if (!orbitCenter) return;
+  document.getElementById("tilt").value = sliderFromTilt(elevationDeg());
+  document.getElementById("zoom").value = sliderFromZoom(Math.min(Z_MAX, Math.max(Z_MIN, distToTop())));
+  showCamVals();
+}
+function applyTilt(targetDeg) {
+  const cam = planet.camera;
+  // поворачиваем вокруг вершины; пару шагов — чтобы точно прийти к нужному углу при любой ориентации
+  for (let k = 0; k < 3; k++) {
+    const before = elevationDeg(), delta = (targetDeg - before) * Math.PI / 180;
+    if (Math.abs(delta) < 0.002) break;
+    cam.rotateVertical(delta, orbitCenter); cam.update();
+    if (Math.sign(elevationDeg() - before) !== Math.sign(delta)) { cam.rotateVertical(-2 * delta, orbitCenter); cam.update(); }
+  }
+}
+function applyZoom(d) {
+  const cam = planet.camera, v = cam.eye.sub(orbitCenter);
+  cam.eye = orbitCenter.add(v.scale(d / v.length()));
+  cam.update();
+}
+const tiltEl = document.getElementById("tilt"), zoomEl = document.getElementById("zoom");
+let dragging = false;
+[tiltEl, zoomEl].forEach(el => {
+  el.addEventListener("pointerdown", () => { dragging = true; planet.stopFlying(); });
+  el.addEventListener("change", () => { dragging = false; });
+});
+window.addEventListener("pointerup", () => { dragging = false; });
+tiltEl.addEventListener("input", () => {
+  if (!orbitCenter) return;
+  settings.tilt = tiltFromSlider(+tiltEl.value); applyTilt(settings.tilt); showCamVals(); saveSettings();
+});
+zoomEl.addEventListener("input", () => {
+  if (!orbitCenter) return;
+  settings.dist = zoomFromSlider(+zoomEl.value); applyZoom(settings.dist); showCamVals(); saveSettings();
+});
+// Скорость облёта: логарифмическая шкала, показываем, за сколько секунд камера делает полный круг
+const S_MIN = 0.03, S_MAX = 0.8;             // рад/с: круг за ~3,5 мин … ~8 с
+const speedFromSlider = t => S_MIN * Math.pow(S_MAX / S_MIN, t / 1000);
+const sliderFromSpeed = v => 1000 * Math.log(v / S_MIN) / Math.log(S_MAX / S_MIN);
+const speedEl = document.getElementById("speed");
+function showSpeed() {
+  const sec = Math.round(2 * Math.PI / orbitSpeed);
+  document.getElementById("speedVal").textContent = sec >= 120
+    ? "круг за " + Math.floor(sec / 60) + " мин " + (sec % 60 ? sec % 60 + " с" : "")
+    : "круг за " + sec + " с";
+}
+speedEl.value = sliderFromSpeed(orbitSpeed); showSpeed();
+speedEl.addEventListener("input", () => {
+  orbitSpeed = settings.speed = speedFromSlider(+speedEl.value); showSpeed(); saveSettings();
+});
+// Сброс: угол 22°, круг за 20 с, расстояние снова подбирается под маршрут
+document.getElementById("camReset").onclick = () => {
+  Object.assign(settings, DEFAULTS); saveSettings();
+  orbitSpeed = settings.speed; speedEl.value = sliderFromSpeed(orbitSpeed); showSpeed();
+  const i = MOUNTAINS.indexOf(current); if (i >= 0) goTo(i);
+  syncCam();
+};
+
+document.getElementById("bCam").onclick = function () {
+  const p = document.getElementById("cam");
+  p.hidden = !p.hidden;
+  this.classList.toggle("on", !p.hidden);
+  if (!p.hidden) syncCam();
+};
+// если камеру сдвинули пальцем или облётом — ползунки подстраиваются под неё
+planet.camera.events.on("viewchange", () => {
+  if (!dragging && !document.getElementById("cam").hidden) syncCam();
+});
+
+// ---- Диагностика: включаем/выключаем части сцены, чтобы найти источник мерцания ----
+document.getElementById("bDiag").onclick = () => {
+  const d = document.getElementById("diag"); d.hidden = !d.hidden;
+};
+document.getElementById("dFrames").onchange = (e) => {
+  const on = e.target.checked;
+  planet.setBaseLayer(on ? base : fullBase);
+  mountainLayers.forEach(l => l.setVisibility(on));
+};
+document.getElementById("dTerrain").onchange = (e) => {
+  planet.setTerrain(e.target.checked ? terrain : new EmptyTerrain());
+};
+document.getElementById("dAtmos").onchange = (e) => {
+  planet.atmosphereEnabled = e.target.checked;
+};
+// Счётчик кадров в секунду
+let frames = 0, fpsT = performance.now();
+planet.renderer.events.on("postdraw", () => {
+  frames++;
+  const now = performance.now();
+  if (now - fpsT > 1000) {
+    document.getElementById("fps").textContent = "FPS: " + Math.round(frames * 1000 / (now - fpsT));
+    frames = 0; fpsT = now;
+  }
+});
+
+// Старт на Эльбрусе, после того как движок готов
+setTimeout(() => goTo(0), 300);
+</script>
+</body>
+</html>
