@@ -85,7 +85,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 12.10, 01:37</small>
+  <small id="ver">версия 12.10, 01:54</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -101,6 +101,8 @@ const PRESETS = [
   { id:"fast",  name:"Скоростная · 2500 км/ч",    vmax:700 },
   { id:"hyper", name:"Гипер · 7200 км/ч",         vmax:2000 },
   { id:"orbit", name:"Над планетой · 24000 км/ч", vmax:6700 },
+  { id:"ultra", name:"Космос · 47000 км/ч",        vmax:13000 },
+  { id:"max",   name:"Предел · 94000 км/ч",        vmax:26000 },
 ];
 const S = Object.assign({ mode:"canyon", alt:1, style:"easy", preset:"fast", seed:7, skill:92, fx:1, cam:0, rival:true, resume:4, inv:false, assist:true, q:1.5, pop:1, cloud:1 }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
 const saveS = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
@@ -406,18 +408,29 @@ function altPref(x) {
   const r = ALT_RANGE[Math.max(0, Math.min(3, S.alt | 0))], u = x / T.SC, g = .5 + .5 * Math.sin(u * 2.4e-3 + .8 + 1.3 * Math.sin(u * 6e-4));
   return r[0] + (r[1] - r[0]) * g;
 }
+const popFlag = (k, often) => Math.sin(k * 5.17 + 1.3) * .5 + .5 > (often ? .4 : .75);
+const archU = (k, SP) => SP * (k + .5 + .22 * Math.sin(k * 2.3 + .6));
 function popE(x) {
   if (!S.pop || S.alt >= 3) return 0;
-  const u = x / T.SC, D = CW.cD(u), often = S.pop >= 2;
-  let dA = 1e9; { const SP = archSP() / T.SC, k0 = Math.floor(u / SP); for (let k = k0 - 1; k <= k0 + 1; k++) dA = Math.min(dA, Math.abs(u - archParams(k).x / T.SC)); }
-  return sstep(500, 1500, dA) * sstep(often ? -.1 : .15, often ? .35 : .55, Math.sin(u * 1.1e-3 + .4)) * sstep(often ? 780 : 700, often ? 600 : 540, D);
+  const u = x / T.SC, often = S.pop >= 2, SP = archSP() / T.SC, k0 = Math.floor(u / SP);
+  let ea = 0, dA = 1e9;
+  for (let k = k0 - 1; k <= k0 + 1; k++) {
+    const ak = archU(k, SP), dd = u - ak, d = Math.abs(dd); dA = Math.min(dA, d);
+    /* «перелёт через арку»: заранее поднимается к облакам, пролетает над аркой и уходит вниз после неё;
+       спуск/подъём всегда заканчивается заранее до соседней арки, над которой перелёта нет */
+    if (popFlag(k, often)) { const k2 = k + (dd > 0 ? 1 : -1); let a = 1500, b = 2800; if (!popFlag(k2, often)) { b = Math.min(2800, Math.abs(archU(k2, SP) - ak) - 900); a = Math.max(300, Math.min(1500, b - 600)); } ea = Math.max(ea, 1 - sstep(a, Math.max(b, a + 50), d)); }
+  }
+  const D = CW.cD(u), es = sstep(500, 1500, dA) * sstep(often ? -.1 : .15, often ? .35 : .55, Math.sin(u * 1.1e-3 + .4)) * sstep(often ? 780 : 700, often ? 600 : 540, D);
+  return Math.max(ea, es);
 }
+/* целевая высота выныривания: уровень облаков */
+function popAc(x) { const sc = T.SC, u = x / sc, y = (1350 + 350 * Math.sin(u * 1.3e-3 + .5)) * sc; return Math.max(1.05, Math.min(1.9, (y - cyFl(x)) / cyD(x))); }
 /* планировщик: выбирает смещение и высоту относительно оси каньона на ближайшие ~3 с полёта */
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 function cyPlan(p) {
   const sc = T.SC, cs = T.cs, v = Math.max(p.v, T.vmax * .2), Ls = v * 3.2, Lsx = Ls * .85, N = 14, x0 = p.pos.x, fl = cyFl(x0), pl = cy.plan;
   const w0 = cyW(x0), D0 = cyD(x0), L0 = Math.max(-1.4, Math.min(1.4, (p.pos.z - cyZc(x0)) / w0)), a0 = (p.pos.y - fl) / D0, r = 80 * cs, m = 50 * cs;
-  const pref0 = altPref(x0 + Lsx * .6), E = popE(x0 + Lsx * .6), pref = pref0 + (1.3 - pref0) * E;
+  const xm = x0 + Lsx * .6, pref0 = altPref(xm), E = popE(xm), pref = pref0 + (popAc(xm) - pref0) * E;
   const Lcs = [-.6, -.35, -.15, 0, .15, .35, .6], acs = [...new Set([pref * .6, pref * .8, pref, pref * 1.25, pref * 1.6].map(a => Math.max(.1, Math.min(1.9, a))))];
   let best = null; if (window.__dbg) pl.dbg = [];
   for (const Lc of Lcs) for (const ac of acs) {
@@ -440,7 +453,7 @@ function cyPlan(p) {
   }
   pl.Lc = best.Lc; pl.ac = best.ac; pl.L0 = L0; pl.a0 = a0; pl.x0 = x0; pl.Lsx = Lsx; pl.t = tNow;
   const sk = S.skill / 100, vcap = T.vmax * (.8 + .2 * sk);
-  let vt = vcap * Math.max(.55, Math.min(1, Math.sqrt(best.wmin / (200 * sc))));
+  let vt = vcap * (1 - (1 - Math.max(.55, Math.min(1, Math.sqrt(best.wmin / (200 * sc))))) * (1 - E));
   if (best.kmax > 1e-9) vt = Math.min(vt, Math.sqrt(T.AMAX * .85 * sk / best.kmax));
   vt *= Math.max(.55, Math.min(1, .55 + .45 * best.Cmin / (80 * cs)));
   pl.vt = Math.max(vt, vcap * .38);
@@ -702,6 +715,8 @@ function applyClouds() { if (!clouds) return; clouds.visible = cyMode && +S.clou
 function startCanyon() {
   const preset = PRESETS.find(p => p.id === S.preset) || PRESETS[1];
   cyMode = true; T = Object.assign(paramsFor(preset.vmax), { preset, canyon: true });
+  /* в каньоне самолёт «манёвреннее»: перегрузка до vmax/2 (≈ 2.5× обычной), быстрый разгон и торможение — чтобы держать максимальную скорость в изгибах */
+  T.AMAX = Math.max(T.AMAX, T.vmax / 2); T.ACC = T.vmax / 3; T.BRK = T.vmax / 2;
   terrain.visible = false; terrain.material.uniforms.uSC.value = T.SC; terrain.material.uniforms.uR.value = T.R;
   const fd = 2.1 / (9500 * T.SC); terrain.material.uniforms.uFD.value = fd; SCN.fog.density = fd;
   chunkClear(); CHK.group.visible = true; applyClouds();
@@ -763,7 +778,7 @@ function playerControlRace() {
   let ar, au, vt = ai[2];
   if (ctl.steerMan) {
     const ex = x => Math.sign(x) * (0.35 * Math.abs(x) + 0.65 * x * x), sx = ex(ctl.sx), sy = ex(ctl.sy) * (S.inv ? -1 : 1);
-    ar = sx * T.AMAX * 0.9; au = sy * T.AMAX * 0.9;
+    ar = sx * T.AMAX * 0.5; au = sy * T.AMAX * 0.5; // ручное: мягче, чем у автопилота (иначе палец слишком резок)
     if (S.assist) { // не дать врезаться: нужный наклон вверх до ближайших вершин впереди против текущего наклона
       const tt = Math.min(14, Math.max(2.5, 1.2 * player.v / (0.7 * T.AMAX))), clr = 40 * T.cs + 0.03 * player.v; let needS = -9;
       for (let k = 1; k <= 8; k++) { const d = player.v * tt * k / 8, gnd = ground(player.pos.x + player.f.x * d, player.pos.z + player.f.z * d, T.SC) + clr; needS = Math.max(needS, (gnd - player.pos.y) / d); }
@@ -811,7 +826,7 @@ function playerControlCanyon() {
   const ai = cyAI(player); let ar = ai[0], au = ai[1], vt = ai[2];
   if (ctl.steerMan) {
     const ex = x => Math.sign(x) * (0.35 * Math.abs(x) + 0.65 * x * x), sx = ex(ctl.sx), sy = ex(ctl.sy) * (S.inv ? -1 : 1);
-    ar = sx * T.AMAX * 0.9; au = sy * T.AMAX * 0.9;
+    ar = sx * T.AMAX * 0.5; au = sy * T.AMAX * 0.5; // ручное: мягче, чем у автопилота (иначе палец слишком резок)
     if (S.assist) { // если прямо по курсу скала или арка — автопилот плавно подхватывает
       const p = player, cs = T.cs, r = 70 * cs; let danger = 0;
       for (let k = 1; k <= 10; k++) { const d = p.v * 2.4 * k / 10, x = p.pos.x + p.f.x * d, y = p.pos.y + p.f.y * d, z = p.pos.z + p.f.z * d;
