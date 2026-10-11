@@ -77,7 +77,7 @@
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps">Версия: 11.10, 04:05</span>
+  <span class="fps">Версия: 11.10, 04:15</span>
   <div class="fps" id="routeDbg" style="max-width:300px;white-space:pre-wrap;font-size:11px"></div>
 </div>
 
@@ -310,7 +310,7 @@ window.planet = planet;   // для отладки из консоли брау�
 // ---------------- Маршруты восхождения ----------------
 const ROUTE_LIFT = 12;     // на сколько метров поднять линию над рельефом, чтобы она не тонула в склоне
 const LABEL_LIFT = 20;     // кружки точек — чуть над поверхностью
-const TEXT_LIFT = 120;     // подписи — заметно выше, чтобы не врезались в склон
+const TEXT_LIFT = 150;     // подписи — заметно выше окружающего рельефа
 
 // Сгущаем маршрут: точка каждые ~50 м, высота сначала линейная между ключевыми точками
 function densify(route) {
@@ -403,11 +403,20 @@ function heightAt(lon, lat, zoom) {
   const key = (zoom || 0) + ":" + lon.toFixed(5) + ":" + lat.toFixed(5);
   if (hCache.has(key)) return hCache.get(key);
   const ll = new LonLat(lon, lat);
+  // Если подробной плитки рельефа нет (рельеф вернул 0), пробуем всё более крупные плитки.
+  // Это важно севернее 60° (Денали): подробные данные рельефа там есть не везде.
   const pr = new Promise(res => {
     const t = planet.terrain;
     if (!t || !t.getHeightAsync) return res(NaN);
-    t.getHeightAsync(ll, h => res(h + (t.geoid ? t.geoid.getHeightLonLat(ll) : 0)), zoom);
+    const geo = t.geoid ? t.geoid.getHeightLonLat(ll) : 0;
+    const tryZ = z => t.getHeightAsync(ll, h => {
+      if (h !== 0 && isFinite(h)) return res(h + geo);
+      const next = (z || t.maxZoom || 14) - 2;
+      if (next >= 6) tryZ(next); else res(NaN);
+    }, z);
+    tryZ(zoom);
   });
+  if (hCache.size > 50000) hCache.clear();   // проверки видимости подписей при облёте рождают много новых точек
   hCache.set(key, pr);
   return pr;
 }
@@ -627,9 +636,10 @@ async function drapeRoute(rt, mountainName) {
       const o = p[3] >= 0 ? eff.orig[p[3]] : -1;
       if (o >= 0 && rt.points[o]) {
         rt.points[o].setLonLat(new LonLat(p[0], p[1], fixed[i] + LABEL_LIFT));
-        rt.points[o].textEntity.setLonLat(new LonLat(p[0], p[1], fixed[i] + TEXT_LIFT));
+        rt.points[o].labelPos = [p[0], p[1], fixed[i]];
       }
     });
+    await placeLabels(rt);
     rt.draped = true;
     dbg.ms = Math.round(performance.now() - dbg.t0);
     rt.dbg = dbg;
@@ -663,6 +673,60 @@ function showRouteDbg() {
     return t;
   }).join("\n");
 }   // для отладки из консоли браузера
+
+// ---- Подписи точек ----
+// 1) Базовая высота подписи — над самым высоким местом рельефа в радиусе ~300 м вокруг точки (+TEXT_LIFT),
+//    а не над самой точкой: иначе на склоне подпись утыкается в гору выше по склону.
+// 2) Динамика: когда камера останавливается (и раз в секунду во время облёта), для каждой подписи выбранной
+//    горы проверяем, видна ли она с камеры — нет ли рельефа на линии «камера → подпись». Если подпись
+//    закрыта склоном, поднимаем её ступенями по 100 м (до +600 м), пока не станет видна.
+async function placeLabels(rt) {
+  const kx = 111320 * Math.cos(rt.pts[0][1] * Math.PI / 180), ky = 111320;
+  await Promise.all(rt.points.map(async e => {
+    if (!e || !e.labelPos) return;
+    const [lon, lat, h] = e.labelPos, ring = [];
+    for (const r of [150, 300]) for (let a = 0; a < 360; a += 45) {
+      ring.push([lon + r * Math.cos(a * Math.PI / 180) / kx, lat + r * Math.sin(a * Math.PI / 180) / ky]);
+    }
+    const hh = (await heightsAt(ring, SEARCH_ZOOM)).filter(isFinite);
+    e.labelBase = Math.max(h, ...hh) + TEXT_LIFT;
+    e.labelLift = 0;
+    e.textEntity.setLonLat(new LonLat(lon, lat, e.labelBase));
+  }));
+}
+let losBusy = false, losLast = 0;
+async function updateLabelsLOS() {
+  if (losBusy || !current) return;
+  losBusy = true; losLast = performance.now();
+  try {
+    const cam = planet.camera.getLonLat();
+    const kx = 111320 * Math.cos(cam.lat * Math.PI / 180), ky = 111320;
+    for (const rt of current.routes) {
+      if (!rt.visible) continue;
+      for (const e of rt.points) {
+        if (!e || e.labelBase == null) continue;
+        const [lon, lat] = e.labelPos;
+        let lift = 0;
+        for (; lift <= 600; lift += 100) {
+          const h = e.labelBase + lift;
+          const dist = Math.hypot((lon - cam.lon) * kx, (lat - cam.lat) * ky);
+          const n = Math.min(40, Math.max(8, Math.round(dist / 250)));
+          const samples = [];
+          for (let k = 1; k < n; k++) {               // ближнюю к подписи часть (последние 150 м) не проверяем
+            const f = k / n; if ((1 - f) * dist < 150) continue;
+            samples.push([cam.lon + (lon - cam.lon) * f, cam.lat + (lat - cam.lat) * f, cam.height + (h - cam.height) * f]);
+          }
+          const hh = await heightsAt(samples, SEARCH_ZOOM);
+          if (!samples.some((sp, k) => isFinite(hh[k]) && hh[k] > sp[2] - 10)) break;   // ничего не мешает
+        }
+        lift = Math.min(lift, 600);
+        if (lift !== e.labelLift) { e.labelLift = lift; e.textEntity.setLonLat(new LonLat(lon, lat, e.labelBase + lift)); }
+      }
+    }
+  } finally { losBusy = false; }
+}
+planet.camera.events.on("moveend", () => updateLabelsLOS());
+planet.camera.events.on("viewchange", () => { if (performance.now() - losLast > 1000) updateLabelsLOS(); });
 
 // Список маршрутов выбранной горы под её названием: цветная метка, тап — скрыть/показать маршрут
 function renderRouteList(m) {
