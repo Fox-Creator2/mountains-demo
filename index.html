@@ -92,7 +92,7 @@
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps">Версия: 11.10, 13:35</span>
+  <span class="fps">Версия: 11.10, 14:00</span>
   <div class="fps" id="routeDbg" style="max-width:300px;white-space:pre-wrap;font-size:11px"></div>
 </div>
 
@@ -329,6 +329,31 @@ const allImageryLayers = Object.values(IMAGERY).flatMap(s => [s.base, s.full, ..
 
 // Рельеф: обычный (Globus) или подробный Mapterhorn — красивее в горах, но тяжелее
 const TERRAINS = { globus: new GlobusRgbTerrain(), mapterhorn: new MapterhornTerrain() };
+// «Extent» для рельефа — как у снимков: подробный рельеф (зум выше BG_TERRAIN_ZOOM) грузим только в рамке
+// выбранной горы, а всё вокруг — с грубых плиток. Движок спрашивает рельеф каждого участка через isReadyToLoad;
+// если ответ «нет», участок остаётся с рельефом от более крупной плитки — фоновые горы видны, но не детализируются
+// и не отнимают сеть у выбранной горы.
+const BG_TERRAIN_ZOOM = 10;
+let detailBox = null;   // [запад, юг, восток, север] выбранной горы
+Object.values(TERRAINS).forEach(t => {
+  const orig = t.isReadyToLoad.bind(t);
+  t.isReadyToLoad = function (seg) {
+    if (seg.tileZoom > BG_TERRAIN_ZOOM && detailBox) {
+      const ex = seg.getExtentLonLat(), sw = ex.southWest, ne = ex.northEast;
+      if (ne.lon < detailBox[0] || sw.lon > detailBox[2] || ne.lat < detailBox[1] || sw.lat > detailBox[3]) return false;
+    }
+    return orig(seg);
+  };
+});
+function setDetailBox(m) {
+  const r = m.r * 1.3;   // чуть шире рамки снимков, чтобы склоны у края не обрывались
+  const first = !detailBox;
+  detailBox = [m.lon - r, m.lat - r, m.lon + r, m.lat + r];
+  // участки, которым раньше отказали в подробном рельефе, должны перезапроситься — перестраиваем дерево.
+  // Только при смене горы и вне кадра отрисовки (во время первой инициализации движка это ломает отрисовку).
+  if (!first) requestAnimationFrame(() => planet.quadTreeStrategy.destroyBranches());
+}
+
 // После переключения рельефа движок дозапрашивает плитки у старого объекта, а тот уже отвязан от планеты
 // и падает с ошибкой. Защищаем: отвязанный рельеф сразу отвечает «нет данных».
 Object.values(TERRAINS).forEach(t => {
@@ -396,6 +421,11 @@ const routeLayer = new Vector("Маршруты", {
   pickingEnabled: false, hideInLayerSwitcher: true, polygonOffsetUnits: -4, depthOffset: -20
 });
 planet.addLayer(routeLayer);
+// Подписи — в отдельном слое с более сильным сдвигом к камере: тонкий гребень перед подписью её не перережет
+const labelLayer = new Vector("Подписи", {
+  pickingEnabled: false, hideInLayerSwitcher: true, depthOffset: -250
+});
+planet.addLayer(labelLayer);
 
 // Точки, общие для нескольких маршрутов (вершина, седловина, слияние троп), подписываем один раз
 function nearLabeled(labeled, p) {
@@ -433,7 +463,7 @@ MOUNTAINS.forEach(m => {
       e.labelInfo = { len: (p[3] + ", " + p[2] + " м").length, size: top ? 15 : 13, prio: (top ? 100000 : 0) + p[2], rt };
       e.labelShown = true;
       routeLayer.add(e);
-      routeLayer.add(e.textEntity);
+      labelLayer.add(e.textEntity);
       return e;
     });
   });
@@ -750,10 +780,11 @@ async function placeLabels(rt) {
   await Promise.all(rt.points.map(async e => {
     if (!e || !e.labelPos) return;
     const [lon, lat, h] = e.labelPos, ring = [];
-    for (const r of [150, 300]) for (let a = 0; a < 360; a += 45) {
+    for (const r of [100, 250, 400]) for (let a = 0; a < 360; a += 30) {
       ring.push([lon + r * Math.cos(a * Math.PI / 180) / kx, lat + r * Math.sin(a * Math.PI / 180) / ky]);
     }
-    const hh = (await heightsAt(ring, SEARCH_ZOOM)).filter(isFinite);
+    // зум как у линии: на грубых плитках острые гребни сглажены, и подпись оказывалась ниже настоящего склона
+    const hh = (await heightsAt(ring, DRAPE_ZOOM)).filter(isFinite);
     e.labelBase = Math.max(h, ...hh) + TEXT_LIFT;
     e.labelLift = 0;
     e.textEntity.setLonLat(new LonLat(lon, lat, e.labelBase));
@@ -781,8 +812,8 @@ async function updateLabelsLOS() {
             const f = k / n; if ((1 - f) * dist < 150) continue;
             samples.push([cam.lon + (lon - cam.lon) * f, cam.lat + (lat - cam.lat) * f, cam.height + (h - cam.height) * f]);
           }
-          const hh = await heightsAt(samples, SEARCH_ZOOM);
-          if (!samples.some((sp, k) => isFinite(hh[k]) && hh[k] > sp[2] - 10)) break;   // ничего не мешает
+          const hh = await heightsAt(samples, DRAPE_ZOOM);
+          if (!samples.some((sp, k) => isFinite(hh[k]) && hh[k] > sp[2] - 30)) break;   // ничего не мешает (с запасом 30 м)
         }
         lift = Math.min(lift, 600);
         if (lift !== e.labelLift) { e.labelLift = lift; e.textEntity.setLonLat(new LonLat(lon, lat, e.labelBase + lift)); }
@@ -790,22 +821,32 @@ async function updateLabelsLOS() {
     }
   } finally { losBusy = false; }
 }
-planet.camera.events.on("moveend", () => updateLabelsLOS());
-planet.camera.events.on("viewchange", () => { if (performance.now() - losLast > 1000) updateLabelsLOS(); });
+// Проверяем видимость подписей не по событиям камеры (в rc30 они приходят не при любом движении),
+// а сами: раз в 0,8 с, если камера сдвинулась
+let losEye = null;
+planet.renderer.events.on("postdraw", () => {
+  if (performance.now() - losLast < 800) return;
+  const eye = planet.camera.eye;
+  if (losEye && eye.sub(losEye).length() < 5) return;
+  losEye = eye.clone();
+  updateLabelsLOS();
+});
 
 // Фоновая укладка: когда выбранная гора готова, по одной укладываем остальные горы,
 // чтобы при переключении маршруты сразу лежали на рельефе.
 let bgRunning = false;
 function scheduleBackgroundDrape() {
-  if (bgRunning) return;
+  // Не мешаем загрузке выбранной горы: стартуем через 10 с, по одной горе раз в 4 с,
+  // и только с обычным рельефом (подробный Mapterhorn слишком тяжёлый для фоновой докачки).
+  if (bgRunning || mapSettings.terrain !== "globus") return;
   bgRunning = true;
   const next = async () => {
-    const m = MOUNTAINS.find(x => x.routes.some(rt => !rt.draped && !rt.draping));
+    const m = mapSettings.terrain === "globus" && MOUNTAINS.find(x => x !== current && x.routes.some(rt => !rt.draped && !rt.draping));
     if (!m) { bgRunning = false; return; }
     await Promise.all(m.routes.map(rt => drapeRoute(rt, m.name)));
-    (window.requestIdleCallback || (f => setTimeout(f, 300)))(next);
+    setTimeout(() => (window.requestIdleCallback || (f => f()))(next), 4000);
   };
-  setTimeout(next, 1500);
+  setTimeout(next, 10000);
 }
 
 // ---- Кластеризация подписей ----
@@ -942,6 +983,7 @@ function goTo(i) {
   current = m;
   const keepOrbit = orbiting;                      // если облёт шёл — продолжим его на новой горе
   orbiting = false;
+  setDetailBox(m);
   // облёт, наклон и расстояние — относительно конечной точки подъёма (вершины маршрута)
   const top = m.route[m.route.length - 1];
   setSummit(top);
