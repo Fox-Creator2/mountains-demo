@@ -67,6 +67,7 @@
   #cam .row b { color: var(--fg); font-variant-numeric: tabular-nums; }
   #tilt, #zoom, #speed { width: 100%; accent-color: var(--chip-on); height: 26px; margin: 0 0 4px; }
   #diag .seg { display: flex; align-items: center; gap: 4px; }
+  #diag .seg[hidden] { display: none; }
   #diag .seg span { flex: 1; }
   #diag .seg button { border: 0; border-radius: 8px; padding: 6px 10px; background: var(--chip); color: var(--fg); font-size: 12px; cursor: pointer; }
   #diag .seg button.on { background: var(--chip-on); color: #1a1407; font-weight: 600; }
@@ -86,13 +87,15 @@
 <div id="diag" hidden>
   <b>Настройки карты</b>
   <div class="seg" id="segImg"><span>Снимки</span><button data-v="bing">Bing</button><button data-v="esri">Esri</button></div>
-  <a href="rc30/" style="color:var(--chip-on);font-size:12px">Версия на движке 1.0.0-rc30 — для сравнения</a>
+  <div class="seg v1only" id="segDpi" hidden><span>Чёткость</span><button data-v="on">Как в 0.28.7</button><button data-v="off">По умолч. 1.0</button></div>
+  <div class="seg v1only" id="segDef" hidden><span>Отложенный рендеринг</span><button data-v="on">Вкл</button><button data-v="off">Выкл</button></div>
+  <a id="otherEngine" href="rc30/" style="color:var(--chip-on);font-size:12px">Та же страница на движке 1.0.0-rc30</a>
   <b style="margin-top:6px">Диагностика</b>
   <label><input type="checkbox" id="dFrames" checked> Грубая подложка + рамки гор</label>
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps">Версия: 11.10, 15:30 · движок 0.28.7</span>
+  <span class="fps" id="ver">Версия: 11.10, 16:00</span>
   <span class="fps" id="nodes">Узлов: —</span>
   <div class="fps" id="routeDbg" style="max-width:300px;white-space:pre-wrap;font-size:11px"></div>
 </div>
@@ -142,6 +145,9 @@ import { Globe, XYZ, Bing, Vector, Entity, GlobusRgbTerrain, EmptyTerrain, LonLa
   "https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/og.es.js";
 
 const OG_RES = "https://cdn.jsdelivr.net/npm/@openglobus/og@0.28.7/lib/res";
+// Одна и та же страница работает на обоих движках: копия в rc30/ отличается только версией в адресах выше.
+const ENGINE = OG_RES.match(/og@([^/]+)/)[1];
+const ENGINE_V1 = ENGINE.startsWith("1.");
 const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 
 // Вершины: долгота, широта, высота (м). r — полуразмер рамки в градусах.
@@ -303,7 +309,7 @@ MOUNTAINS.forEach(m => { m.route = m.routes[0].pts; });
 
 // ---- Настройки карты (снимки и рельеф) — запоминаются в браузере ----
 const MAP_KEY = "mountains-demo-map-v2";
-const mapSettings = { imagery: "esri", terrain: "globus" };
+const mapSettings = { imagery: "esri", terrain: "globus", hiDpi: true, deferred: false };
 try { Object.assign(mapSettings, JSON.parse(localStorage.getItem(MAP_KEY) || "{}")); } catch (e) {}
 const saveMap = () => { try { localStorage.setItem(MAP_KEY, JSON.stringify(mapSettings)); } catch (e) {} };
 
@@ -350,7 +356,14 @@ const globus = new Globe({
   resourcesSrc: OG_RES,
   fontsSrc: OG_RES + "/fonts",
   atmosphereEnabled: false,          // атмосфера давала мерцание при облёте на телефоне
-  transitionOpacityEnabled: false    // без плавной подмены тайлов — она даёт мигание при движении камеры
+  transitionOpacityEnabled: false,   // без плавной подмены тайлов — она даёт мигание при движении камеры
+  // Для движка 1.0 (в 0.28.7 эти параметры не используются):
+  //  • pixelRatio — плотность пикселей кадра. 0.28.7 рисует с devicePixelRatio + 0.15 (полное разрешение экрана),
+  //    а 1.0 по умолчанию не больше 1.25 — на телефоне картинка в ~2,4 раза грубее, и детализацию плиток движок
+  //    тоже выбирает грубее (она считается по пикселям кадра). Ставим как в 0.28.7, переключатель в ⚙.
+  //  • deferredDisabled — отложенный рендеринг 1.0 тяжелее для видеокарты телефона; по умолчанию выключен.
+  pixelRatio: mapSettings.hiDpi ? window.devicePixelRatio + 0.15 : undefined,
+  deferredDisabled: !mapSettings.deferred
   // стартовый viewExtent не задаём: камеру ставим сами (иначе он может перебить её позже)
 });
 const planet = globus.planet;
@@ -432,7 +445,7 @@ MOUNTAINS.forEach(m => {
         lonlat: [p[0], p[1], p[2] + TEXT_LIFT],
         label: {
           text: p[3] + ", " + p[2] + " м",
-          size: top ? 15 : 13, color: "#ffffff", outline: 0.28, outlineColor: "rgba(0,0,0,0.85)",
+          size: top ? 15 : 13, color: "#ffffff", outline: ENGINE_V1 ? 3 : 0.28, outlineColor: "rgba(0,0,0,0.85)",   // в 1.0 обводка в пикселях
           offset: [8, 0]
         }
       });
@@ -1184,6 +1197,15 @@ document.querySelectorAll("#segTer button").forEach(b => b.onclick = () => {
 document.querySelectorAll("#segImg button").forEach(b => b.classList.toggle("on", b.dataset.v === mapSettings.imagery));
 document.querySelectorAll("#segTer button").forEach(b => b.classList.toggle("on", b.dataset.v === mapSettings.terrain));
 document.getElementById("dFrames").onchange = () => applyImagery();
+// Переключатели движка 1.0 — задаются при создании движка, поэтому перезагружают страницу
+if (ENGINE_V1) {
+  document.querySelectorAll(".v1only").forEach(el => el.hidden = false);
+  const other = document.getElementById("otherEngine"); other.href = "../"; other.textContent = "Та же страница на движке 0.28.7 (основная)";
+  [["segDpi", "hiDpi"], ["segDef", "deferred"]].forEach(([id, key]) => document.querySelectorAll("#" + id + " button").forEach(b => {
+    b.classList.toggle("on", (b.dataset.v === "on") === mapSettings[key]);
+    b.onclick = () => { const v = b.dataset.v === "on"; if (v === mapSettings[key]) return; mapSettings[key] = v; saveMap(); location.reload(); };
+  }));
+}
 document.getElementById("dTerrain").onchange = (e) => { terrainOff = !e.target.checked; applyTerrain(); };
 document.getElementById("dAtmos").onchange = (e) => {
   planet.atmosphereEnabled = e.target.checked;
@@ -1195,6 +1217,8 @@ planet.renderer.events.on("postdraw", () => {
   const now = performance.now();
   if (now - fpsT > 1000) {
     document.getElementById("fps").textContent = "FPS: " + Math.round(frames * 1000 / (now - fpsT));
+    document.getElementById("ver").textContent = "Версия: 11.10, 16:00 · движок " + ENGINE +
+      " · кадр " + planet.renderer.handler.canvas.width + "×" + planet.renderer.handler.canvas.height + " пикс.";
     document.getElementById("nodes").textContent = "Узлов: " + planet._createdNodesCount + " (очистка после " + planet._maxNodes + ")";
     frames = 0; fpsT = now;
   }

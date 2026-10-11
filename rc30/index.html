@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Горы мира — rc30</title>
+<title>Горы мира — 1.0.0-rc30</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@openglobus/og@1.0.0-rc30/lib/og.css">
 <style>
   /* Полноэкранный глобус, снизу панель с горами */
@@ -67,6 +67,7 @@
   #cam .row b { color: var(--fg); font-variant-numeric: tabular-nums; }
   #tilt, #zoom, #speed { width: 100%; accent-color: var(--chip-on); height: 26px; margin: 0 0 4px; }
   #diag .seg { display: flex; align-items: center; gap: 4px; }
+  #diag .seg[hidden] { display: none; }
   #diag .seg span { flex: 1; }
   #diag .seg button { border: 0; border-radius: 8px; padding: 6px 10px; background: var(--chip); color: var(--fg); font-size: 12px; cursor: pointer; }
   #diag .seg button.on { background: var(--chip-on); color: #1a1407; font-weight: 600; }
@@ -86,15 +87,15 @@
 <div id="diag" hidden>
   <b>Настройки карты</b>
   <div class="seg" id="segImg"><span>Снимки</span><button data-v="bing">Bing</button><button data-v="esri">Esri</button></div>
-  <div class="seg" id="segTer"><span>Рельеф</span><button data-v="globus">Обычный</button><button data-v="mapterhorn">Подробный</button></div>
-  <div class="seg" id="segDef"><span>Отложенный рендеринг</span><button data-v="on">Вкл</button><button data-v="off">Выкл</button></div>
-  <a href="../" style="color:var(--chip-on);font-size:12px">Основная версия (движок 0.28.7)</a>
+  <div class="seg v1only" id="segDpi" hidden><span>Чёткость</span><button data-v="on">Как в 0.28.7</button><button data-v="off">По умолч. 1.0</button></div>
+  <div class="seg v1only" id="segDef" hidden><span>Отложенный рендеринг</span><button data-v="on">Вкл</button><button data-v="off">Выкл</button></div>
+  <a id="otherEngine" href="rc30/" style="color:var(--chip-on);font-size:12px">Та же страница на движке 1.0.0-rc30</a>
   <b style="margin-top:6px">Диагностика</b>
   <label><input type="checkbox" id="dFrames" checked> Грубая подложка + рамки гор</label>
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps">Версия: 11.10, 15:00 · движок 1.0.0-rc30</span>
+  <span class="fps" id="ver">Версия: 11.10, 16:00</span>
   <span class="fps" id="nodes">Узлов: —</span>
   <div class="fps" id="routeDbg" style="max-width:300px;white-space:pre-wrap;font-size:11px"></div>
 </div>
@@ -140,10 +141,13 @@
 </script>
 
 <script type="module">
-import { Globe, XYZ, Bing, Vector, Entity, GlobusRgbTerrain, MapterhornTerrain, EmptyTerrain, LonLat } from
+import { Globe, XYZ, Bing, Vector, Entity, GlobusRgbTerrain, EmptyTerrain, LonLat } from
   "https://cdn.jsdelivr.net/npm/@openglobus/og@1.0.0-rc30/lib/og.es.js";
 
 const OG_RES = "https://cdn.jsdelivr.net/npm/@openglobus/og@1.0.0-rc30/lib/res";
+// Одна и та же страница работает на обоих движках: копия в rc30/ отличается только версией в адресах выше.
+const ENGINE = OG_RES.match(/og@([^/]+)/)[1];
+const ENGINE_V1 = ENGINE.startsWith("1.");
 const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 
 // Вершины: долгота, широта, высота (м). r — полуразмер рамки в градусах.
@@ -304,8 +308,8 @@ const MOUNTAINS = [
 MOUNTAINS.forEach(m => { m.route = m.routes[0].pts; });
 
 // ---- Настройки карты (снимки и рельеф) — запоминаются в браузере ----
-const MAP_KEY = "mountains-demo-map-v1";
-const mapSettings = { imagery: "bing", terrain: "globus", deferred: true };
+const MAP_KEY = "mountains-demo-map-v2";
+const mapSettings = { imagery: "esri", terrain: "globus", hiDpi: true, deferred: false };
 try { Object.assign(mapSettings, JSON.parse(localStorage.getItem(MAP_KEY) || "{}")); } catch (e) {}
 const saveMap = () => { try { localStorage.setItem(MAP_KEY, JSON.stringify(mapSettings)); } catch (e) {} };
 
@@ -330,38 +334,8 @@ function makeImagery(kind) {
 const IMAGERY = { bing: makeImagery("bing"), esri: makeImagery("esri") };
 const allImageryLayers = Object.values(IMAGERY).flatMap(s => [s.base, s.full, ...s.mountains]);
 
-// Рельеф: обычный (Globus) или подробный Mapterhorn — красивее в горах, но тяжелее
-const TERRAINS = { globus: new GlobusRgbTerrain(), mapterhorn: new MapterhornTerrain() };
-// «Extent» для рельефа — как у снимков: подробный рельеф (зум выше BG_TERRAIN_ZOOM) грузим только в рамке
-// выбранной горы, а всё вокруг — с грубых плиток. Движок спрашивает рельеф каждого участка через isReadyToLoad;
-// если ответ «нет», участок остаётся с рельефом от более крупной плитки — фоновые горы видны, но не детализируются
-// и не отнимают сеть у выбранной горы.
-const BG_TERRAIN_ZOOM = 8;   // вокруг выбранной горы рельеф не подробнее 8-го зума — фоновые горы грубыми силуэтами
-let detailBox = null;   // [запад, юг, восток, север] выбранной горы
-Object.values(TERRAINS).forEach(t => {
-  const orig = t.isReadyToLoad.bind(t);
-  t.isReadyToLoad = function (seg) {
-    if (seg.tileZoom > BG_TERRAIN_ZOOM && detailBox) {
-      const ex = seg.getExtentLonLat(), sw = ex.southWest, ne = ex.northEast;
-      if (ne.lon < detailBox[0] || sw.lon > detailBox[2] || ne.lat < detailBox[1] || sw.lat > detailBox[3]) return false;
-    }
-    return orig(seg);
-  };
-});
-function setDetailBox(m) {
-  const r = m.r * 1.3;   // чуть шире рамки снимков, чтобы склоны у края не обрывались
-  const prev = detailBox;
-  detailBox = [m.lon - r, m.lat - r, m.lon + r, m.lat + r];
-  // Участки рядом с новой горой, которым раньше отказали в подробном рельефе, должны перезапроситься.
-  // Это нужно, только если новая гора близко к прежней (например, в Крыму) — иначе там и так всё новое.
-  // Перестраиваем дерево вне кадра отрисовки (во время первой инициализации движка это ломает отрисовку).
-  if (prev) {
-    const near = Math.abs((prev[0] + prev[2]) / 2 - m.lon) < 1.5 && Math.abs((prev[1] + prev[3]) / 2 - m.lat) < 1.5;
-    if (near) requestAnimationFrame(() => planet.quadTreeStrategy.destroyBranches());
-    else requestAnimationFrame(() => planet.memClear(true));   // далёкая гора: освобождаем память от прежней
-  }
-}
-
+// Рельеф Globus (подробный Mapterhorn есть только в движке 1.0)
+const TERRAINS = { globus: new GlobusRgbTerrain() };
 // После переключения рельефа движок дозапрашивает плитки у старого объекта, а тот уже отвязан от планеты
 // и падает с ошибкой. Защищаем: отвязанный рельеф сразу отвечает «нет данных».
 Object.values(TERRAINS).forEach(t => {
@@ -383,22 +357,22 @@ const globus = new Globe({
   fontsSrc: OG_RES + "/fonts",
   atmosphereEnabled: false,          // атмосфера давала мерцание при облёте на телефоне
   transitionOpacityEnabled: false,   // без плавной подмены тайлов — она даёт мигание при движении камеры
-  // отложенный (deferred) рендеринг rc30 — красивее, но тяжелее для видеокарты телефона; переключатель в ⚙
+  // Для движка 1.0 (в 0.28.7 эти параметры не используются):
+  //  • pixelRatio — плотность пикселей кадра. 0.28.7 рисует с devicePixelRatio + 0.15 (полное разрешение экрана),
+  //    а 1.0 по умолчанию не больше 1.25 — на телефоне картинка в ~2,4 раза грубее, и детализацию плиток движок
+  //    тоже выбирает грубее (она считается по пикселям кадра). Ставим как в 0.28.7, переключатель в ⚙.
+  //  • deferredDisabled — отложенный рендеринг 1.0 тяжелее для видеокарты телефона; по умолчанию выключен.
+  pixelRatio: mapSettings.hiDpi ? window.devicePixelRatio + 0.15 : undefined,
   deferredDisabled: !mapSettings.deferred
-  // стартовый viewExtent не задаём: в rc30 он применяется позже и перебивал нашу камеру (вид строго сверху)
+  // стартовый viewExtent не задаём: камеру ставим сами (иначе он может перебить её позже)
 });
 const planet = globus.planet;
 window.planet = planet;   // для отладки из консоли браузера
-// Очистка памяти плиток. Движок, когда число созданных узлов больше maxNodesCount, при любом движении камеры
-// выбрасывает ВСЕ загруженные плитки и грузит их заново. Счётчик узлов при этом только растёт, поэтому при облёте
-// очистка рано или поздно срабатывает — это и была «перестройка текстур». Автоочистку выключаем (disableMemClear),
-// а память освобождаем сами при переходе к далёкой горе — см. setDetailBox.
-planet.disableMemClear = true;
-planet._maxNodes = 2500;   // только для счётчика в ⚙
+// Загрузку и очистку плиток оставляем такими, как у движка по умолчанию — как в исходной версии на 0.28.7.
 
 // ---------------- Маршруты восхождения ----------------
-const ROUTE_LIFT = 3;      // небольшой подъём линии над рельефом; от провалов под склон защищает depthOffset слоя
-const LABEL_LIFT = 8;      // кружки точек — чуть над поверхностью
+const ROUTE_LIFT = 12;     // подъём линии над рельефом, чтобы не тонула в склоне (depthOffset в 0.28.7 нет)
+const LABEL_LIFT = 20;     // кружки точек — чуть над поверхностью
 const TEXT_LIFT = 250;     // подписи — на «флагштоке» на 250 м выше самого высокого места в радиусе 400 м
 
 // Сгущаем маршрут: точка каждые ~50 м, высота сначала линейная между ключевыми точками
@@ -471,7 +445,7 @@ MOUNTAINS.forEach(m => {
         lonlat: [p[0], p[1], p[2] + TEXT_LIFT],
         label: {
           text: p[3] + ", " + p[2] + " м",
-          size: top ? 15 : 13, color: "#ffffff", outline: 3, outlineColor: "rgba(0,0,0,0.85)",
+          size: top ? 15 : 13, color: "#ffffff", outline: ENGINE_V1 ? 3 : 0.28, outlineColor: "rgba(0,0,0,0.85)",   // в 1.0 обводка в пикселях
           offset: [8, 0]
         }
       });
@@ -955,7 +929,6 @@ function goTo(i) {
   current = m;
   const keepOrbit = orbiting;                      // если облёт шёл — продолжим его на новой горе
   orbiting = false;
-  setDetailBox(m);
   // облёт, наклон и расстояние — относительно конечной точки подъёма (вершины маршрута)
   const top = m.route[m.route.length - 1];
   setSummit(top);
@@ -1151,8 +1124,10 @@ function applySun() {
   sunEl.on.checked = sunState.on; sunEl.time.value = sunState.minutes; sunEl.date.value = sunState.doy;
   document.getElementById("bSun").classList.toggle("on", sunState.on || !document.getElementById("sun").hidden);
   if (!sun) return;
-  sun.setDateTime(sunState.on ? sunDateUTC() : null);
-  planet.renderer.requestRedraw && planet.renderer.requestRedraw();
+  // в 0.28.7: остановленный контрол Sun ставит солнце по дате часов движка; запущенный — светит «от камеры»
+  const clock = planet.renderer.handler.defaultClock;
+  if (sunState.on) { sun.stop(); clock.multiplier = 0; clock.setDate(sunDateUTC()); }
+  else { sun.start(); clock.multiplier = 1; clock.setDate(new Date()); }
 }
 sunEl.on.onchange = () => { sunState.on = sunEl.on.checked; saveSun(); applySun(); };
 sunEl.time.oninput = () => { sunState.minutes = +sunEl.time.value; sunState.on = true; saveSun(); applySun(); };
@@ -1222,15 +1197,15 @@ document.querySelectorAll("#segTer button").forEach(b => b.onclick = () => {
 document.querySelectorAll("#segImg button").forEach(b => b.classList.toggle("on", b.dataset.v === mapSettings.imagery));
 document.querySelectorAll("#segTer button").forEach(b => b.classList.toggle("on", b.dataset.v === mapSettings.terrain));
 document.getElementById("dFrames").onchange = () => applyImagery();
-// Отложенный рендеринг задаётся при создании движка — переключение перезагружает страницу
-document.querySelectorAll("#segDef button").forEach(b => {
-  b.classList.toggle("on", (b.dataset.v === "on") === mapSettings.deferred);
-  b.onclick = () => {
-    const v = b.dataset.v === "on";
-    if (v === mapSettings.deferred) return;
-    mapSettings.deferred = v; saveMap(); location.reload();
-  };
-});
+// Переключатели движка 1.0 — задаются при создании движка, поэтому перезагружают страницу
+if (ENGINE_V1) {
+  document.querySelectorAll(".v1only").forEach(el => el.hidden = false);
+  const other = document.getElementById("otherEngine"); other.href = "../"; other.textContent = "Та же страница на движке 0.28.7 (основная)";
+  [["segDpi", "hiDpi"], ["segDef", "deferred"]].forEach(([id, key]) => document.querySelectorAll("#" + id + " button").forEach(b => {
+    b.classList.toggle("on", (b.dataset.v === "on") === mapSettings[key]);
+    b.onclick = () => { const v = b.dataset.v === "on"; if (v === mapSettings[key]) return; mapSettings[key] = v; saveMap(); location.reload(); };
+  }));
+}
 document.getElementById("dTerrain").onchange = (e) => { terrainOff = !e.target.checked; applyTerrain(); };
 document.getElementById("dAtmos").onchange = (e) => {
   planet.atmosphereEnabled = e.target.checked;
@@ -1242,7 +1217,9 @@ planet.renderer.events.on("postdraw", () => {
   const now = performance.now();
   if (now - fpsT > 1000) {
     document.getElementById("fps").textContent = "FPS: " + Math.round(frames * 1000 / (now - fpsT));
-    document.getElementById("nodes").textContent = "Узлов загружено: " + planet._createdNodesCount;
+    document.getElementById("ver").textContent = "Версия: 11.10, 16:00 · движок " + ENGINE +
+      " · кадр " + planet.renderer.handler.canvas.width + "×" + planet.renderer.handler.canvas.height + " пикс.";
+    document.getElementById("nodes").textContent = "Узлов: " + planet._createdNodesCount + " (очистка после " + planet._maxNodes + ")";
     frames = 0; fpsT = now;
   }
 });
