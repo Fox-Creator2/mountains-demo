@@ -39,7 +39,9 @@
   #stick i { position:absolute; left:50%; top:50%; width:46px; height:46px; margin:-23px 0 0 -23px; border-radius:50%; background:#ffffffaa; }
   #hint { position:fixed; right:10px; bottom:calc(env(safe-area-inset-bottom) + 18px); font-size:12px; opacity:.7; text-align:right; pointer-events:none; text-shadow:0 1px 3px #000; max-width:60%; }
   #panel { position:fixed; inset:0; background:#0a1220; display:none; overflow:auto; padding:calc(env(safe-area-inset-top) + 12px) 14px 30px; touch-action:pan-y; z-index:10; }
-  #panel h2 { margin:0 0 10px; font-size:18px; }
+  #panel h2 { margin:0; font-size:18px; }
+  #phead { position:sticky; top:calc(-1 * env(safe-area-inset-top) - 12px); margin:calc(-1 * env(safe-area-inset-top) - 12px) -14px 10px; padding:calc(env(safe-area-inset-top) + 12px) 14px 10px; display:flex; justify-content:space-between; align-items:center; background:#0a1220; z-index:2; border-bottom:1px solid #ffffff22; }
+  #phead button { font-size:20px; padding:6px 16px; }
   #panel label { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid #ffffff18; }
   #panel select, #panel input[type=range] { max-width:58%; font:inherit; background:#16233a; color:#fff; border:1px solid #ffffff30; border-radius:8px; padding:5px; }
   #panel .row { display:flex; gap:8px; margin:12px 0; flex-wrap:wrap; }
@@ -67,7 +69,9 @@
 <div id="hint"></div>
 
 <div id="panel">
-  <h2>Гоночная трасса</h2>
+  <div id="phead"><h2>Настройки</h2><button id="bX">✕ Закрыть</button></div>
+  <label>Режим <select id="sMode"><option value="canyon">Каньон: лавировать среди скал и арок</option><option value="race">Гонка по воротам</option></select></label>
+  <label>Высота полёта <select id="sAlt"><option value="0">низко</option><option value="1">средне</option><option value="2">высоко</option><option value="3">над каньоном / очень высоко</option></select></label>
   <label>Трасса и скорость <select id="sPreset"></select></label>
   <div class="row"><button id="bNew">🎲 Новая трасса</button><button id="bRestart">⟲ Заново</button><button id="bClose">Закрыть</button></div>
   <label>Трасса <select id="sStyle"><option value="easy">простая, плавная</option><option value="wild">крутая, с шпильками</option></select></label>
@@ -79,7 +83,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 12.10, 00:13</small>
+  <small id="ver">версия 12.10, 00:30</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -96,7 +100,7 @@ const PRESETS = [
   { id:"hyper", name:"Гипер · 7200 км/ч",         vmax:2000 },
   { id:"orbit", name:"Над планетой · 24000 км/ч", vmax:6700 },
 ];
-const S = Object.assign({ style:"easy", preset:"fast", seed:7, skill:92, fx:1, cam:0, rival:true, resume:4, inv:false, assist:true, q:1.5 }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
+const S = Object.assign({ mode:"canyon", alt:1, style:"easy", preset:"fast", seed:7, skill:92, fx:1, cam:0, rival:true, resume:4, inv:false, assist:true, q:1.5 }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
 const saveS = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
 
 /* ================= рельеф: одна формула для JS и шейдера ================= */
@@ -124,6 +128,38 @@ float wetF(float x,float z,float sc){ x/=sc; z/=sc; return clamp(.5+.68*nz(x*3.7
 const jsSrc = H_SRC.replace(/float (\w+)(?=\s*[,)])/g, "$1").replace(/float\s+(\w+)\s*\(/g, "function $1(").replace(/float\s+(\w+)\s*=/g, "let $1 =");
 const hgtRaw = new Function("const abs=Math.abs,sin=Math.sin,smoothstep=(a,b,x)=>{const t=Math.min(1,Math.max(0,(x-a)/(b-a)));return t*t*(3-2*t)},mix=(a,b,t)=>a+(b-a)*t,clamp=(x,a,b)=>Math.min(b,Math.max(a,x));" + jsSrc + ";return hgt;")();
 const bioRaw = new Function("const abs=Math.abs,sin=Math.sin,smoothstep=(a,b,x)=>{const t=Math.min(1,Math.max(0,(x-a)/(b-a)));return t*t*(3-2*t)},mix=(a,b,t)=>a+(b-a)*t,clamp=(x,a,b)=>Math.min(b,Math.max(a,x));" + jsSrc + ";return [tmpF,wetF];")();
+
+const C_SRC = `
+float czc(float x){ return 1400.*sin(x*5.7e-4+.7)+520.*sin(x*1.337e-3+2.1)+120.*sin(x*2.0e-3+4.0); }
+float czd(float x){ return .798*cos(x*5.7e-4+.7)+.695*cos(x*1.337e-3+2.1)+.24*cos(x*2.0e-3+4.0); }
+float cw0(float x){ return 260.+90.*sin(x*3.1e-4+1.1)+50.*sin(x*7.3e-4+.5); }
+float cD(float x){ return 650.+220.*sin(x*2.3e-4+2.2)+90.*sin(x*5.1e-4+.3); }
+float chgt(float x,float z,float sc){
+  x/=sc; z/=sc;
+  float sl=czd(x); float isl=inversesqrt(1.+sl*sl);
+  float dz=z-czc(x); float d=abs(dz)*isl;
+  float w0=cw0(x); float D=cD(x); float u=d/w0;
+  float rd=abs(dz*isl-.25*w0*sin(x*5.3e-4+.9));
+  float fl=30.+20.*nz(x*1.7e-3,z*1.7e-3,.8,.6,2.7);
+  fl=mix(fl,-30.,1.-smoothstep(25.,70.,rd));
+  float fr=smoothstep(.32,1.08,u);
+  float st=fr*5.; float stp=(floor(st)+smoothstep(.55,.95,fract(st)))/5.;
+  float wt=mix(fr,stp,.8);
+  float h=fl+(D-fl)*wt;
+  float wallm=smoothstep(.25,.6,u)*(1.-smoothstep(1.05,1.3,u));
+  h+=wallm*(nz(x*2.3e-3,z*2.3e-3,.5,.86,1.1)*38.+nz(x*6.7e-3,z*6.7e-3,.9,.44,3.9)*14.);
+  float pu=smoothstep(.95,1.3,u);
+  float pl=nz(x*6.1e-4,z*6.1e-4,.7,-.7,.9)*110.+nz(x*1.7e-3,z*1.7e-3,.3,.95,2.2)*45.+nz(x*4.9e-3,z*4.9e-3,-.6,.8,4.4)*16.;
+  float ms=max(0.,nz(x*9e-4,z*9e-4,.9,.44,1.9)-.45)/.55; ms=ms*ms*320.;
+  h+=pu*(pl+ms);
+  float qa=nz(x*4.1e-3,z*4.1e-3,.5,.86,1.1); float qb=nz(x*2.9e-3,z*2.9e-3,.9,.44,3.7);
+  float sp=max(0.,qa*qb-.4)/.6;
+  h+=380.*sp*smoothstep(.05,.22,u)*(1.-smoothstep(.95,1.15,u));
+  return h*sc;
+}`;
+const WRAPJS = "const abs=Math.abs,sin=Math.sin,cos=Math.cos,floor=Math.floor,sign=Math.sign,pow=Math.pow,sqrt=Math.sqrt,max=Math.max,min=Math.min,fract=x=>x-Math.floor(x),inversesqrt=x=>1/Math.sqrt(x),smoothstep=(a,b,x)=>{const t=Math.min(1,Math.max(0,(x-a)/(b-a)));return t*t*(3-2*t)},mix=(a,b,t)=>a+(b-a)*t,clamp=(x,a,b)=>Math.min(b,Math.max(a,x));";
+const toJs = src => src.replace(/float (\w+)(?=\s*[,)])/g, "$1").replace(/float\s+(\w+)\s*\(/g, "function $1(").replace(/float\s+(\w+)\s*=/g, "let $1 =");
+const CW = new Function(WRAPJS + toJs(H_SRC) + toJs(C_SRC) + ";return {czc,czd,cw0,cD,chgt};")();
 const nzRaw = new Function("const abs=Math.abs,sin=Math.sin,smoothstep=(a,b,x)=>{const t=Math.min(1,Math.max(0,(x-a)/(b-a)));return t*t*(3-2*t)},mix=(a,b,t)=>a+(b-a)*t,clamp=(x,a,b)=>Math.min(b,Math.max(a,x));" + jsSrc + ";return nz;")();
 
 /* ================= трасса ================= */
@@ -162,7 +198,7 @@ function buildTrack(preset, seed, skill, style) {
   let best = null;
   for (let att = 0; att < 40; att++) {
     const rnd = rng(seed * 7919 + att * 104729 + 13), damp = easy ? 0.9 * Math.pow(0.93, att) : 0.9 + 0.05 * att;
-    const c0 = 60 + 0.6 * vmax;
+    const c0 = (60 + 0.6 * vmax) * [0.5, 1, 2.2, 5][Math.max(0, Math.min(3, S.alt | 0))];
     const M = 600, ph = Array.from({ length: 6 }, () => rnd() * 6.28);
     const fr = [2, 3, 4, 5, 7, 9], am = (easy ? [0.30, 0.20, 0.12, 0.07, 0, 0] : [0.40, 0.34, 0.28, 0.22, 0.16, 0.12]).map(a => a * damp * (0.5 + rnd()));
     const dips = Array.from({ length: easy ? 0 : 3 + Math.floor(rnd() * 3) }, () => ({ a: rnd() * 6.283, d: (0.30 + rnd() * 0.3) * Math.min(1, 0.6 + att * 0.1), w: 0.08 + rnd() * 0.08 }));
@@ -280,8 +316,93 @@ function aiControl(p, off, speedK, skill) {
   return [ar, au, vt];
 }
 
+
+/* ================= каньон: арки, планировщик автопилота ================= */
+let cyMode = false;
+const cy = { arches: new Map(), pool: [], plan: { Lc: 0, ac: .3, L0: 0, a0: .3, x0: 0, Lsx: 1000, vt: 100, t: -1e9 }, x0: 0, segX: 0, segT: 0, segManual: 0, passed: 0, nextK: 0, best: 0, crashes: 0, archMesh: null, rockMat: null };
+const gnd = (x, z) => cyMode ? Math.max(0, CW.chgt(x, z, T.SC)) : ground(x, z, T.SC);
+const cyZc = x => CW.czc(x / T.SC) * T.SC, cyW = x => CW.cw0(x / T.SC) * T.SC, cyD = x => CW.cD(x / T.SC) * T.SC, cyFl = () => 30 * T.SC;
+const archSP = () => 4300 * T.SC;
+function archParams(k) {
+  let a = cy.arches.get(k); if (a) return a;
+  const sc = T.SC, xk = archSP() * (k + .5 + .22 * Math.sin(k * 2.3 + .6)), w = cyW(xk), D = cyD(xk);
+  a = { k, x: xk, z: cyZc(xk), th: Math.atan(CW.czd(xk / sc)), Sa: 1.18 * w, yc: .64 * D, yl: -20 * sc, Th: .14 * D, Lt: Math.max(90 * sc, .32 * w), fl: cyFl(), w, D };
+  cy.arches.set(k, a); if (cy.arches.size > 80) cy.arches.delete(cy.arches.keys().next().value); return a;
+}
+function archHit(x, y, z, m) {
+  const SP = archSP(), k0 = Math.floor(x / SP);
+  for (let k = k0 - 1; k <= k0 + 1; k++) {
+    const a = archParams(k), dx = x - a.x, dz = z - a.z, c = Math.cos(a.th), sn = Math.sin(a.th), t = dx * c + dz * sn, n = -dx * sn + dz * c;
+    if (Math.abs(t) > a.Lt / 2 + m || Math.abs(n) > a.Sa) continue;
+    const r = Math.abs(n) / a.Sa, yb = a.fl + a.yc - (a.yc - a.yl) * Math.pow(r, 2.4), yt = yb + a.Th * (1 - .4 * r * r);
+    if (y > yb - m && y < yt + m) return true;
+  }
+  return false;
+}
+function nextArch(x) { const SP = archSP(); let k = Math.floor(x / SP) - 1; for (;; k++) { const a = archParams(k); if (a.x > x) return a; } }
+function buildArchGeo() {
+  const nI = 64, nJ = 5, pos = [], idx = [], nse = (n, t, q) => Math.sin(n * 9 + t * 4 + q * 3) * .5 + Math.sin(n * 23 - t * 7 + q) * .3 + Math.sin(n * 41 + t * 13 + 1 + q * 2) * .2, tau = .2;
+  const yb = n => 1 - Math.pow(Math.abs(n), 2.4), yt = n => yb(n) + tau * (1 - .4 * n * n);
+  const grid = (fy, q) => { const b = pos.length / 3; for (let j = 0; j <= nJ; j++) for (let i = 0; i <= nI; i++) { const n = -1 + 2 * i / nI, t = -1 + 2 * j / nJ; pos.push(n, fy(n) + nse(n, t, q) * .02, t * (1 + .1 * nse(n * 1.3, t, q + 3))); }
+    for (let j = 0; j < nJ; j++) for (let i = 0; i < nI; i++) { const a = b + j * (nI + 1) + i, c = a + nI + 1; idx.push(a, c, a + 1, a + 1, c, c + 1); } };
+  grid(yt, 1); grid(yb, 2);
+  for (const t of [-1, 1]) { const b = pos.length / 3; for (let i = 0; i <= nI; i++) { const n = -1 + 2 * i / nI; pos.push(n, yb(n) + nse(n, t, 2) * .02, t * (1 + .1 * nse(n * 1.3, t, 5)), n, yt(n) + nse(n, t, 1) * .02, t * (1 + .1 * nse(n * 1.3, t, 4))); }
+    for (let i = 0; i < nI; i++) { const a = b + 2 * i; idx.push(a, a + 1, a + 2, a + 2, a + 1, a + 3); } }
+  const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); return g;
+}
+function placeArch(mesh, a) {
+  const H = a.yc - a.yl; mesh.userData.k = a.k; mesh.position.set(a.x, a.fl + a.yl, a.z); mesh.scale.set(a.Sa, H, a.Lt / 2); mesh.rotation.set(0, -(Math.PI / 2 + a.th), 0); mesh.visible = true;
+}
+function updateArches() {
+  const SP = archSP(), kc = Math.floor(player.pos.x / SP), want = []; for (let k = kc - 2; k <= kc + 6; k++) want.push(k);
+  const have = new Set(cy.pool.filter(m => m.visible).map(m => m.userData.k));
+  for (const m of cy.pool) if (m.visible && (m.userData.k < kc - 2 || m.userData.k > kc + 6)) m.visible = false;
+  for (const k of want) if (!have.has(k)) { const m = cy.pool.find(q => !q.visible); if (m) placeArch(m, archParams(k)); }
+}
+
+/* планировщик: выбирает смещение и высоту относительно оси каньона на ближайшие ~3 с полёта */
+const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+function cyPlan(p) {
+  const sc = T.SC, cs = T.cs, v = Math.max(p.v, T.vmax * .2), Ls = v * 3.2, Lsx = Ls * .85, N = 14, x0 = p.pos.x, fl = cyFl(), pl = cy.plan;
+  const w0 = cyW(x0), D0 = cyD(x0), L0 = Math.max(-1.4, Math.min(1.4, (p.pos.z - cyZc(x0)) / w0)), a0 = (p.pos.y - fl) / D0, r = 80 * cs, m = 50 * cs;
+  const pref = [.16, .3, .5, 1.3][Math.max(0, Math.min(3, S.alt | 0))];
+  const Lcs = [-.6, -.35, -.15, 0, .15, .35, .6], acs = [...new Set([pref * .6, pref * .8, pref, pref * 1.25, pref * 1.6].map(a => Math.max(.1, Math.min(1.9, a))))];
+  let best = null;
+  for (const Lc of Lcs) for (const ac of acs) {
+    let cost = .35 * Lc * Lc * 3 + .6 * (ac - pref) * (ac - pref) * 4 + .5 * (Math.abs(Lc - pl.Lc) + 1.2 * Math.abs(ac - pl.ac)), Cmin = 1e9, wmin = 1e9, kmax = 0; const pts = [];
+    for (let i = 1; i <= N; i++) {
+      const s = i / N, bl = sstep(0, .65, s), xi = x0 + Lsx * s, Li = L0 + (Lc - L0) * bl, ai = a0 + (ac - a0) * bl, wi = cyW(xi), Di = cyD(xi), zi = cyZc(xi) + Li * wi, yi = fl + ai * Di;
+      const sl = CW.czd(xi / sc), il = 1 / Math.sqrt(1 + sl * sl), nx = -sl * il, nzz = il;
+      const g0 = gnd(xi, zi), gl = gnd(xi + nx * r, zi + nzz * r), gr = gnd(xi - nx * r, zi - nzz * r), C = Math.min(yi - g0, yi - gl, yi - gr);
+      Cmin = Math.min(Cmin, C); wmin = Math.min(wmin, wi);
+      if (C < m) cost += Math.pow((m - C) / m, 2) * 40 * (1.25 - s * .7);
+      if (archHit(xi, yi, zi, 35 * cs)) cost += 70;
+      const gl2 = gnd(xi + nx * r * 2.4, zi + nzz * r * 2.4), gr2 = gnd(xi - nx * r * 2.4, zi - nzz * r * 2.4); if (Math.max(gl2, gr2) > yi) cost += .5;
+      pts.push(xi, yi, zi);
+    }
+    for (let i = 4; i <= 11; i++) { const j = i * 3; const ax = pts[j - 3] - pts[j - 6], ay = pts[j - 2] - pts[j - 5], az = pts[j - 1] - pts[j - 4], bx = pts[j] - pts[j - 3], by = pts[j + 1] - pts[j - 2], bz = pts[j + 2] - pts[j - 1], la = Math.hypot(ax, ay, az), lb = Math.hypot(bx, by, bz), ang = Math.hypot(ax / la - bx / lb, ay / la - by / lb, az / la - bz / lb); kmax = Math.max(kmax, ang / ((la + lb) / 2)); }
+    if (!best || cost < best.cost) best = { cost, Lc, ac, Cmin, wmin, kmax };
+  }
+  pl.Lc = best.Lc; pl.ac = best.ac; pl.L0 = L0; pl.a0 = a0; pl.x0 = x0; pl.Lsx = Lsx; pl.t = tNow;
+  const sk = S.skill / 100, vcap = T.vmax * (.8 + .2 * sk);
+  let vt = vcap * Math.max(.55, Math.min(1, Math.sqrt(best.wmin / (200 * sc))));
+  if (best.kmax > 1e-9) vt = Math.min(vt, Math.sqrt(T.AMAX * .85 * sk / best.kmax));
+  vt *= Math.max(.55, Math.min(1, .55 + .45 * best.Cmin / (80 * cs)));
+  pl.vt = Math.max(vt, vcap * .38);
+}
+const _tp = new THREE.Vector3();
+function cyAI(p) {
+  const pl = cy.plan; if (tNow - pl.t > .05) cyPlan(p);
+  const sc = T.SC, cs = T.cs, v = Math.max(p.v, T.vmax * .2), Ld = Math.max(.8 * v, 80 * cs), xT = p.pos.x + Ld * .85;
+  const s = Math.max(0, (xT - pl.x0) / pl.Lsx), bl = sstep(0, .65, Math.min(1, s)), L = pl.L0 + (pl.Lc - pl.L0) * bl, a = pl.a0 + (pl.ac - pl.a0) * bl;
+  _tp.set(xT, cyFl() + a * cyD(xT), cyZc(xT) + L * cyW(xT));
+  _d.subVectors(_tp, p.pos); const dd = _d.dot(p.f); _d.addScaledVector(p.f, -dd);
+  const L2 = Math.max(Ld * Ld * .5, _tp.distanceToSquared(p.pos)), aw = _d.multiplyScalar(2 / L2 * v * v);
+  return [aw.dot(p.r0), aw.dot(p.u0), pl.vt];
+}
+
 /* ================= сцена ================= */
-let life, T, SCN, renderer, camera, player, rival, terrain, sky, gates, trail = {}, streaks, planeMesh = {}, nextGate = 0, lapStart = 0, lapCount = 0, lapManual = 0, tNow = 0, started = false, firstPass = false, bestLap = null, lastLap = null, misses = 0, gatesPassed = 0, crashes = 0;
+let terrMat, life, T, SCN, renderer, camera, player, rival, terrain, sky, gates, trail = {}, streaks, planeMesh = {}, nextGate = 0, lapStart = 0, lapCount = 0, lapManual = 0, tNow = 0, started = false, firstPass = false, bestLap = null, lastLap = null, misses = 0, gatesPassed = 0, crashes = 0;
 const ctl = { steerMan: false, spdMan: false, sx: 0, sy: 0, thr: 0.75, lastStick: -1e9, stickDown: false, keys: {} };
 const camState = { f: new THREE.Vector3(0, 0, -1), up: new THREE.Vector3(0, 1, 0), pos: new THREE.Vector3(), shake: 0 };
 const fogC = new THREE.Color(0.74, 0.82, 0.94);
@@ -346,6 +467,33 @@ void main(){ vec3 n=normalize(vN); float d=length(vW-uCam); float hs=vW.y/uSC; f
  col=mix(col,vec3(.3,.95,1.),line*.1);
  float f=1.-exp(-pow(d*uFD,2.)); col=mix(col,uFog,clamp(f,0.,1.)); gl_FragColor=vec4(col,1.); }` }));
   terrain.frustumCulled = false; SCN.add(terrain);
+
+  const STRATA = `vec3 strata(float hs, vec3 n){ float b=sin(hs*.052)*.5+.5; float b2=sin(hs*.19+1.3)*.5+.5; float b3=sin(hs*.011)*.5+.5;
+ vec3 col=mix(vec3(.62,.28,.15),vec3(.82,.5,.28),b); col=mix(col,vec3(.9,.78,.58),smoothstep(.55,.9,b2)*.55); col=mix(col,vec3(.45,.2,.12),b3*.35);
+ float flt=smoothstep(.55,.85,n.y); col=mix(col,vec3(.78,.62,.42),flt*.55); col=mix(col,vec3(.3,.42,.18),(1.-smoothstep(20.,70.,hs))*flt*.8); return col; }`;
+  const canyonMat = new THREE.ShaderMaterial({ uniforms: u, extensions: { derivatives: true },
+    vertexShader: `precision highp float; uniform vec2 uC; uniform float uSC,uR,uSnap; varying vec3 vW; varying vec3 vN; varying float vRaw;
+${H_SRC}
+${C_SRC}
+void main(){ vec2 g=position.xy; vec2 off=sign(g)*pow(abs(g),vec2(2.2))*uR; vec2 w=uC+off;
+ float d=length(off); float dc=uR*.0172*pow(max(d,1.)/uR,.5455); float q=exp2(ceil(log2(max(dc,uSC*5.)))); w=mix(w,floor(w/q+.5)*q,uSnap);
+ float h=chgt(w.x,w.y,uSC); float e=max(q,uSC*10.); float hx=chgt(w.x+e,w.y,uSC), hz=chgt(w.x,w.y+e,uSC);
+ vec3 n=normalize(vec3(h-hx,e,h-hz)); vRaw=h/uSC; if(h<0.){ h=0.; n=vec3(0.,1.,0.); }
+ vW=vec3(w.x,h,w.y); vN=n; gl_Position=projectionMatrix*viewMatrix*vec4(vW,1.); }`,
+    fragmentShader: `precision highp float; varying vec3 vW; varying vec3 vN; varying float vRaw; uniform vec3 uCam,uSun,uFog; uniform float uFD,uSC;
+${STRATA}
+void main(){ vec3 n=normalize(vN); float d=length(vW-uCam); float hs=vW.y/uSC; vec3 col;
+ if(vRaw<0.){ float dep=clamp(-vRaw/30.,0.,1.); col=mix(vec3(.12,.5,.5),vec3(.03,.2,.28),dep); vec3 V=normalize(uCam-vW); vec3 Rr=reflect(-uSun,vec3(0.,1.,0.)); col+=vec3(1.,.9,.7)*pow(max(dot(Rr,V),0.),60.)*.7; col=mix(col,vec3(.85,.95,.95),smoothstep(-2.5,0.,vRaw)*.5); }
+ else{ col=strata(hs,n); col*=.28+.95*max(dot(n,uSun),0.); }
+ float f=1.-exp(-pow(d*uFD,2.)); col=mix(col,uFog,clamp(f,0.,1.)); gl_FragColor=vec4(col,1.); }` });
+  const rockMat = new THREE.ShaderMaterial({ side: THREE.DoubleSide, uniforms: { uCam: u.uCam, uSun: u.uSun, uFog: u.uFog, uFD: u.uFD, uSC: u.uSC }, extensions: { derivatives: true },
+    vertexShader: `varying vec3 vW; void main(){ vec4 wp=modelMatrix*vec4(position,1.); vW=wp.xyz; gl_Position=projectionMatrix*viewMatrix*wp; }`,
+    fragmentShader: `precision highp float; varying vec3 vW; uniform vec3 uCam,uSun,uFog; uniform float uFD,uSC;
+${STRATA}
+void main(){ vec3 n=normalize(cross(dFdx(vW),dFdy(vW))); if(dot(n,uCam-vW)<0.) n=-n; vec3 col=strata(vW.y/uSC,vec3(n.x,min(n.y,.5),n.z)); col*=.3+.95*max(dot(n,uSun),0.);
+ float f=1.-exp(-pow(length(vW-uCam)*uFD,2.)); col=mix(col,uFog,clamp(f,0.,1.)); gl_FragColor=vec4(col,1.); }` });
+  cy.rockMat = rockMat; terrMat = { race: terrain.material, canyon: canyonMat };
+  const ag = buildArchGeo(); for (let i = 0; i < 9; i++) { const m = new THREE.Mesh(ag, rockMat); m.visible = false; m.frustumCulled = false; SCN.add(m); cy.pool.push(m); }
 
   /* жизнь на земле: лес и дома. GPU-инстансинг — одна геометрия, тысячи копий одним вызовом;
      положение каждой копии считается в шейдере из координат ячейки (без затрат процессора и памяти) */
@@ -465,7 +613,31 @@ function updateStreaks(dt) {
 }
 
 /* ================= игра ================= */
+
+function startCanyon() {
+  const preset = PRESETS.find(p => p.id === S.preset) || PRESETS[1];
+  cyMode = true; T = Object.assign(paramsFor(preset.vmax), { preset, canyon: true });
+  terrain.material = terrMat.canyon; terrain.material.uniforms.uSC.value = T.SC; terrain.material.uniforms.uR.value = T.R;
+  const fd = 2.2 / (T.R * 0.9); terrain.material.uniforms.uFD.value = fd; SCN.fog.density = fd;
+  camera.near = 2 * T.cs; camera.far = T.R * 1.7; camera.updateProjectionMatrix(); sky.scale.setScalar(T.R * 1.5);
+  planeMesh.p.scale.setScalar(T.cs); planeMesh.r.visible = false; life.A.visible = life.B.visible = life.C.visible = false;
+  if (gates) gates.visible = false;
+  cy.arches.clear(); for (const m of cy.pool) m.visible = false;
+  player = new Plane(T); rival = player;
+  const x0 = 0, D = cyD(x0), a = [.16, .3, .5, 1.3][Math.max(0, Math.min(3, S.alt | 0))], z0 = cyZc(x0), y0 = cyFl() + a * D;
+  player.pos.set(x0, y0, z0); player.prev.copy(player.pos); player.f.set(1, 0, CW.czd(x0 / T.SC)).normalize(); player.v = T.vmax * .55; player.roll = 0; player.rollV = 0; player.basis();
+  Object.assign(cy, { x0, segX: x0, segT: 0, segManual: 0, passed: 0, crashes: 0, nextK: nextArch(x0).k });
+  cy.plan = { Lc: 0, ac: a, L0: 0, a0: a, x0, Lsx: 1000, vt: player.v, t: -1e9 };
+  cy.best = (() => { try { return +localStorage.getItem("race-canyon-best-" + S.preset) || 0; } catch { return 0; } })();
+  tNow = 0; ctl.steerMan = false; ctl.spdMan = false; ctl.thr = 0.75; camState.f.copy(player.f); camState.pos.copy(player.pos);
+  buildStreaks(); trail.p.forEach(t => t.userData.hist = []); trail.r.forEach(t => t.visible = false);
+  updateArches(); $("loading").style.display = "none";
+  toast("Каньон · " + preset.name.split(" · ")[1] + " · арки каждые ~" + (archSP() / 1000).toFixed(0) + " км");
+}
+
 function startGame() {
+  if (S.mode !== "race") return startCanyon();
+  cyMode = false; terrain.material = terrMat.race; for (const m of cy.pool) m.visible = false; planeMesh.r.visible = !!S.rival;
   const preset = PRESETS.find(p => p.id === S.preset) || PRESETS[1];
   T = buildTrack(preset, S.seed, S.skill / 100, S.style);
   terrain.material.uniforms.uSC.value = T.SC; terrain.material.uniforms.uR.value = T.R;
@@ -484,7 +656,7 @@ function startGame() {
   ctl.steerMan = false; ctl.spdMan = false; ctl.thr = 0.75;
   bestLap = (() => { try { return JSON.parse(localStorage.getItem("race-best-" + S.preset + "-" + S.seed)); } catch { return null; } })();
   camState.f.copy(player.f); camState.pos.copy(player.pos);
-  buildGates(); buildStreaks(); trail.p.forEach(t => t.userData.hist = []); trail.r.forEach(t => t.userData.hist = []);
+  buildGates(); if (gates) gates.visible = true; buildStreaks(); trail.p.forEach(t => t.userData.hist = []); trail.r.forEach(t => t.userData.hist = []);
   planeMesh.r.visible = !!S.rival;
   $("loading").style.display = "none";
   toast(PRESETS.find(p => p.id === S.preset).name + " · трасса №" + S.seed + " · " + (T.L / 1000).toFixed(0) + " км · ворот " + T.gates.length);
@@ -494,6 +666,9 @@ let toastT = 0; function toast(s, ms = 2200) { const e = $("toast"); e.textConte
 const fmtT = s => { const m = Math.floor(s / 60); return m + ":" + (s - m * 60).toFixed(1).padStart(4, "0"); };
 
 function playerControl() {
+  return cyMode ? playerControlCanyon() : playerControlRace();
+}
+function playerControlRace() {
   const t = tNow, key = ctl.keys, kx = (key.ArrowRight || key.d ? 1 : 0) - (key.ArrowLeft || key.a ? 1 : 0), ky = (key.ArrowUp || key.w ? 1 : 0) - (key.ArrowDown || key.s ? 1 : 0);
   if (kx || ky) { ctl.sx = kx; ctl.sy = ky; ctl.lastStick = t; ctl.steerMan = true; ctl.keyAct = true; } else if (ctl.keyAct) { ctl.sx = ctl.sy = 0; ctl.keyAct = false; }
   if (key.Shift) { ctl.thr = Math.min(1, ctl.thr + 0.4 / 60); ctl.spdMan = true; } if (key.Control) { ctl.thr = Math.max(0, ctl.thr - 0.4 / 60); ctl.spdMan = true; }
@@ -540,7 +715,43 @@ function crash() {
   const gi = T.gates[(nextGate + T.gates.length - 1) % T.gates.length]; player.place(gi.i, 0, T.vmax * 0.5); player.far = true; camState.f.copy(player.f); ctl.steerMan = false; toast("Падение — возврат на трассу", 1600);
 }
 
-function simStep(dt) {
+function simStep(dt) { return cyMode ? simStepCanyon(dt) : simStepRace(dt); }
+
+function playerControlCanyon() {
+  const t = tNow, key = ctl.keys, kx = (key.ArrowRight || key.d ? 1 : 0) - (key.ArrowLeft || key.a ? 1 : 0), ky = (key.ArrowUp || key.w ? 1 : 0) - (key.ArrowDown || key.s ? 1 : 0);
+  if (kx || ky) { ctl.sx = kx; ctl.sy = ky; ctl.lastStick = t; ctl.steerMan = true; ctl.keyAct = true; } else if (ctl.keyAct) { ctl.sx = ctl.sy = 0; ctl.keyAct = false; }
+  if (key.Shift) { ctl.thr = Math.min(1, ctl.thr + 0.4 / 60); ctl.spdMan = true; } if (key.Control) { ctl.thr = Math.max(0, ctl.thr - 0.4 / 60); ctl.spdMan = true; }
+  if (ctl.steerMan && !ctl.stickDown && !ctl.keyAct && +S.resume > 0 && t - ctl.lastStick > +S.resume) { ctl.steerMan = false; toast("Автопилот снова ведёт", 1200); }
+  const ai = cyAI(player); let ar = ai[0], au = ai[1], vt = ai[2];
+  if (ctl.steerMan) {
+    const ex = x => Math.sign(x) * (0.35 * Math.abs(x) + 0.65 * x * x), sx = ex(ctl.sx), sy = ex(ctl.sy) * (S.inv ? -1 : 1);
+    ar = sx * T.AMAX * 0.9; au = sy * T.AMAX * 0.9;
+    if (S.assist) { // если прямо по курсу скала или арка — автопилот плавно подхватывает
+      const p = player, cs = T.cs, r = 70 * cs; let danger = 0;
+      for (let k = 1; k <= 10; k++) { const d = p.v * 2.4 * k / 10, x = p.pos.x + p.f.x * d, y = p.pos.y + p.f.y * d, z = p.pos.z + p.f.z * d;
+        const C = Math.min(y - gnd(x, z), y - gnd(x + p.r0.x * r, z + p.r0.z * r), y - gnd(x - p.r0.x * r, z - p.r0.z * r));
+        if (C < 30 * cs || archHit(x, y, z, 25 * cs)) { danger = 1 - (k - 1) / 12; break; } }
+      if (danger > 0) { const w = Math.min(1, danger * 1.3); ar = ar * (1 - w) + ai[0] * w; au = au * (1 - w) + ai[1] * w; }
+    }
+  }
+  if (ctl.spdMan || ctl.steerMan) vt = T.vmax * (0.1 + 1.0 * ctl.thr);
+  return [ar, au, vt];
+}
+function cyCrash() {
+  cy.crashes++; $("flash").style.opacity = 0.55; setTimeout(() => $("flash").style.opacity = 0, 120);
+  const p = player, x = p.pos.x - 150 * T.cs, a = [.16, .3, .5, 1.3][Math.max(0, Math.min(3, S.alt | 0))];
+  p.pos.set(x, cyFl() + a * cyD(x), cyZc(x)); p.prev.copy(p.pos); p.f.set(1, 0, CW.czd(x / T.SC)).normalize(); p.v = T.vmax * .5; p.roll = 0; p.rollV = 0; p.basis();
+  ctl.steerMan = false; camState.f.copy(p.f); cy.plan.t = -1e9; cy.segX = x; cy.segT = 0; cy.segManual = 0; cy.nextK = nextArch(x).k; toast("Падение — возврат в каньон", 1600);
+}
+function simStepCanyon(dt) {
+  tNow += dt; const c = playerControl(), p = player; p.step(dt, c[0], c[1], c[2]);
+  cy.segT += dt; if (ctl.steerMan) cy.segManual += dt;
+  const x = p.pos.x, z = p.pos.z;
+  if (p.pos.y < gnd(x, z) + 2 * T.cs || archHit(x, p.pos.y, z, 2 * T.cs)) { const dist = x - cy.segX; if (cy.segManual / Math.max(cy.segT, 1) > .5 && dist > cy.best) { cy.best = dist; try { localStorage.setItem("race-canyon-best-" + S.preset, String(dist)); } catch {} } cyCrash(); return; }
+  while (x > archParams(cy.nextK).x) { cy.passed++; cy.nextK++; }
+  p.err = 0;
+}
+function simStepRace(dt) {
   tNow += dt;
   const c = playerControl(); player.step(dt, c[0], c[1], c[2]);
   if (ctl.steerMan) lapManual += dt;
@@ -577,15 +788,16 @@ function frame(ms) {
   planeMesh.p.visible = camMode !== 2;
   // мир следует за камерой
   const u = terrain.material.uniforms; u.uC.value.set(pl.pos.x, pl.pos.z); u.uCam.value.copy(camera.position); sky.position.copy(camera.position);
-  applyPlane(planeMesh.p, pl, trail.p, dt); if (S.rival) applyPlane(planeMesh.r, rival, trail.r, dt);
+  applyPlane(planeMesh.p, pl, trail.p, dt); if (S.rival && !cyMode) applyPlane(planeMesh.r, rival, trail.r, dt);
+  if (cyMode) updateArches();
   updateStreaks(dt);
   renderer.render(SCN, camera);
   hud(t);
 }
 
-const _v = new THREE.Vector3();
+const _v = new THREE.Vector3(), _g = new THREE.Vector3();
 function hud(t) {
-  const pl = player, g = T.gates[nextGate];
+  const pl = player, g = cyMode ? (() => { const a = nextArch(pl.pos.x); return { p: _g.set(a.x, a.fl + a.yc * .45, a.z) }; })() : T.gates[nextGate];
   // стрелка на следующие ворота
   _v.copy(g.p).project(camera); const behind = _v.z > 1 || _v.z < -1 ? true : false, W = innerWidth, Hh = innerHeight;
   let x = (_v.x * 0.5 + 0.5) * W, y = (-_v.y * 0.5 + 0.5) * Hh;
@@ -597,11 +809,17 @@ function hud(t) {
   if (t - hudT < 0.1) return; hudT = t;
   const dist = pl.pos.distanceTo(g.p); $("markT").textContent = dist > 1000 ? (dist / 1000).toFixed(1) + " км" : dist.toFixed(0) + " м";
   $("vS").textContent = Math.round(pl.v * 3.6).toLocaleString("ru"); $("mach").textContent = "M " + (pl.v / 340).toFixed(1) + " · крен " + Math.abs(Math.round(pl.roll * 57.3)) + "°";
-  $("lapT").textContent = firstPass ? fmtT(tNow - lapStart) : "к старту";
-  $("gateS").textContent = "ворота " + (nextGate + 1) + "/" + T.gates.length + (misses ? " · мимо " + misses : "");
-  $("best").textContent = (bestLap ? "рекорд " + fmtT(bestLap.t) + " " : "") + (lastLap ? "· прошл. " + fmtT(lastLap.t) : "");
-  const alt = pl.pos.y - ground(pl.pos.x, pl.pos.z, T.SC); $("alt").textContent = "над землёй " + (alt > 1000 ? (alt / 1000).toFixed(1) + " км" : Math.round(alt) + " м") + " · откл. " + (pl.err > 1000 ? (pl.err / 1000).toFixed(1) + " км" : Math.round(pl.err) + " м");
-  if (S.rival) { let d = rival.si - pl.si; d = ((d + T.N / 2) % T.N + T.N) % T.N - T.N / 2; const gap = -d * T.ds / Math.max(pl.v, 1); $("gap").textContent = "соперник " + (gap >= 0 ? "позади " : "впереди ") + Math.abs(gap).toFixed(1) + " с"; } else $("gap").textContent = "";
+  if (cyMode) {
+    const d = pl.pos.x - cy.segX, km = x => x >= 1000 ? (x / 1000).toFixed(1) + " км" : Math.round(x) + " м";
+    $("lapT").textContent = km(d); $("gateS").textContent = "арок пройдено " + cy.passed + (cy.crashes ? " · падений " + cy.crashes : ""); $("best").textContent = cy.best ? "рекорд без падения " + km(cy.best) : "";
+    const al = pl.pos.y - gnd(pl.pos.x, pl.pos.z); $("alt").textContent = "над землёй " + km(al) + " · до арки " + km(nextArch(pl.pos.x).x - pl.pos.x); $("gap").textContent = "";
+  } else {
+    $("lapT").textContent = firstPass ? fmtT(tNow - lapStart) : "к старту";
+    $("gateS").textContent = "ворота " + (nextGate + 1) + "/" + T.gates.length + (misses ? " · мимо " + misses : "");
+    $("best").textContent = (bestLap ? "рекорд " + fmtT(bestLap.t) + " " : "") + (lastLap ? "· прошл. " + fmtT(lastLap.t) : "");
+    const alt = pl.pos.y - ground(pl.pos.x, pl.pos.z, T.SC); $("alt").textContent = "над землёй " + (alt > 1000 ? (alt / 1000).toFixed(1) + " км" : Math.round(alt) + " м") + " · откл. " + (pl.err > 1000 ? (pl.err / 1000).toFixed(1) + " км" : Math.round(pl.err) + " м");
+    if (S.rival) { let d = rival.si - pl.si; d = ((d + T.N / 2) % T.N + T.N) % T.N - T.N / 2; const gap = -d * T.ds / Math.max(pl.v, 1); $("gap").textContent = "соперник " + (gap >= 0 ? "позади " : "впереди ") + Math.abs(gap).toFixed(1) + " с"; } else $("gap").textContent = "";
+  }
   const chip = $("chip"), left = ctl.steerMan && !ctl.stickDown && +S.resume > 0 ? Math.max(0, +S.resume - (tNow - ctl.lastStick)) : 0;
   if (ctl.steerMan) { chip.className = "man"; chip.textContent = "РУЧНОЕ" + (left ? " · авто через " + left.toFixed(0) + " с" : ""); }
   else if (ctl.spdMan) { chip.className = "man"; chip.textContent = "АВТО · газ вручную"; }
@@ -629,9 +847,12 @@ addEventListener("keyup", e => { ctl.keys[e.key.length === 1 ? e.key.toLowerCase
 
 /* ================= панель ================= */
 const sP = $("sPreset"); PRESETS.forEach(p => sP.add(new Option(p.name, p.id)));
-function syncPanel() { sP.value = S.preset; $("sStyle").value = S.style === "wild" ? "wild" : "easy"; $("sSkill").value = S.skill; $("sRival").checked = !!S.rival; $("sResume").value = S.resume; $("sAssist").checked = !!S.assist; $("sInv").checked = !!S.inv; $("sFx").value = S.fx; $("sLife").value = S.life === 0 ? 0 : 1; $("sQ").value = S.q; }
+function syncPanel() { sP.value = S.preset; $("sMode").value = S.mode === "race" ? "race" : "canyon"; $("sAlt").value = S.alt; $("sStyle").value = S.style === "wild" ? "wild" : "easy"; $("sSkill").value = S.skill; $("sRival").checked = !!S.rival; $("sResume").value = S.resume; $("sAssist").checked = !!S.assist; $("sInv").checked = !!S.inv; $("sFx").value = S.fx; $("sLife").value = S.life === 0 ? 0 : 1; $("sQ").value = S.q; }
 $("bSet").onclick = () => { syncPanel(); $("panel").style.display = "block"; };
-$("bClose").onclick = () => $("panel").style.display = "none";
+$("bClose").onclick = $("bX").onclick = () => $("panel").style.display = "none";
+addEventListener("keydown", e => { if (e.key === "Escape") $("panel").style.display = "none"; });
+$("sMode").onchange = e => { S.mode = e.target.value; saveS(); startGame(); $("panel").style.display = "none"; };
+$("sAlt").onchange = e => { S.alt = +e.target.value; saveS(); startGame(); $("panel").style.display = "none"; };
 sP.onchange = () => { S.preset = sP.value; saveS(); startGame(); };
 $("sStyle").onchange = e => { S.style = e.target.value; saveS(); startGame(); $("panel").style.display = "none"; };
 $("sSkill").onchange = e => { S.skill = +e.target.value; saveS(); computeProfile(T, S.skill / 100); };
@@ -650,12 +871,12 @@ initScene(); startGame(); renderer.setAnimationLoop(frame);
 
 /* отладка и тесты */
 window.__race = {
-  get life() { return life; }, get terrain() { return terrain; }, frame: t => frame(t), bio: (x, z) => { const h = hgtRaw(x, z, 1); return [h, bioRaw[0](x, z, 1, h), bioRaw[1](x, z, 1)]; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, ctl, S, ground: (x, z) => ground(x, z, T.SC),
+  get life() { return life; }, get terrain() { return terrain; }, frame: t => frame(t), bio: (x, z) => { const h = hgtRaw(x, z, 1); return [h, bioRaw[0](x, z, 1, h), bioRaw[1](x, z, 1)]; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, ctl, S, ground: (x, z) => gnd(x, z), cy, CW, archHit, get cyMode() { return cyMode; },
   /* симуляция без рендера: автопилот, статистика */
   sim(seconds, dt = 1 / 60) {
     const st = { t: 0, maxErr: 0, sumErr: 0, n: 0, minAgl: 1e18, crashes0: crashes, misses0: misses, passed0: gatesPassed, laps0: lapCount, maxV: 0, minV: 1e18, rollMax: 0 };
-    for (let t = 0; t < seconds; t += dt) { simStep(dt); st.t = t; st.maxErr = Math.max(st.maxErr, player.err); st.sumErr += player.err; st.n++; st.minAgl = Math.min(st.minAgl, player.pos.y - ground(player.pos.x, player.pos.z, T.SC)); st.maxV = Math.max(st.maxV, player.v); st.minV = Math.min(st.minV, player.v); st.rollMax = Math.max(st.rollMax, Math.abs(player.roll)); }
-    return { secs: seconds, maxErr: st.maxErr, meanErr: st.sumErr / st.n, minAgl: st.minAgl, crashes: crashes - st.crashes0, misses: misses - st.misses0, passed: gatesPassed - st.passed0, laps: lapCount - st.laps0, lastLap: lastLap, Rg: T.Rg, vAvgProfile: T.vAvg, vmax: T.vmax, L: T.L, lapRef: T.lapRef, vMin: st.minV, vMax: st.maxV, rollDeg: st.rollMax * 57.3, gates: T.gates.length };
+    for (let t = 0; t < seconds; t += dt) { simStep(dt); st.t = t; st.maxErr = Math.max(st.maxErr, player.err); st.sumErr += player.err; st.n++; st.minAgl = Math.min(st.minAgl, player.pos.y - gnd(player.pos.x, player.pos.z)); st.maxV = Math.max(st.maxV, player.v); st.minV = Math.min(st.minV, player.v); st.rollMax = Math.max(st.rollMax, Math.abs(player.roll)); }
+    return { secs: seconds, maxErr: st.maxErr, meanErr: st.sumErr / st.n, minAgl: st.minAgl, crashes: crashes - st.crashes0, misses: misses - st.misses0, passed: gatesPassed - st.passed0, laps: lapCount - st.laps0, lastLap: lastLap, Rg: T.Rg, vAvgProfile: T.vAvg, vmax: T.vmax, L: T.L, lapRef: T.lapRef, vMin: st.minV, vMax: st.maxV, rollDeg: st.rollMax * 57.3, gates: (T.gates || []).length };
   },
   start: startGame,
 };
