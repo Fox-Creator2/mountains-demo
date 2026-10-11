@@ -83,7 +83,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 12.10, 00:30</small>
+  <small id="ver">версия 12.10, 00:48</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -148,13 +148,13 @@ float chgt(float x,float z,float sc){
   float h=fl+(D-fl)*wt;
   float wallm=smoothstep(.25,.6,u)*(1.-smoothstep(1.05,1.3,u));
   h+=wallm*(nz(x*2.3e-3,z*2.3e-3,.5,.86,1.1)*38.+nz(x*6.7e-3,z*6.7e-3,.9,.44,3.9)*14.);
-  float pu=smoothstep(.95,1.3,u);
+  float pu=smoothstep(1.35,2.3,u);
   float pl=nz(x*6.1e-4,z*6.1e-4,.7,-.7,.9)*110.+nz(x*1.7e-3,z*1.7e-3,.3,.95,2.2)*45.+nz(x*4.9e-3,z*4.9e-3,-.6,.8,4.4)*16.;
   float ms=max(0.,nz(x*9e-4,z*9e-4,.9,.44,1.9)-.45)/.55; ms=ms*ms*320.;
   h+=pu*(pl+ms);
   float qa=nz(x*4.1e-3,z*4.1e-3,.5,.86,1.1); float qb=nz(x*2.9e-3,z*2.9e-3,.9,.44,3.7);
   float sp=max(0.,qa*qb-.4)/.6;
-  h+=380.*sp*smoothstep(.05,.22,u)*(1.-smoothstep(.95,1.15,u));
+  h+=min(380.,.72*D)*sp*smoothstep(.05,.22,u)*(1.-smoothstep(.95,1.15,u));
   return h*sc;
 }`;
 const WRAPJS = "const abs=Math.abs,sin=Math.sin,cos=Math.cos,floor=Math.floor,sign=Math.sign,pow=Math.pow,sqrt=Math.sqrt,max=Math.max,min=Math.min,fract=x=>x-Math.floor(x),inversesqrt=x=>1/Math.sqrt(x),smoothstep=(a,b,x)=>{const t=Math.min(1,Math.max(0,(x-a)/(b-a)));return t*t*(3-2*t)},mix=(a,b,t)=>a+(b-a)*t,clamp=(x,a,b)=>Math.min(b,Math.max(a,x));";
@@ -377,10 +377,12 @@ function cyPlan(p) {
       Cmin = Math.min(Cmin, C); wmin = Math.min(wmin, wi);
       if (C < m) cost += Math.pow((m - C) / m, 2) * 40 * (1.25 - s * .7);
       if (archHit(xi, yi, zi, 35 * cs)) cost += 70;
+      if (pref < 1) { const rx = wi * 1.3, rim = Math.min(gnd(xi + nx * rx, zi + nzz * rx), gnd(xi - nx * rx, zi - nzz * rx)), lim = rim - 90 * cs; if (yi > lim) cost += Math.pow((yi - lim) / (90 * cs), 2) * 30; }
       const gl2 = gnd(xi + nx * r * 2.4, zi + nzz * r * 2.4), gr2 = gnd(xi - nx * r * 2.4, zi - nzz * r * 2.4); if (Math.max(gl2, gr2) > yi) cost += .5;
       pts.push(xi, yi, zi);
     }
     for (let i = 4; i <= 11; i++) { const j = i * 3; const ax = pts[j - 3] - pts[j - 6], ay = pts[j - 2] - pts[j - 5], az = pts[j - 1] - pts[j - 4], bx = pts[j] - pts[j - 3], by = pts[j + 1] - pts[j - 2], bz = pts[j + 2] - pts[j - 1], la = Math.hypot(ax, ay, az), lb = Math.hypot(bx, by, bz), ang = Math.hypot(ax / la - bx / lb, ay / la - by / lb, az / la - bz / lb); kmax = Math.max(kmax, ang / ((la + lb) / 2)); }
+    cost += 2.2 * Math.min(2.5, kmax * 500 * sc); // гоночная линия: срезать дугу
     if (!best || cost < best.cost) best = { cost, Lc, ac, Cmin, wmin, kmax };
   }
   pl.Lc = best.Lc; pl.ac = best.ac; pl.L0 = L0; pl.a0 = a0; pl.x0 = x0; pl.Lsx = Lsx; pl.t = tNow;
@@ -879,6 +881,21 @@ window.__race = {
     return { secs: seconds, maxErr: st.maxErr, meanErr: st.sumErr / st.n, minAgl: st.minAgl, crashes: crashes - st.crashes0, misses: misses - st.misses0, passed: gatesPassed - st.passed0, laps: lapCount - st.laps0, lastLap: lastLap, Rg: T.Rg, vAvgProfile: T.vAvg, vmax: T.vmax, L: T.L, lapRef: T.lapRef, vMin: st.minV, vMax: st.maxV, rollDeg: st.rollMax * 57.3, gates: (T.gates || []).length };
   },
   start: startGame,
+  /* каньон: сколько времени самолёт вне каньона, боковые перегрузки, скорость */
+  cySim(seconds, dt = 1 / 60) {
+    const sc = T.SC, st = { out: 0, outLat: 0, outTop: 0, trans: 0, umax: 0, ynMax: 0, ynMin: 9, gMax: 0, vSum: 0, n: 0, wasOut: false, crashes0: cy.crashes, minClr: 1e18, rollMax: 0, aboveRim: 0, nearRim: 0, rimMin: 1e18 };
+    let pf = null;
+    for (let t = 0; t < seconds; t += dt) {
+      simStep(dt); const p = player, x = p.pos.x, sl = CW.czd(x / sc), isl = 1 / Math.sqrt(1 + sl * sl), w0 = cyW(x), D = cyD(x);
+      const nxx = -sl * isl, nzz = isl, zc = cyZc(x), rx = w0 * 1.3, rim = Math.min(gnd(x + nxx * rx, zc + nzz * rx), gnd(x - nxx * rx, zc - nzz * rx)); if (p.pos.y > rim) st.aboveRim += dt; if (p.pos.y > rim - 60 * T.cs) st.nearRim += dt; st.rimMin = Math.min(st.rimMin, rim - p.pos.y);
+      const u = Math.abs(p.pos.z - cyZc(x)) * isl / w0, yn = (p.pos.y - cyFl()) / D, lat = u > 1.0, top = yn > 1.0, o = lat || top;
+      st.n++; st.vSum += p.v; if (o) st.out += dt; if (lat) st.outLat += dt; if (top) st.outTop += dt; if (o !== st.wasOut) st.trans++; st.wasOut = o;
+      st.umax = Math.max(st.umax, u); st.ynMax = Math.max(st.ynMax, yn); st.ynMin = Math.min(st.ynMin, yn);
+      st.gMax = Math.max(st.gMax, Math.hypot(p.ar, p.au) / 9.81); st.rollMax = Math.max(st.rollMax, Math.abs(p.roll));
+      st.minClr = Math.min(st.minClr, p.pos.y - gnd(x, p.pos.z));
+    }
+    return { out: +st.out.toFixed(1), outLat: +st.outLat.toFixed(1), outTop: +st.outTop.toFixed(1), trans: st.trans, umax: +st.umax.toFixed(2), yn: [+st.ynMin.toFixed(2), +st.ynMax.toFixed(2)], g: +st.gMax.toFixed(1), vAvg: Math.round(st.vSum / st.n), crashes: cy.crashes - st.crashes0, minClr: Math.round(st.minClr), roll: +(st.rollMax * 57.3).toFixed(0), aboveRim: +st.aboveRim.toFixed(1), nearRim: +st.nearRim.toFixed(1), rimMin: Math.round(st.rimMin), km: Math.round(player.pos.x / 1000), vmax: T.vmax, AMAXg: +(T.AMAX / 9.81).toFixed(1) };
+  },
 };
 </script>
 </body>
