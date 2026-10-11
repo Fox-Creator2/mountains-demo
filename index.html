@@ -77,7 +77,7 @@
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps">Версия: 11.10, 03:35</span>
+  <span class="fps">Версия: 11.10, 03:45</span>
   <div class="fps" id="routeDbg" style="max-width:300px;white-space:pre-wrap;font-size:11px"></div>
 </div>
 
@@ -407,16 +407,47 @@ function sampleLine(a, b, kx, ky) {
 // Если линия проваливается глубже DIP_LIMIT ниже нижнего из концов, перебираем промежуточные точки сбоку
 // от прямой и берём ту, через которую путь идёт ровнее (без провала и без лишнего подъёма на гребни).
 const DIP_LIMIT = 80;
-async function findDetours(rt) {
-  const air = new Set(rt.air || []);
+
+// Подгонка ключевых точек по известной высоте.
+// Высоты станций, хижин и лагерей известны хорошо, а координаты — грубо. Если рельеф в точке отличается
+// от её высоты больше чем на SNAP_TOL (точка «повисла в воздухе» перед обрывом или ушла под склон),
+// ищем рядом, в радиусе SNAP_R, место с самой подходящей высотой и переносим точку туда.
+const SNAP_TOL = 60, SNAP_R = 450, SNAP_STEP = 50;
+async function snapPoints(rt) {
   const kx = 111320 * Math.cos(rt.pts[0][1] * Math.PI / 180), ky = 111320;
-  const ends = await heightsAt(rt.pts);
+  const hs = await heightsAt(rt.pts);
+  const out = rt.pts.map(p => p.slice());
+  let moved = 0;
+  for (let i = 0; i < out.length; i++) {
+    const p = out[i], h = hs[i];
+    if (!isFinite(h) || Math.abs(h - p[2]) <= SNAP_TOL) continue;
+    const cand = [];
+    for (let dx = -SNAP_R; dx <= SNAP_R; dx += SNAP_STEP) for (let dy = -SNAP_R; dy <= SNAP_R; dy += SNAP_STEP) {
+      const d = Math.hypot(dx, dy); if (d === 0 || d > SNAP_R) continue;
+      cand.push([p[0] + dx / kx, p[1] + dy / ky, d]);
+    }
+    const ch = await heightsAt(cand);
+    let best = null;
+    cand.forEach((c, k) => {
+      if (!isFinite(ch[k])) return;
+      const score = Math.abs(ch[k] - p[2]) + 0.04 * c[2];    // ближе по высоте, а при равенстве — ближе по месту
+      if (!best || score < best.score) best = { score, c, err: Math.abs(ch[k] - p[2]) };
+    });
+    if (best && best.err < SNAP_TOL && best.err < Math.abs(h - p[2]) / 2) { out[i] = [best.c[0], best.c[1], p[2], p[3]]; moved++; }
+  }
+  return { pts: out, moved };
+}
+
+async function findDetours(rt, P) {
+  const air = new Set(rt.air || []);
+  const kx = 111320 * Math.cos(P[0][1] * Math.PI / 180), ky = 111320;
+  const ends = await heightsAt(P);
   const pts = [], orig = [], airEff = [], bridges = [];
-  for (let s = 0; s < rt.pts.length; s++) {
+  for (let s = 0; s < P.length; s++) {
     if (air.has(s)) airEff.push(pts.length);
-    pts.push(rt.pts[s]); orig.push(s);
-    if (s === rt.pts.length - 1 || air.has(s)) continue;
-    const A = rt.pts[s], B = rt.pts[s + 1], ha = ends[s], hb = ends[s + 1];
+    pts.push(P[s]); orig.push(s);
+    if (s === P.length - 1 || air.has(s)) continue;
+    const A = P[s], B = P[s + 1], ha = ends[s], hb = ends[s + 1];
     if (!(isFinite(ha) && isFinite(hb))) continue;
     const base = Math.min(ha, hb), top = Math.max(ha, hb);
     const straight = sampleLine(A, B, kx, ky);
@@ -445,7 +476,8 @@ async function drapeRoute(rt, mountainName) {
   if (rt.draped || rt.draping) return;
   rt.draping = true;
   try {
-    const eff = await findDetours(rt);
+    const snapped = await snapPoints(rt);
+    const eff = await findDetours(rt, snapped.pts);
     const pts = eff.pts, dense = densify(pts);
     const hs = await heightsAt(dense);
     // Высота каждой точки линии — по рельефу. Высоты ключевых точек в данных грубые, поэтому им не верим:
@@ -454,7 +486,7 @@ async function drapeRoute(rt, mountainName) {
     //    если такая прямая где-то ушла под землю — поднимаем её над поверхностью;
     //  • если рельеф в точке не загрузился (вернул 0 или мусор) — берём расчётную высоту.
     const air = new Set(eff.air);
-    const dbg = { t0: performance.now(), noTerrain: 0, detours: eff.pts.length - rt.pts.length, bridges: eff.bridges.length, filled: 0, spans: [] };
+    const dbg = { t0: performance.now(), noTerrain: 0, moved: snapped.moved, detours: eff.pts.length - rt.pts.length, bridges: eff.bridges.length, filled: 0, spans: [] };
     const ground = dense.map((p, i) => {
       const h = hs[i];
       if (isFinite(h) && h > Math.min(p[2] * 0.5, p[2] - 300)) return h;
@@ -567,6 +599,7 @@ function showRouteDbg() {
     const d = rt.dbg;
     let t = "• " + rt.name + ": уложен за " + d.ms + " мс";
     if (d.noTerrain) t += ", без рельефа " + d.noTerrain + " точ.";
+    if (d.moved) t += ", подогнано по высоте точек: " + d.moved;
     if (d.detours) t += ", обходов " + d.detours;
     if (d.bridges) t += ", поверху отрезков " + d.bridges;
     if (d.filled) t += ", засыпано провалов " + d.filled + " точ.";
