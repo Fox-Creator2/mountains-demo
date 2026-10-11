@@ -46,9 +46,14 @@
     background: var(--chip); color: var(--fg); font-size: 13px; cursor: pointer; }
   #ctrls button.on { background: #3b6e4f; }
 
-  #diag { position: absolute; left: 8px; top: calc(8px + env(safe-area-inset-top, 0px)); z-index: 25;
-    background: var(--panel); border-radius: 10px; padding: 10px 12px; font-size: 13px;
-    display: flex; flex-direction: column; gap: 6px; min-width: 200px; }
+  /* окно настроек: не заходит на нижнюю панель с кнопками, лишнее прокручивается внутри */
+  #diag { position: absolute; left: 8px; right: 8px; top: calc(8px + env(safe-area-inset-top, 0px)); z-index: 25;
+    max-height: calc(100% - 196px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow-y: auto;
+    background: var(--panel); border-radius: 10px; padding: 8px 12px; font-size: 13px;
+    display: flex; flex-direction: column; gap: 5px; max-width: 360px; }
+  #diag .head { display: flex; justify-content: space-between; align-items: center; }
+  #diag .close { border: 0; background: var(--chip); color: var(--fg); border-radius: 8px; width: 32px; height: 28px; font-size: 15px; cursor: pointer; }
+  #diag details summary { color: var(--muted); font-size: 12px; cursor: pointer; }
   #diag[hidden] { display: none; }
   #cam { position: absolute; left: 12px; right: 12px; bottom: calc(168px + env(safe-area-inset-bottom, 0px)); z-index: 25;
     background: var(--panel); border-radius: 12px; padding: 8px 14px; display: flex; flex-direction: column; gap: 0; }
@@ -85,7 +90,7 @@
 <div id="log"></div>
 
 <div id="diag" hidden>
-  <b>Настройки карты</b>
+  <div class="head"><b>Настройки карты</b><button class="close" id="diagClose" aria-label="Закрыть">✕</button></div>
   <div class="seg" id="segImg"><span>Снимки</span><button data-v="bing">Bing</button><button data-v="esri">Esri</button></div>
   <div class="seg v1only" id="segDpi" hidden><span>Чёткость</span><button data-v="on">Как в 0.28.7</button><button data-v="off">По умолч. 1.0</button></div>
   <div class="seg v1only" id="segDef" hidden><span>Отложенный рендеринг</span><button data-v="on">Вкл</button><button data-v="off">Выкл</button></div>
@@ -97,7 +102,9 @@
   <span class="fps" id="fps">FPS: —</span>
   <span class="fps" id="ver">Версия: 11.10, 16:00</span>
   <span class="fps" id="nodes">Узлов: —</span>
-  <div class="fps" id="routeDbg" style="max-width:300px;white-space:pre-wrap;font-size:11px"></div>
+  <details><summary>Отчёт об укладке маршрутов</summary>
+    <div class="fps" id="routeDbg" style="white-space:pre-wrap;font-size:11px"></div>
+  </details>
 </div>
 
 <div id="sun" class="panel" hidden>
@@ -1165,6 +1172,7 @@ document.getElementById("bSun").onclick = function () {
 applySun();
 
 // ---- Диагностика: включаем/выключаем части сцены, чтобы найти источник мерцания ----
+document.getElementById("diagClose").onclick = () => { document.getElementById("diag").hidden = true; };
 document.getElementById("bDiag").onclick = () => {
   const d = document.getElementById("diag"); d.hidden = !d.hidden;
 };
