@@ -63,6 +63,15 @@
   #cam { position: absolute; left: 12px; right: 12px; bottom: calc(168px + env(safe-area-inset-bottom, 0px)); z-index: 25;
     background: var(--panel); border-radius: 12px; padding: 8px 14px; display: flex; flex-direction: column; gap: 0; }
   #cam[hidden] { display: none; }
+  #fly { position: absolute; left: 12px; right: 12px; bottom: calc(168px + env(safe-area-inset-bottom, 0px)); z-index: 25;
+    background: var(--panel); border-radius: 12px; padding: 8px 14px; display: flex; flex-direction: column; gap: 0; }
+  #fly[hidden] { display: none; }
+  #fly .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  #fly .row b { color: var(--fg); font-variant-numeric: tabular-nums; }
+  #fly input[type=range] { width: 100%; accent-color: var(--chip-on); height: 26px; margin: 0 0 4px; }
+  #fly select { flex: 1; min-width: 0; background: var(--chip); color: var(--fg); border: 0; border-radius: 8px; padding: 6px 8px; font-size: 13px; }
+  #fly .mini { flex: 1; border: 0; border-radius: 8px; padding: 8px; background: var(--chip); color: var(--fg); font-size: 13px; cursor: pointer; }
+  #fly .mini.on { background: #3b6e4f; }
   #sun { position: absolute; left: 12px; right: 12px; bottom: calc(168px + env(safe-area-inset-bottom, 0px)); z-index: 25;
     background: var(--panel); border-radius: 12px; padding: 8px 14px; display: flex; flex-direction: column; gap: 0; }
   #sun[hidden] { display: none; }
@@ -108,7 +117,7 @@
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <button id="gpxClear" class="mini" style="align-self:flex-start;border:0;border-radius:8px;padding:6px 10px;background:var(--chip);color:var(--fg);font-size:12px;cursor:pointer">Удалить все загруженные GPX-треки</button>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps" id="ver">Версия: 11.10, 16:15</span>
+  <span class="fps" id="ver">Версия: 11.10, 16:40</span>
   <span class="fps" id="nodes">Узлов: —</span>
   <details><summary>Отчёт об укладке маршрутов</summary>
     <div class="fps" id="routeDbg" style="white-space:pre-wrap;font-size:11px"></div>
@@ -134,6 +143,17 @@
   <button id="camReset" class="reset">Сбросить настройки камеры</button>
 </div>
 
+<div id="fly" hidden>
+  <div class="row" style="margin-bottom:4px"><span>Маршрут</span><select id="flyRoute"></select></div>
+  <div class="row"><span>Скорость</span><b id="flySpeedVal">—</b></div>
+  <input type="range" id="flySpeed" min="0" max="1000" step="1" value="400">
+  <div class="row"><span>Высота над землёй</span><b id="flyAglVal">—</b></div>
+  <input type="range" id="flyAgl" min="0" max="1000" step="1" value="400">
+  <div class="row"><span>Пройдено</span><b id="flyProgVal">0%</b></div>
+  <input type="range" id="flyProg" min="0" max="1000" step="1" value="0">
+  <div class="row" style="gap:6px"><button id="flyPlay" class="mini">▶ Лететь</button><button id="flyStart" class="mini">⏮ В начало</button><button id="flyClose" class="mini" style="flex:0 0 44px" aria-label="Свернуть">▾</button></div>
+</div>
+
 <div id="bar">
   <div id="info"><b id="mName">Загрузка…</b><span id="mMeta"></span></div>
   <div id="routes"></div>
@@ -142,6 +162,7 @@
     <button id="bMode">Телепорт</button>
     <button id="bOrbit">Облёт ⟳</button>
     <button id="bCam">Камера</button>
+    <button id="bFly">Полёт</button>
     <button id="bSun" style="flex:0 0 44px" aria-label="Солнце">☀</button>
     <button id="bDiag" style="flex:0 0 44px">⚙</button>
   </div>
@@ -749,6 +770,7 @@ async function drapeRoute(rt, mountainName) {
       const clo = cloP.slice(P, P + n);
       for (let k = 0; k < n; k++) if (!onCable.has(k) && clo[k] - fixed[k] > DIP_FILL) { fixed[k] = clo[k]; dbg.filled++; }
     }
+    rt.flightPath = dense.map((p, i) => [p[0], p[1], fixed[i]]);   // уложенная линия — по ней летает «планер»
     rt.line.polyline.setPathLonLat([dense.map((p, i) => [p[0], p[1], fixed[i] + ROUTE_LIFT])]);
     dense.forEach((p, i) => {
       const o = p[3] >= 0 ? eff.orig[p[3]] : -1;
@@ -775,7 +797,7 @@ async function drapeRoute(rt, mountainName) {
   }
 }
 
-window.__dbg = { MOUNTAINS, drapeRoute };
+window.__dbg = { MOUNTAINS, drapeRoute, get fly() { return fly; } };
 
 // Что получилось при раскладке маршрутов выбранной горы по рельефу — видно в панели ⚙
 function showRouteDbg() {
@@ -973,6 +995,7 @@ let current = null, flyMode = false, orbiting = false, orbitCenter = null, orbit
 
 function goTo(i) {
   const m = MOUNTAINS[i];
+  if (typeof stopFly === "function") stopFly();
   current = m;
   const keepOrbit = orbiting;                      // если облёт шёл — продолжим его на новой горе
   orbiting = false;
@@ -1000,6 +1023,7 @@ function goTo(i) {
   document.getElementById("mMeta").textContent =
     (m.h > 0 ? m.h.toLocaleString("ru-RU") + " м · " : "") + n + " " + (n === 1 ? "маршрут" : n < 5 ? "маршрута" : "маршрутов");
   renderRouteList(m);
+  if (typeof fly !== "undefined" && fly.panel) fillFlyRoutes();
   showRouteDbg();
   Promise.all(m.routes.map(rt => drapeRoute(rt, m.name))).then(scheduleBackgroundDrape);
   document.querySelectorAll(".chip").forEach((c, k) => {
@@ -1145,7 +1169,7 @@ document.getElementById("camReset").onclick = () => {
 document.getElementById("bCam").onclick = function () {
   const p = document.getElementById("cam");
   p.hidden = !p.hidden;
-  if (!p.hidden) { document.getElementById("sun").hidden = true; document.getElementById("bSun").classList.toggle("on", sunState.on); }
+  if (!p.hidden) { document.getElementById("sun").hidden = true; document.getElementById("bSun").classList.toggle("on", sunState.on); closeFlyPanel(); }
   this.classList.toggle("on", !p.hidden);
   if (!p.hidden) syncCam();
 };
@@ -1213,7 +1237,7 @@ planet.renderer.events.on("postdraw", () => {
 document.getElementById("bSun").onclick = function () {
   const p = document.getElementById("sun");
   p.hidden = !p.hidden;
-  if (!p.hidden) document.getElementById("cam").hidden = true, document.getElementById("bCam").classList.remove("on");
+  if (!p.hidden) { document.getElementById("cam").hidden = true; document.getElementById("bCam").classList.remove("on"); closeFlyPanel(); }
   applySun();
 };
 applySun();
@@ -1240,7 +1264,7 @@ function applyTerrain() {
   planet.setTerrain(terrainOff ? new EmptyTerrain() : TERRAINS[mapSettings.terrain]);
   hCache.clear();
   drapeGen++;
-  MOUNTAINS.forEach(m => m.routes.forEach(rt => { rt.draped = false; }));
+  MOUNTAINS.forEach(m => m.routes.forEach(rt => { rt.draped = false; rt.flightPath = null; }));
   if (current) Promise.all(current.routes.map(rt => drapeRoute(rt, current.name))).then(scheduleBackgroundDrape);
   document.querySelectorAll("#segTer button").forEach(b => b.classList.toggle("on", b.dataset.v === mapSettings.terrain));
 }
@@ -1272,12 +1296,130 @@ planet.renderer.events.on("postdraw", () => {
   const now = performance.now();
   if (now - fpsT > 1000) {
     document.getElementById("fps").textContent = "FPS: " + Math.round(frames * 1000 / (now - fpsT));
-    document.getElementById("ver").textContent = "Версия: 11.10, 16:15 · движок " + ENGINE +
+    document.getElementById("ver").textContent = "Версия: 11.10, 16:40 · движок " + ENGINE +
       " · кадр " + planet.renderer.handler.canvas.width + "×" + planet.renderer.handler.canvas.height + " пикс.";
     document.getElementById("nodes").textContent = "Узлов: " + planet._createdNodesCount + " (очистка после " + planet._maxNodes + ")";
     frames = 0; fpsT = now;
   }
 });
+
+// ---------------- Полёт вдоль маршрута («низкий планер») ----------------
+// Камера летит над линией маршрута с постоянной скоростью (по умолчанию ~60 км/ч — как низко летящий планер),
+// на заданной высоте над землёй, и смотрит вперёд по пути. Путь сглажен (±400 м), иначе камеру трясло бы
+// на каждом повороте тропы; высота — скользящее среднее от максимума рельефа вокруг, чтобы облетать бугры.
+// «Верх» камеры — нормаль к поверхности, поэтому крена нет. Касание глобуса ставит полёт на паузу.
+const FLY_KEY = "mountains-demo-fly-v1";
+const fly = { panel: false, on: false, playing: false, rt: null, tr: null, s: 0, last: 0, ramp: 0, speed: 60, agl: 200 };
+try { Object.assign(fly, JSON.parse(localStorage.getItem(FLY_KEY) || "{}")); } catch (e) {}
+const FLY_AHEAD = 600;                         // м — на какую точку впереди смотрим
+const FS_MIN = 10, FS_MAX = 300, FA_MIN = 30, FA_MAX = 1000;
+const flySpeedFrom = t => FS_MIN * Math.pow(FS_MAX / FS_MIN, t / 1000), flySliderFromSpeed = v => 1000 * Math.log(v / FS_MIN) / Math.log(FS_MAX / FS_MIN);
+const flyAglFrom = t => FA_MIN * Math.pow(FA_MAX / FA_MIN, t / 1000), flySliderFromAgl = v => 1000 * Math.log(v / FA_MIN) / Math.log(FA_MAX / FA_MIN);
+const $f = id => document.getElementById(id);
+
+function prepareFlight(rt) {
+  const f = rt.flightPath, n = f.length, cum = [0];
+  for (let i = 1; i < n; i++) cum.push(cum[i - 1] + mDist(f[i - 1], f[i]));
+  const avg = (arr, w) => arr.map((_, i) => { let s = 0, c = 0; for (let j = Math.max(0, i - w); j <= Math.min(n - 1, i + w); j++) { s += arr[j]; c++; } return s / c; });
+  const mx = (arr, w) => arr.map((_, i) => { let m = -1e9; for (let j = Math.max(0, i - w); j <= Math.min(n - 1, i + w); j++) m = Math.max(m, arr[j]); return m; });
+  return { n, cum, L: cum[n - 1], lon: avg(f.map(p => p[0]), 8), lat: avg(f.map(p => p[1]), 8), h: avg(mx(f.map(p => p[2]), 6), 8) };
+}
+// точка сглаженного пути на расстоянии s от начала (за концом — продолжение по последнему направлению)
+function flyAt(tr, s) {
+  const { cum, n } = tr;
+  if (s <= 0) s = 0;
+  if (s >= tr.L) {
+    const j = Math.max(0, n - 1 - 4), d = Math.max(1, tr.L - cum[j]), k = (s - tr.L) / d;
+    return [tr.lon[n - 1] + (tr.lon[n - 1] - tr.lon[j]) * k, tr.lat[n - 1] + (tr.lat[n - 1] - tr.lat[j]) * k, tr.h[n - 1]];
+  }
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (cum[mid] <= s) lo = mid; else hi = mid; }
+  const t = (s - cum[lo]) / ((cum[hi] - cum[lo]) || 1);
+  return [tr.lon[lo] + (tr.lon[hi] - tr.lon[lo]) * t, tr.lat[lo] + (tr.lat[hi] - tr.lat[lo]) * t, tr.h[lo] + (tr.h[hi] - tr.h[lo]) * t];
+}
+function flyFrame() {
+  const tr = fly.tr; if (!tr) return;
+  const a = flyAt(tr, fly.s), b = flyAt(tr, fly.s + FLY_AHEAD);
+  const eye = planet.ellipsoid.lonLatToCartesian(new LonLat(a[0], a[1], a[2] + fly.agl));
+  const look = planet.ellipsoid.lonLatToCartesian(new LonLat(b[0], b[1], b[2]));
+  planet.camera.set(eye, look, planet.ellipsoid.getSurfaceNormal3v(eye));
+  planet.camera.update();
+  const pr = Math.min(1, fly.s / (tr.L || 1));
+  $f("flyProg").value = Math.round(pr * 1000);
+  $f("flyProgVal").textContent = Math.round(pr * 100) + "% · " + (fly.s / 1000).toFixed(1).replace(".", ",") + " из " + (tr.L / 1000).toFixed(1).replace(".", ",") + " км";
+}
+function flyUi() {
+  $f("flySpeedVal").textContent = Math.round(fly.speed) + " км/ч";
+  $f("flyAglVal").textContent = Math.round(fly.agl) + " м";
+  $f("flyPlay").textContent = fly.playing ? "❚❚ Пауза" : "▶ Лететь";
+  $f("flyPlay").classList.toggle("on", fly.playing);
+  $f("bFly").classList.toggle("on", fly.panel || fly.playing);
+}
+const saveFly = () => { try { localStorage.setItem(FLY_KEY, JSON.stringify({ speed: fly.speed, agl: fly.agl })); } catch (e) {} };
+function stopFly() { fly.playing = false; fly.on = false; fly.last = 0; flyUi(); }
+function closeFlyPanel() { fly.panel = false; $f("fly").hidden = true; flyUi(); }
+function fillFlyRoutes() {
+  const sel = $f("flyRoute"), keep = fly.rt && current ? current.routes.indexOf(fly.rt) : -1;
+  sel.innerHTML = "";
+  if (!current) return;
+  current.routes.forEach((rt, i) => { const o = document.createElement("option"); o.value = i; o.textContent = rt.name; sel.appendChild(o); });
+  const vis = current.routes.findIndex(r => r.visible); sel.value = keep >= 0 ? keep : (vis >= 0 ? vis : 0);
+}
+$f("bFly").onclick = () => {
+  if (fly.panel) { closeFlyPanel(); return; }
+  fly.panel = true; $f("fly").hidden = false;
+  $f("cam").hidden = true; $f("bCam").classList.remove("on"); $f("sun").hidden = true;
+  fillFlyRoutes();
+  $f("flySpeed").value = flySliderFromSpeed(Math.min(FS_MAX, Math.max(FS_MIN, fly.speed)));
+  $f("flyAgl").value = flySliderFromAgl(Math.min(FA_MAX, Math.max(FA_MIN, fly.agl)));
+  flyUi();
+};
+$f("flyClose").onclick = closeFlyPanel;
+$f("flySpeed").oninput = e => { fly.speed = flySpeedFrom(+e.target.value); saveFly(); flyUi(); };
+$f("flyAgl").oninput = e => { fly.agl = flyAglFrom(+e.target.value); saveFly(); flyUi(); if (fly.on && !fly.playing) flyFrame(); };
+$f("flyProg").oninput = async e => {
+  if (!(await ensureFlight())) return;
+  fly.s = +e.target.value / 1000 * fly.tr.L; flyFrame();
+};
+$f("flyRoute").onchange = () => { stopFly(); fly.rt = null; fly.tr = null; };
+$f("flyStart").onclick = async () => { if (!(await ensureFlight())) return; fly.s = 0; fly.ramp = 0; flyFrame(); };
+
+// Готовим выбранный маршрут: он должен быть уложен на рельеф (линия берётся оттуда)
+async function ensureFlight() {
+  if (!current) return false;
+  const rt = current.routes[+$f("flyRoute").value || 0];
+  if (!rt) return false;
+  if (fly.rt === rt && fly.tr) return true;
+  if (!rt.flightPath) {
+    toast("Укладываю маршрут на рельеф…", 20000);
+    drapeRoute(rt, current.name);
+    for (let i = 0; i < 150 && !rt.flightPath; i++) await new Promise(r => setTimeout(r, 200));
+    toastEl.hidden = true;
+    if (!rt.flightPath) { toast("Не удалось уложить маршрут на рельеф — попробуйте ещё раз."); return false; }
+  }
+  fly.rt = rt; fly.tr = prepareFlight(rt); fly.s = Math.min(fly.s, fly.tr.L);
+  return true;
+}
+$f("flyPlay").onclick = async () => {
+  if (fly.playing) { fly.playing = false; flyUi(); return; }
+  if (!(await ensureFlight())) return;
+  stopOrbit(); orbiting = false; planet.stopFlying();
+  if (fly.s >= fly.tr.L - 1) fly.s = 0;
+  fly.on = true; fly.playing = true; fly.last = 0; fly.ramp = 0;
+  flyUi(); flyFrame();
+};
+planet.renderer.events.on("postdraw", () => {
+  if (!fly.on || !fly.playing) return;
+  const now = performance.now(), dt = fly.last ? Math.min((now - fly.last) / 1000, 0.25) : 0;
+  fly.last = now;
+  fly.ramp = Math.min(1, fly.ramp + dt / 2);                     // плавный разгон 2 с
+  fly.s += fly.speed / 3.6 * dt * fly.ramp * fly.ramp * (3 - 2 * fly.ramp);
+  if (fly.s >= fly.tr.L) { fly.s = fly.tr.L; fly.playing = false; flyUi(); toast("Конец маршрута."); }
+  flyFrame();
+});
+// касание глобуса — пауза, чтобы можно было осмотреться
+$f("globus").addEventListener("pointerdown", () => { if (fly.playing) { fly.playing = false; flyUi(); } });
+flyUi();
 
 // ---------------- Свои GPX-треки ----------------
 // Трек из файла (Komoot, Strava, Garmin, AllTrails…) — это уже настоящая запись пути с сотнями точек, поэтому он
