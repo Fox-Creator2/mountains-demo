@@ -77,7 +77,8 @@
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps">Версия: 11.10, 03:25</span>
+  <span class="fps">Версия: 11.10, 03:35</span>
+  <div class="fps" id="routeDbg" style="max-width:300px;white-space:pre-wrap;font-size:11px"></div>
 </div>
 
 <div id="cam" hidden>
@@ -453,9 +454,11 @@ async function drapeRoute(rt, mountainName) {
     //    если такая прямая где-то ушла под землю — поднимаем её над поверхностью;
     //  • если рельеф в точке не загрузился (вернул 0 или мусор) — берём расчётную высоту.
     const air = new Set(eff.air);
+    const dbg = { t0: performance.now(), noTerrain: 0, detours: eff.pts.length - rt.pts.length, bridges: eff.bridges.length, filled: 0, spans: [] };
     const ground = dense.map((p, i) => {
       const h = hs[i];
-      return (isFinite(h) && h > Math.min(p[2] * 0.5, p[2] - 300)) ? h : p[2];
+      if (isFinite(h) && h > Math.min(p[2] * 0.5, p[2] - 300)) return h;
+      dbg.noTerrain++; return p[2];
     });
     // Воздушные отрезки (канатная дорога): трос — плавная кривая от станции к станции.
     //  1) концы ставим на рельеф, но если прямая между ними задевает склон (например, перегиб у края
@@ -503,14 +506,20 @@ async function drapeRoute(rt, mountainName) {
           const u = (tt[k] - tA) / dt, w = 4 * u * (1 - u);
           if (w > 0.05) sag = Math.min(sag, Math.max(0, (hA + (hB - hA) * u - ground[idx[k]] - clr(u)) / w));
         }
+        let above = 0;
         for (let k = kA + 1; k < kB; k++) {
           const u = (tt[k] - tA) / dt;
           fixed[idx[k]] = hA + (hB - hA) * u - 4 * sag * u * (1 - u);
           onCable.add(idx[k]);
+          above = Math.max(above, fixed[idx[k]] - ground[idx[k]]);
         }
+        return { sag, above };
       };
       fixed[i0] = g0;
-      span(0, jEnd, g0, hEnd);
+      const tEnd = tt[jEnd];
+      const r = span(0, jEnd, g0, hEnd);
+      dbg.spans.push({ len: Math.round(L * tEnd), sag: Math.round(r.sag), above: Math.round(r.above),
+        edge: jEnd < idx.length - 1, g0: Math.round(g0), g1: Math.round(g1), hEnd: Math.round(hEnd) });
       fixed[idx[jEnd]] = hEnd;
       for (let k = jEnd + 1; k < idx.length; k++) fixed[idx[k]] = ground[idx[k]];   // после бровки — по земле
     }
@@ -530,7 +539,7 @@ async function drapeRoute(rt, mountainName) {
       const dil = f.map((_, k) => win(f, k, "max"));
       const cloP = dil.map((_, k) => win(dil, k, "min"));
       const clo = cloP.slice(P, P + n);
-      for (let k = 0; k < n; k++) if (!onCable.has(k) && clo[k] - fixed[k] > DIP_FILL) fixed[k] = clo[k];
+      for (let k = 0; k < n; k++) if (!onCable.has(k) && clo[k] - fixed[k] > DIP_FILL) { fixed[k] = clo[k]; dbg.filled++; }
     }
     rt.line.polyline.setPathLonLat([dense.map((p, i) => [p[0], p[1], fixed[i] + ROUTE_LIFT])]);
     dense.forEach((p, i) => {
@@ -538,6 +547,9 @@ async function drapeRoute(rt, mountainName) {
       if (o >= 0 && rt.points[o]) rt.points[o].setLonLat(new LonLat(p[0], p[1], fixed[i] + LABEL_LIFT));
     });
     rt.draped = true;
+    dbg.ms = Math.round(performance.now() - dbg.t0);
+    rt.dbg = dbg;
+    showRouteDbg();
   } catch (e) {
     log("Маршрут «" + rt.name + "» (" + mountainName + "): не удалось уточнить высоты (" + e.message + ")");
   } finally {
@@ -545,7 +557,26 @@ async function drapeRoute(rt, mountainName) {
   }
 }
 
-window.__dbg = { MOUNTAINS, drapeRoute };   // для отладки из консоли браузера
+window.__dbg = { MOUNTAINS, drapeRoute };
+
+// Что получилось при раскладке маршрутов выбранной горы по рельефу — видно в панели ⚙
+function showRouteDbg() {
+  const el = document.getElementById("routeDbg"); if (!el || !current) return;
+  el.textContent = current.routes.map(rt => {
+    if (!rt.dbg) return "• " + rt.name + ": " + (rt.draping ? "считается…" : "ещё не уложен на рельеф");
+    const d = rt.dbg;
+    let t = "• " + rt.name + ": уложен за " + d.ms + " мс";
+    if (d.noTerrain) t += ", без рельефа " + d.noTerrain + " точ.";
+    if (d.detours) t += ", обходов " + d.detours;
+    if (d.bridges) t += ", поверху отрезков " + d.bridges;
+    if (d.filled) t += ", засыпано провалов " + d.filled + " точ.";
+    d.spans.forEach((sp, i) => {
+      t += "\n   пролёт " + (i + 1) + ": " + sp.len + " м, станции " + sp.g0 + "→" + sp.g1 + " м" +
+        (sp.edge ? ", трос до бровки " + sp.hEnd + " м" : "") + ", провис " + sp.sag + " м, макс. над склоном " + sp.above + " м";
+    });
+    return t;
+  }).join("\n");
+}   // для отладки из консоли браузера
 
 // Список маршрутов выбранной горы под её названием: цветная метка, тап — скрыть/показать маршрут
 function renderRouteList(m) {
@@ -626,6 +657,7 @@ function goTo(i) {
   document.getElementById("mMeta").textContent =
     m.h.toLocaleString("ru-RU") + " м · " + n + " " + (n === 1 ? "маршрут" : n < 5 ? "маршрута" : "маршрутов");
   renderRouteList(m);
+  showRouteDbg();
   setTimeout(() => m.routes.forEach(rt => drapeRoute(rt, m.name)), 400);
   document.querySelectorAll(".chip").forEach((c, k) => c.classList.toggle("on", k === i));
 }
