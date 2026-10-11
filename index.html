@@ -92,7 +92,7 @@
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps">Версия: 11.10, 14:35</span>
+  <span class="fps">Версия: 11.10, 14:50</span>
   <span class="fps" id="nodes">Узлов: —</span>
   <div class="fps" id="routeDbg" style="max-width:300px;white-space:pre-wrap;font-size:11px"></div>
 </div>
@@ -334,7 +334,7 @@ const TERRAINS = { globus: new GlobusRgbTerrain(), mapterhorn: new MapterhornTer
 // выбранной горы, а всё вокруг — с грубых плиток. Движок спрашивает рельеф каждого участка через isReadyToLoad;
 // если ответ «нет», участок остаётся с рельефом от более крупной плитки — фоновые горы видны, но не детализируются
 // и не отнимают сеть у выбранной горы.
-const BG_TERRAIN_ZOOM = 10;
+const BG_TERRAIN_ZOOM = 8;   // вокруг выбранной горы рельеф не подробнее 8-го зума — фоновые горы грубыми силуэтами
 let detailBox = null;   // [запад, юг, восток, север] выбранной горы
 Object.values(TERRAINS).forEach(t => {
   const orig = t.isReadyToLoad.bind(t);
@@ -385,11 +385,12 @@ const globus = new Globe({
 });
 const planet = globus.planet;
 window.planet = planet;   // для отладки из консоли браузера
-// Очистка памяти плиток. Движок при числе узлов больше maxNodesCount (по умолчанию 400) и любом движении камеры
-// выбрасывает ВСЕ загруженные плитки и грузит их заново — при облёте это шло постоянно и выглядело как
-// «перестройка текстур». Поднимаем лимит, а сами чистим память только при переходе к далёкой горе
-// (старые плитки там точно не нужны) — см. goTo.
-planet._maxNodes = 2500;
+// Очистка памяти плиток. Движок, когда число созданных узлов больше maxNodesCount, при любом движении камеры
+// выбрасывает ВСЕ загруженные плитки и грузит их заново. Счётчик узлов при этом только растёт, поэтому при облёте
+// очистка рано или поздно срабатывает — это и была «перестройка текстур». Автоочистку выключаем (disableMemClear),
+// а память освобождаем сами при переходе к далёкой горе — см. setDetailBox.
+planet.disableMemClear = true;
+planet._maxNodes = 2500;   // только для счётчика в ⚙
 
 // ---------------- Маршруты восхождения ----------------
 const ROUTE_LIFT = 3;      // небольшой подъём линии над рельефом; от провалов под склон защищает depthOffset слоя
@@ -1228,7 +1229,7 @@ planet.renderer.events.on("postdraw", () => {
   const now = performance.now();
   if (now - fpsT > 1000) {
     document.getElementById("fps").textContent = "FPS: " + Math.round(frames * 1000 / (now - fpsT));
-    document.getElementById("nodes").textContent = "Узлов: " + planet._createdNodesCount + " из " + planet._maxNodes;
+    document.getElementById("nodes").textContent = "Узлов загружено: " + planet._createdNodesCount;
     frames = 0; fpsT = now;
   }
 });
