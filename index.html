@@ -92,7 +92,8 @@
   <label><input type="checkbox" id="dTerrain" checked> Рельеф</label>
   <label><input type="checkbox" id="dAtmos"> Атмосфера</label>
   <span class="fps" id="fps">FPS: —</span>
-  <span class="fps">Версия: 11.10, 14:20</span>
+  <span class="fps">Версия: 11.10, 14:35</span>
+  <span class="fps" id="nodes">Узлов: —</span>
   <div class="fps" id="routeDbg" style="max-width:300px;white-space:pre-wrap;font-size:11px"></div>
 </div>
 
@@ -355,6 +356,7 @@ function setDetailBox(m) {
   if (prev) {
     const near = Math.abs((prev[0] + prev[2]) / 2 - m.lon) < 1.5 && Math.abs((prev[1] + prev[3]) / 2 - m.lat) < 1.5;
     if (near) requestAnimationFrame(() => planet.quadTreeStrategy.destroyBranches());
+    else requestAnimationFrame(() => planet.memClear(true));   // далёкая гора: освобождаем память от прежней
   }
 }
 
@@ -383,6 +385,11 @@ const globus = new Globe({
 });
 const planet = globus.planet;
 window.planet = planet;   // для отладки из консоли браузера
+// Очистка памяти плиток. Движок при числе узлов больше maxNodesCount (по умолчанию 400) и любом движении камеры
+// выбрасывает ВСЕ загруженные плитки и грузит их заново — при облёте это шло постоянно и выглядело как
+// «перестройка текстур». Поднимаем лимит, а сами чистим память только при переходе к далёкой горе
+// (старые плитки там точно не нужны) — см. goTo.
+planet._maxNodes = 2500;
 
 // ---------------- Маршруты восхождения ----------------
 const ROUTE_LIFT = 3;      // небольшой подъём линии над рельефом; от провалов под склон защищает depthOffset слоя
@@ -1221,6 +1228,7 @@ planet.renderer.events.on("postdraw", () => {
   const now = performance.now();
   if (now - fpsT > 1000) {
     document.getElementById("fps").textContent = "FPS: " + Math.round(frames * 1000 / (now - fpsT));
+    document.getElementById("nodes").textContent = "Узлов: " + planet._createdNodesCount + " из " + planet._maxNodes;
     frames = 0; fpsT = now;
   }
 });
