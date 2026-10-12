@@ -30,6 +30,9 @@ fn shk(x: f32, kk: f32) -> f32 { if (sin(kk * 2.17 + .4) < .3) { return 1e9; } l
 fn shd(x: f32) -> f32 { let k = floor(x / 4300. - .5); return min(shk(x, k - 1.), min(shk(x, k), shk(x, k + 1.))); }
 fn shy(x: f32) -> f32 { return 30. + cfl(x) + cD(x) * (.52 + .06 * sin(x * 7e-4)); }
 fn sht(x: f32) -> f32 { return cD(x) * .07; }
+fn shT(x: f32, a: f32) -> f32 { return sqrt(clamp((-shd(x) + 110. * nz(x * 1.1e-3, a * 1.7, .8, .6, 3.3)) / 320., 0., 1.)); }
+fn shU(x: f32, a: f32) -> f32 { return max(0., sht(x) * shT(x, a) * (.5 + 1.6 * smoothstep(.5, 1.2, abs(a)) + .35 * nz(x * 3.7e-3, a * 2.9, .7, .7, 1.3))); }
+fn shB(x: f32, a: f32) -> f32 { return max(0., sht(x) * shT(x, a) * (.55 + 2.6 * smoothstep(.45, 1.2, abs(a)) + .55 * nz(x * 2.9e-3, a * 2.3 + 5., .6, .8, 4.1))); }
 fn chgt(x0: f32, z0: f32, sc: f32) -> f32 {
   let x = x0 / sc; let z = z0 / sc;
   let sl = czd(x); let isl = inverseSqrt(1. + sl * sl);
@@ -53,8 +56,10 @@ fn chgt(x0: f32, z0: f32, sc: f32) -> f32 {
   let fk = fkz(x);
   h += min(380., .72 * D) * sp * smoothstep(600., 1700., archd(x)) * smoothstep(130., 230., w0) * smoothstep(.05, .22, u) * (1. - smoothstep(.95, 1.15, u)) * (1. - fk) * smoothstep(0., 500., shd(x));
   if (fk > 0.) {
-    let iw = .15 * w0 * (.45 + .55 * fk); var ci = 1. - smoothstep(iw * .5, iw * 1.5, d); let cs4 = ci * 4.; ci = mix(ci, (floor(cs4) + smoothstep(.55, .95, fract(cs4))) / 4., .6);
-    let ihf = .55 + .45 * smoothstep(-.3, .3, sin(x * 1.9e-4 + 1.3)); let hi = fl + (D * ihf - fl) * fk * ci + ci * fk * nz(x * 3.1e-3, z * 3.1e-3, .6, .8, 2.4) * 25.; h = max(h, hi);
+    let iw = .14 * w0 * (.45 + .55 * fk) * (1. + .35 * nz(x * 1.3e-3, 7.3, .8, .6, 1.7)); let io = .05 * w0 * nz(x * 9e-4, 3.1, .6, .8, .4); let di = abs(dz * isl - io);
+    var ci = 1. - smoothstep(iw * .25, iw * 2.2, di); ci = ci * ci * (3. - 2. * ci);
+    let ihf = (.55 + .45 * smoothstep(-.3, .3, sin(x * 1.9e-4 + 1.3))) * (1. + .1 * nz(x * 2.3e-3, 1.1, .7, .7, 2.9));
+    let hi = fl + (D * ihf - fl) * fk * ci + ci * fk * (nz(x * 3.1e-3, z * 3.1e-3, .6, .8, 2.4) * 30. + nz(x * 8e-3, z * 8e-3, .9, .4, 1.) * 10.); h = max(h, hi);
   }
   return h * sc;
 }
@@ -85,9 +90,10 @@ fn archHit(p: vec3f, m: f32) -> bool {
   return false;
 }
 fn shelfHit(p: vec3f, m: f32) -> bool {
-  let u = p.x / SC; if (shd(u) * SC > m) { return false; }
-  let sl = czd(u); let n = abs(p.z - ZC(p.x)) / sqrt(1. + sl * sl); if (n > WW(p.x) * 1.25) { return false; }
-  return abs(p.y - shy(u) * SC) < sht(u) * SC * .5 + m;
+  let u = p.x / SC; if (shd(u) * SC > m + 120. * SC) { return false; }
+  let sl = czd(u); let a = (p.z - ZC(p.x)) / sqrt(1. + sl * sl) / WW(p.x); if (abs(a) > 1.3) { return false; }
+  let ys = shy(u) * SC; let up = shU(u, a); let dn = shB(u, a);
+  return p.y < ys + up * SC + m && p.y > ys - dn * SC - m && up + dn > 0.;
 }
 fn nextArchK(x: f32) -> f32 { var k = floor(x / SPA()) - 1.; for (var i = 0; i < 4; i++) { if (AX(k) > x) { return k; } k += 1.; } return k; }
 fn altPref(x: f32) -> f32 {
@@ -134,10 +140,10 @@ fn plan(P: vec3f, v_: f32, pl1: ptr<function, vec4f>, pl2: ptr<function, vec4f>,
     let s = f32(i) / 14.; let xi = x0 + Lsx * s; let sl = czd(xi / SC); let il = inverseSqrt(1. + sl * sl);
     SX[i] = xi; SE[i] = popE(xi); SW[i] = WW(xi); SD[i] = DD(xi); SZ[i] = ZC(xi); SF[i] = FL(xi); SNX[i] = -sl * il; SNZ[i] = il; SB[i] = ss(0., BLE, s);
     let rx = SW[i] * 1.3; SR[i] = min(GND(xi + SNX[i] * rx, SZ[i] + SNZ[i] * rx), GND(xi - SNX[i] * rx, SZ[i] - SNZ[i] * rx));
-    let kk = nextArchK(xi - 40. * CS - 300. * SC); let na = AP_(kk); SA[i] = abs(na.x - xi) < na.Lt + 80. * CS; SH[i] = shd(xi / SC) * SC < 120. * CS;
+    let kk = nextArchK(xi - 40. * CS - 300. * SC); let na = AP_(kk); SA[i] = abs(na.x - xi) < na.Lt + 80. * CS; SH[i] = shd(xi / SC) * SC < 120. * CS + 120. * SC;
   }
   for (var i = 1; i <= 14; i++) { if (SH[i]) { let u = SX[i] / SC; let ys = shy(u) * SC; let th = sht(u) * SC;
-    acs[5] = clamp((ys - th * .5 - SF[i]) / SD[i] - .12, .1, 1.9); acs[6] = clamp((ys + th * .5 - SF[i]) / SD[i] + .12, .1, 1.9); nac = 7; break; } }
+    acs[5] = clamp((ys - 1.2 * th - SF[i]) / SD[i] - .1, .1, 1.9); acs[6] = clamp((ys + th - SF[i]) / SD[i] + .1, .1, 1.9); nac = 7; break; } }
   var bestC = 1e30; var bLc = 0.; var bac = .3; var bCmin = 0.; var bwmin = 0.; var bk = 0.; var bOut = 0.;
   var pts: array<vec3f, 15>;
   for (var li = 0; li < 11; li++) {
@@ -204,7 +210,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     /* падение → возврат назад в каньон */
     if (P.y < GND(P.x, P.z) + 2. * CS || archHit(P, 2. * CS) || shelfHit(P, 2. * CS)) {
       let x = P.x - 150. * CS - VMAX * .8; let ap = altPref(x); P = vec3f(x, FL(x) + ap * DD(x), ZC(x) + .5 * fkz(x / SC) * WW(x));
-      if (shd(x / SC) * SC < 300. * CS) { let ys = shy(x / SC) * SC; let th = sht(x / SC) * SC; if (P.y > ys - th * .5 - 60. * CS && P.y < ys + th * .5 + 60. * CS) { P.y = (FL(x) + ys - th * .5) / 2.; } } f = normalize(vec3f(1., 0., czd(x / SC))); v = VMAX * .5; pl2.w = -1e9;
+      if (shd(x / SC) * SC < 300. * CS + 120. * SC) { let ys = shy(x / SC) * SC; let th = sht(x / SC) * SC; if (P.y > ys - 1.2 * th - 60. * CS && P.y < ys + th + 60. * CS) { P.y = (FL(x) + ys - 1.2 * th) / 2.; } } f = normalize(vec3f(1., 0., czd(x / SC))); v = VMAX * .5; pl2.w = -1e9;
     }
     /* статистика */
     let crashed = P.x < Po.x - 1.;

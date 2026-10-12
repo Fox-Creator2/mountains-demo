@@ -62,7 +62,7 @@
 <div id="chip" class="auto">АВТОПИЛОТ</div>
 <div id="mark"><svg viewBox="0 0 40 40"><path id="markArrow" d="M20 4 L32 30 L20 24 L8 30 Z" fill="#ffd54a" stroke="#000" stroke-width="1.5"/></svg><span id="markT"></span></div>
 <div id="toast"></div>
-<div id="warn" style="position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 100px);transform:translateX(-50%);color:#ff5040;font:700 16px system-ui;text-shadow:0 0 6px #000;pointer-events:none;display:none">⚠ РАКЕТЫ</div>
+<div id="warn" style="position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 100px);transform:translateX(-50%);color:#ff5040;font:700 16px system-ui;text-shadow:0 0 6px #000;pointer-events:none;display:none">⚠ ЗЕНИТКИ</div>
 <div id="flash"></div>
 <div id="thr"><div id="thrFill"></div><span>ГАЗ</span></div>
 <div id="stick"><i></i></div>
@@ -77,7 +77,7 @@
   <label>Пилот <select id="sPilot"></select></label>
   <div class="row"><button id="bPilotFile">⬆ Загрузить пилотов из JSON</button><input type="file" id="fPilot" accept=".json,application/json" style="display:none"></div>
   <div class="row"><a href="train.html" style="color:#9cf">🧬 Тренировка пилотов на вашей видеокарте</a></div>
-  <label>Турели с ракетами <select id="sTur"><option value="0">нет</option><option value="1">редко</option><option value="2">часто</option></select></label>
+  <label>Зенитки на кромке <select id="sTur"><option value="0">нет</option><option value="1">редко</option><option value="2">часто</option></select></label>
   <label>Облака <select id="sCloud"><option value="0">нет</option><option value="1">немного</option><option value="2">много</option></select></label>
   <label>Трасса и скорость <select id="sPreset"></select></label>
   <div class="row"><button id="bNew">🎲 Новая трасса</button><button id="bRestart">⟲ Заново</button><button id="bClose">Закрыть</button></div>
@@ -90,7 +90,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 12.10, 14:15</small>
+  <small id="ver">версия 12.10, 14:56</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -287,18 +287,19 @@ function archHit(x, y, z, m) {
 }
 /* полки: каменная плита поперёк каньона (над ней и под ней — проходы) */
 function shelfHit(x, y, z, m) {
-  const sc = T.SC, u = x / sc; if (CW.shd(u) * sc > m) return false;
-  const sl = CW.czd(u), n = Math.abs(z - cyZc(x)) / Math.sqrt(1 + sl * sl); if (n > cyW(x) * 1.25) return false;
-  return Math.abs(y - CW.shy(u) * sc) < CW.sht(u) * sc * .5 + m;
+  const sc = T.SC, u = x / sc; if (CW.shd(u) * sc > m + 120 * sc) return false;
+  const sl = CW.czd(u), a = (z - cyZc(x)) / Math.sqrt(1 + sl * sl) / cyW(x); if (Math.abs(a) > 1.3) return false;
+  const ys = CW.shy(u) * sc; return y < ys + CW.shU(u, a) * sc + m && y > ys - CW.shB(u, a) * sc - m && CW.shU(u, a) + CW.shB(u, a) > 0;
 }
 const shelves = new Map();
+/* меш полки строится по той же формуле, что и столкновение: сетка вдоль оси (u) × поперёк (a — доля ширины по перпендикуляру) */
 function shelfGeo(kk) {
-  const sc = T.SC, a = 4300 * (kk + .5 + .22 * Math.sin(2.3 * kk + .6)), b = 4300 * (kk + 1.5 + .22 * Math.sin(2.3 * kk + 2.9)), mid = (a + b) / 2, hl = Math.min(950, (b - a) * .5 - 800);
-  const NS = 30, NN = 14, pos = [], idx = [], nse = (p, q) => Math.sin(p * .013 + q * 3.1) * .5 + Math.sin(p * .031 - q * 7.3 + 1) * .3 + Math.sin(p * .07 + q * 13) * .2;
+  const sc = T.SC, a0 = 4300 * (kk + .5 + .22 * Math.sin(2.3 * kk + .6)), b0 = 4300 * (kk + 1.5 + .22 * Math.sin(2.3 * kk + 2.9)), mid = (a0 + b0) / 2, hl = Math.min(950, (b0 - a0) * .5 - 800) + 160;
+  const NS = 72, NA = 28, pos = [], idx = [];
   for (const side of [1, -1]) { const base = pos.length / 3;
-    for (let i = 0; i <= NS; i++) { const su = -hl + 2 * hl * i / NS, u = mid + su, sl = CW.czd(u), il = 1 / Math.sqrt(1 + sl * sl), w = CW.cw0(u), zc = CW.czc(u), ys = CW.shy(u), th = CW.sht(u), tf = Math.pow(Math.max(0, 1 - Math.pow(Math.abs(su / hl), 4)), .35);
-      for (let j = 0; j <= NN; j++) { const n = -1.3 + 2.6 * j / NN, y = ys + side * (th * .5 * tf + th * .25 * tf * nse(u, n * 3 + side)); pos.push((u - sl * il * n * w) * sc, y * sc, (zc + il * n * w) * sc); } }
-    for (let i = 0; i < NS; i++) for (let j = 0; j < NN; j++) { const p = base + i * (NN + 1) + j, q = p + NN + 1; if (side > 0) idx.push(p, q, p + 1, p + 1, q, q + 1); else idx.push(p, p + 1, q, p + 1, q + 1, q); } }
+    for (let i = 0; i <= NS; i++) { const u = mid - hl + 2 * hl * i / NS, sl = CW.czd(u), il = 1 / Math.sqrt(1 + sl * sl), w = CW.cw0(u), zc = CW.czc(u), ys = CW.shy(u);
+      for (let j = 0; j <= NA; j++) { const a = -1.3 + 2.6 * j / NA, y = ys + (side > 0 ? CW.shU(u, a) : -CW.shB(u, a)); pos.push(u * sc, y * sc, (zc + a * w / il) * sc); } }
+    for (let i = 0; i < NS; i++) for (let j = 0; j < NA; j++) { const p = base + i * (NA + 1) + j, q = p + NA + 1; if (side > 0) idx.push(p, q, p + 1, p + 1, q, q + 1); else idx.push(p, p + 1, q, p + 1, q + 1, q); } }
   const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); return g;
 }
 function updateShelves() {
@@ -310,78 +311,90 @@ function updateShelves() {
 /* безопасная точка возврата/старта: в развилке — в правый рукав (на оси стоит остров), у полки — под неё */
 function safeSpot(x, a) {
   const sc = T.SC, cs = T.cs, u = x / sc, fl = cyFl(x), D = cyD(x); let y = fl + a * D; const z = cyZc(x) + .5 * CW.fkz(u) * cyW(x);
-  if (CW.shd(u) * sc < 300 * cs) { const ys = CW.shy(u) * sc, th = CW.sht(u) * sc; if (y > ys - th * .5 - 60 * cs && y < ys + th * .5 + 60 * cs) y = (fl + ys - th * .5) / 2; }
+  if (CW.shd(u) * sc < 300 * cs + 120 * sc) { const ys = CW.shy(u) * sc, th = CW.sht(u) * sc; if (y > ys - 1.2 * th - 60 * cs && y < ys + th + 60 * cs) y = (fl + ys - 1.2 * th) / 2; }
   return [y, z];
 }
-/* ===== турели на кромке и неуправляемые ракеты =====
-   Турель бьёт залпом из 3 ракет со скоростью самолёта: целится с упреждением (куда самолёт прилетит, если не свернёт)
-   и с разбросом — заградительный огонь. Ракеты летят прямо, сами не наводятся; попадание = падение. */
-const TUR = { SP: 3100, list: new Map(), missiles: [], booms: [], hits: 0, fired: 0, geo: null, mats: null };
+/* ===== зенитки на кромке каньона =====
+   Установка бьёт очередями трассирующих снарядов. Каждый снаряд летит в точку упреждения (куда самолёт прилетит,
+   если продолжит лететь вдоль каньона) с разбросом и взрывается там по дистанционному взрывателю. Опасен сам разрыв
+   (~0.45 с), дальше остаётся безвредное облачко дыма. Снаряды не наводятся. Автопилот знает, где и когда будет разрыв. */
+const TUR = { SP: 3100, list: new Map(), shells: [], bursts: [], hits: 0, fired: 0, geo: null, mats: null };
+const FLAK = { act: .45, life: 2.6, rate: .16, vs: 1.6 };
 function turretAt(kt) {
   if (!+S.tur || Math.sin(kt * 4.3 + 1.1) * .5 + .5 < (+S.tur >= 2 ? .35 : .65)) return null;
   const sc = T.SC, u = TUR.SP * (kt + .5 + .3 * Math.sin(kt * 1.7)), side = Math.sin(kt * 7.7 + .3) > 0 ? 1 : -1;
   const sl = CW.czd(u), il = 1 / Math.sqrt(1 + sl * sl), w = CW.cw0(u), D = CW.cD(u), zc = CW.czc(u), at = n => CW.chgt(u - sl * il * n * w * side, zc + il * n * w * side, 1);
-  /* на самой кромке обрыва: идём от плато к оси, пока высота не начнёт падать — иначе край обрыва закрывает выстрел */
+  /* на самой кромке обрыва: от плато к оси, пока высота не начнёт падать — иначе край закрывает обстрел */
   const top = at(1.3); let n = 1.3; while (n > .6 && at(n - .05) > top - .04 * D) n -= .05;
   const d = n * w * side, x = (u - sl * il * d) * sc, z = (zc + il * d) * sc;
-  return { kt, x, y: gnd(x, z), z, next: 0, mesh: null };
+  return { kt, x, y: gnd(x, z), z, next: 0, mesh: null, aim: new THREE.Vector3(x + 1, gnd(x, z) + 1, z) };
 }
 const _o = new THREE.Vector3(), _V = new THREE.Vector3(), _D = new THREE.Vector3(), _A = new THREE.Vector3();
-function fireSalvo(t) {
-  /* прогноз: самолёт продолжит лететь вдоль каньона с тем же смещением от оси и той же относительной высотой;
-     время встречи — итерациями (ракета летит со скоростью самолёта) */
-  const p = player, vm = T.vmax, cs = T.cs, x0 = p.pos.x; _o.set(t.x, t.y + 40 * cs, t.z);
-  const L = (p.pos.z - cyZc(x0)) / cyW(x0), ah = (p.pos.y - cyFl(x0)) / cyD(x0), vx = Math.max(p.v * Math.max(.3, p.f.x), vm * .2);
-  let tt = p.pos.distanceTo(_o) / vm;
-  for (let k = 0; k < 6; k++) { const x = x0 + vx * tt; _A.set(x, cyFl(x) + ah * cyD(x), cyZc(x) + L * cyW(x)); tt = _A.distanceTo(_o) / vm; }
-  const sp = .1 * cyW(_A.x), j = Math.random() * 6.283;
-  for (let q = 0; q < 5; q++) { const an = j + q * 1.2566, rr = q ? sp : 0, tg = _V.copy(_A).add(_D.set(0, Math.sin(an) * rr * .7, Math.cos(an) * rr)), dir = tg.sub(_o).normalize();
-    TUR.missiles.push({ pos: _o.clone(), vel: dir.multiplyScalar(vm), life: tt * 1.8 + 1, mesh: null }); }
-  TUR.fired++; t.flash = .12;
+const flakR = () => 30 * T.cs + .012 * T.vmax; // радиус поражения разрыва
+function fireShell(t) {
+  const p = player, cs = T.cs, vs = T.vmax * FLAK.vs, x0 = p.pos.x; _o.set(t.x, t.y + 30 * cs, t.z);
+  const L = (p.pos.z - cyZc(x0)) / cyW(x0), ah = (p.pos.y - cyFl(x0)) / cyD(x0), vx = Math.max(p.v * Math.max(.3, p.f.x), T.vmax * .2);
+  let tt = p.pos.distanceTo(_o) / vs;
+  for (let k = 0; k < 6; k++) { const x = x0 + vx * tt; _A.set(x, cyFl(x) + ah * cyD(x), cyZc(x) + L * cyW(x)); tt = _A.distanceTo(_o) / vs; }
+  /* разброс: облако разрывов вокруг точки упреждения (заградительный огонь) */
+  const sp = .12 * cyW(_A.x), r = Math.cbrt(Math.random()) * sp, th = Math.random() * 6.283, ph = Math.acos(2 * Math.random() - 1);
+  _A.x += r * Math.sin(ph) * Math.cos(th) * 2.5; _A.y += r * Math.cos(ph) * .7; _A.z += r * Math.sin(ph) * Math.sin(th);
+  t.aim.copy(_A); TUR.shells.push({ from: _o.clone(), to: _A.clone(), t0: tNow, tb: tNow + tt, mesh: null }); TUR.fired++; t.flash = .06;
 }
-function boom(pos, big) { TUR.booms.push({ pos: pos.clone(), t: 0, big, mesh: null }); }
-/* шаг турелей и ракет; возвращает true, если самолёт сбит */
+/* шаг зениток; true — самолёт поражён */
 function turretsStep(dt, px, py, pz) {
-  const p = player, sc = T.SC, cs = T.cs; let hit = false;
+  const p = player, sc = T.SC; let hit = false;
   if (+S.tur) { const kc = Math.floor(p.pos.x / sc / TUR.SP), ahead = Math.ceil(T.vmax * 3.6 / sc / TUR.SP) + 1;
     for (let k = kc - 1; k <= kc + ahead; k++) if (!TUR.list.has(k)) TUR.list.set(k, turretAt(k));
     for (const [k, t] of TUR.list) { if (k < kc - 2) { if (t && t.mesh) t.mesh.visible = false; TUR.list.delete(k); continue; } if (!t) continue;
-      const dx = t.x - p.pos.x; if (dx > T.vmax * .35 && dx < T.vmax * 3.2 && tNow >= t.next) { t.next = tNow + 1.1; fireSalvo(t); } } }
-  const R = 28 * cs;
-  for (const m of TUR.missiles) { if (m.life <= 0) continue;
-    const ax = m.pos.x - px, ay = m.pos.y - py, az = m.pos.z - pz; m.pos.addScaledVector(m.vel, dt); m.life -= dt;
-    const bx = m.pos.x - p.pos.x, by = m.pos.y - p.pos.y, bz = m.pos.z - p.pos.z, dx = bx - ax, dy = by - ay, dz = bz - az, dd = dx * dx + dy * dy + dz * dz;
-    const u = dd > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy + az * dz) / dd)) : 0, cx = ax + dx * u, cy_ = ay + dy * u, cz = az + dz * u;
-    if (cx * cx + cy_ * cy_ + cz * cz < R * R) { hit = true; m.life = 0; boom(p.pos, true); TUR.hits++; continue; }
-    if (m.pos.y < gnd(m.pos.x, m.pos.z) || archHit(m.pos.x, m.pos.y, m.pos.z, 0) || shelfHit(m.pos.x, m.pos.y, m.pos.z, 0)) { m.life = 0; boom(m.pos, false); } }
+      const dx = t.x - p.pos.x; if (dx > T.vmax * .3 && dx < T.vmax * 3.4 && tNow >= t.next) { t.next = tNow + FLAK.rate * (.7 + .6 * Math.random()); fireShell(t); } } }
+  /* снаряд долетел — разрыв */
+  for (const sh of TUR.shells) if (!sh.done && tNow >= sh.tb) { sh.done = true; if (sh.to.y > gnd(sh.to.x, sh.to.z)) TUR.bursts.push({ pos: sh.to, t0: sh.tb, mesh: null }); }
+  /* поражение: отрезок пути самолёта за шаг проходит через активный разрыв */
+  const R = flakR(), ax = p.pos.x - px, ay = p.pos.y - py, az = p.pos.z - pz, aa = ax * ax + ay * ay + az * az;
+  for (const b of TUR.bursts) { if (b.hitDone || tNow - b.t0 > FLAK.act) continue;
+    const qx = b.pos.x - px, qy = b.pos.y - py, qz = b.pos.z - pz, u = aa > 0 ? Math.max(0, Math.min(1, (qx * ax + qy * ay + qz * az) / aa)) : 0;
+    if (Math.hypot(qx - ax * u, qy - ay * u, qz - az * u) < R) { hit = true; b.hitDone = true; TUR.hits++; } }
   return hit;
 }
-/* отрисовка турелей, ракет и взрывов (кадр) */
+/* опасности для планировщика: разрыв в точке P в окне времени [ta, tb] (от «сейчас») */
+function flakHazards() {
+  const H = []; for (const sh of TUR.shells) if (!sh.done) H.push([sh.to, sh.tb - tNow, sh.tb - tNow + FLAK.act]);
+  for (const b of TUR.bursts) { const a = tNow - b.t0; if (a < FLAK.act) H.push([b.pos, 0, FLAK.act - a]); }
+  return H;
+}
+/* отрисовка: установки, трассеры, вспышки и облачка разрывов */
 function turretsDraw(dt) {
-  if (!TUR.geo) { const cs = 1;
-    TUR.geo = { base: new THREE.CylinderGeometry(26, 34, 18, 10), dome: new THREE.SphereGeometry(20, 12, 8, 0, 6.283, 0, 1.6), barrel: new THREE.CylinderGeometry(4, 5, 60, 8).translate(0, 30, 0).rotateX(Math.PI / 2), light: new THREE.SphereGeometry(6, 8, 6),
-      missile: new THREE.CylinderGeometry(1, 1, 1, 6).translate(0, -.5, 0).rotateX(Math.PI / 2), boom: new THREE.SphereGeometry(1, 14, 10) };
-    TUR.mats = { metal: new THREE.MeshLambertMaterial({ color: 0x3a4048 }), red: new THREE.MeshBasicMaterial({ color: 0xff3020 }), missile: new THREE.MeshBasicMaterial({ color: 0xff8a30, transparent: true, opacity: .8, blending: THREE.AdditiveBlending, depthWrite: false }), glow: new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, opacity: .7, blending: THREE.AdditiveBlending, depthWrite: false }),
-      boom: new THREE.MeshBasicMaterial({ color: 0xff8a30, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }) }; }
+  if (!TUR.geo) {
+    TUR.geo = { base: new THREE.CylinderGeometry(30, 38, 14, 10), mount: new THREE.BoxGeometry(34, 18, 30), barrel: new THREE.CylinderGeometry(2.6, 3.4, 70, 6).translate(0, 35, 0).rotateX(Math.PI / 2),
+      light: new THREE.SphereGeometry(5, 8, 6), tracer: new THREE.CylinderGeometry(1, 1, 1, 5).translate(0, -.5, 0).rotateX(Math.PI / 2), ball: new THREE.SphereGeometry(1, 12, 8), puff: new THREE.IcosahedronGeometry(1, 1) };
+    TUR.mats = { metal: new THREE.MeshLambertMaterial({ color: 0x4a5040 }), dark: new THREE.MeshLambertMaterial({ color: 0x23261f }), red: new THREE.MeshBasicMaterial({ color: 0xff3020 }),
+      tracer: new THREE.MeshBasicMaterial({ color: 0xffd060, transparent: true, opacity: .85, blending: THREE.AdditiveBlending, depthWrite: false }),
+      flash: new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
+      smoke: new THREE.MeshLambertMaterial({ color: 0x4a4542, transparent: true, depthWrite: false, flatShading: true }) }; }
   const G = TUR.geo, M = TUR.mats, cs = T.cs, p = player;
   for (const t of TUR.list.values()) { if (!t) continue;
-    if (!t.mesh) { const g = new THREE.Group(), base = new THREE.Mesh(G.base, M.metal), dome = new THREE.Mesh(G.dome, M.metal), barrel = new THREE.Mesh(G.barrel, M.metal), light = new THREE.Mesh(G.light, M.red);
-      base.position.y = 9; dome.position.y = 18; barrel.position.y = 30; light.position.y = 40; g.add(base, dome, barrel, light); g.userData = { barrel, light }; SCN.add(g); t.mesh = g; }
+    if (!t.mesh) { const g = new THREE.Group(), base = new THREE.Mesh(G.base, M.dark), mount = new THREE.Group(), box = new THREE.Mesh(G.mount, M.metal), b1 = new THREE.Mesh(G.barrel, M.dark), b2 = new THREE.Mesh(G.barrel, M.dark), light = new THREE.Mesh(G.light, M.red);
+      base.position.y = 7; mount.position.y = 26; b1.position.x = -8; b2.position.x = 8; mount.add(box, b1, b2); light.position.y = 40; g.add(base, mount, light); g.userData = { mount, light }; SCN.add(g); t.mesh = g; }
     const g = t.mesh; g.visible = true; g.position.set(t.x, t.y, t.z); g.scale.setScalar(cs * 3);
-    g.userData.barrel.lookAt(p.pos); g.userData.light.visible = (t.flash = Math.max(0, (t.flash || 0) - dt)) > 0 || Math.sin(tNow * 9 + t.kt) > 0; }
-  TUR.missiles = TUR.missiles.filter(m => { if (m.life > 0) return true; if (m.mesh) { SCN.remove(m.mesh); } return false; });
-  for (const m of TUR.missiles) { if (!m.mesh) { const g = new THREE.Group(), tr = new THREE.Mesh(G.missile, M.missile), hd = new THREE.Mesh(G.boom, M.glow); tr.frustumCulled = hd.frustumCulled = false; g.add(tr, hd); g.userData = { tr, hd }; m.mesh = g; SCN.add(g); }
-    /* трассер: яркий след длиной ~0.12 с полёта и светящаяся головка — видно даже на 94 000 км/ч */
-    const dc = m.pos.distanceTo(camera.position), L = Math.max(120 * cs, T.vmax * .12, dc * .05), wd = Math.max(7 * cs, dc * .004), g = m.mesh; g.position.copy(m.pos); g.lookAt(_A.copy(m.pos).add(m.vel));
-    g.userData.tr.scale.set(wd, wd, L); g.userData.hd.scale.setScalar(Math.max(22 * cs, dc * .011) * (1 + .25 * Math.sin(tNow * 40 + m.life * 7))); } // вдали крупнее: на экране не меньше нескольких пикселей
-  TUR.booms = TUR.booms.filter(b => { b.t += dt; if (b.t > .5) { if (b.mesh) SCN.remove(b.mesh); return false; } return true; });
-  for (const b of TUR.booms) { if (!b.mesh) { b.mesh = new THREE.Mesh(G.boom, M.boom.clone()); b.mesh.frustumCulled = false; SCN.add(b.mesh); }
-    const k = b.t / .5; b.mesh.position.copy(b.pos); b.mesh.scale.setScalar((b.big ? 160 : 90) * cs * (.3 + k)); b.mesh.material.opacity = 1 - k; }
+    g.updateMatrixWorld(); g.userData.mount.lookAt(t.aim); g.userData.light.visible = (t.flash = Math.max(0, (t.flash || 0) - dt)) > 0 || Math.sin(tNow * 9 + t.kt) > 0; }
+  /* трассер: короткая светящаяся «пуля» на пути к точке разрыва */
+  TUR.shells = TUR.shells.filter(sh => { if (!sh.done) return true; if (sh.mesh) SCN.remove(sh.mesh); return false; });
+  for (const sh of TUR.shells) { if (!sh.mesh) { sh.mesh = new THREE.Mesh(G.tracer, M.tracer); sh.mesh.frustumCulled = false; SCN.add(sh.mesh); }
+    const k = Math.min(1, (tNow - sh.t0) / Math.max(1e-3, sh.tb - sh.t0)); sh.mesh.position.lerpVectors(sh.from, sh.to, k); sh.mesh.lookAt(sh.to);
+    const dc = sh.mesh.position.distanceTo(camera.position), wd = Math.max(5 * cs, dc * .003); sh.mesh.scale.set(wd, wd, Math.max(150 * cs, T.vmax * .07, dc * .04)); }
+  /* разрыв: яркая вспышка (опасная фаза) и тёмное облачко, которое расползается и тает */
+  TUR.bursts = TUR.bursts.filter(b => { if (tNow - b.t0 < FLAK.life) return true; if (b.mesh) SCN.remove(b.mesh); return false; });
+  const R = flakR();
+  for (const b of TUR.bursts) { if (!b.mesh) { const g = new THREE.Group(), f = new THREE.Mesh(G.ball, M.flash.clone()), sm = new THREE.Mesh(G.puff, M.smoke.clone()); f.frustumCulled = sm.frustumCulled = false; sm.rotation.set(Math.random() * 3, Math.random() * 3, 0); g.add(sm, f); g.userData = { f, sm }; b.mesh = g; SCN.add(g); }
+    const a = tNow - b.t0, k = a / FLAK.life, g = b.mesh; g.position.copy(b.pos);
+    g.userData.f.visible = a < FLAK.act; g.userData.f.scale.setScalar(R * (.5 + 1.2 * a / FLAK.act)); g.userData.f.material.opacity = 1 - a / FLAK.act;
+    g.userData.sm.scale.setScalar(R * (.6 + 1.1 * Math.sqrt(k))); g.userData.sm.material.opacity = .85 * (1 - k); }
 }
 function clearTurrets() {
   for (const t of TUR.list.values()) if (t && t.mesh) SCN.remove(t.mesh);
-  for (const m of TUR.missiles) if (m.mesh) SCN.remove(m.mesh); for (const b of TUR.booms) if (b.mesh) SCN.remove(b.mesh);
-  TUR.list.clear(); TUR.missiles = []; TUR.booms = []; TUR.hits = 0; TUR.fired = 0;
+  for (const sh of TUR.shells) if (sh.mesh) SCN.remove(sh.mesh); for (const b of TUR.bursts) if (b.mesh) SCN.remove(b.mesh);
+  TUR.list.clear(); TUR.shells = []; TUR.bursts = []; TUR.hits = 0; TUR.fired = 0;
 }
 function clearShelves() { for (const m of shelves.values()) { SCN.remove(m); m.geometry.dispose(); } shelves.clear(); }
 function nextArch(x) { const SP = archSP(); let k = Math.floor(x / SP) - 1; for (;; k++) { const a = archParams(k); if (a.x > x) return a; } }
@@ -520,15 +533,12 @@ function cyPlan(p) {
   for (let i = 1; i <= N; i++) { const s = i / N, xi = x0 + Lsx * s, sl = CW.czd(xi / sc), il = 1 / Math.sqrt(1 + sl * sl);
     SX[i] = xi; SE[i] = popE(xi); SW[i] = cyW(xi); SD[i] = cyD(xi); SZ[i] = cyZc(xi); SF[i] = cyFl(xi); SNX[i] = -sl * il; SNZ[i] = il; SB[i] = sstep(0, AP.BLE, s);
     const rx = SW[i] * 1.3; SR[i] = Math.min(gf(xi + SNX[i] * rx, SZ[i] + SNZ[i] * rx), gf(xi - SNX[i] * rx, SZ[i] - SNZ[i] * rx)); // кромка у оси
-    const na = nextArch(xi - 40 * cs - 300 * sc); SA[i] = Math.abs(na.x - xi) < na.Lt + 80 * cs; SHf[i] = CW.shd(xi / sc) * sc < 120 * cs; }
+    const na = nextArch(xi - 40 * cs - 300 * sc); SA[i] = Math.abs(na.x - xi) < na.Lt + 80 * cs; SHf[i] = CW.shd(xi / sc) * sc < 120 * cs + 120 * sc; }
   /* у полки — явные варианты «под ней» и «над ней» (иначе все высоты вокруг желаемой могут оказаться в плите) */
   for (let i = 1; i <= N; i++) if (SHf[i]) { const u = SX[i] / sc, ys = CW.shy(u) * sc, th = CW.sht(u) * sc;
-    acs.push(Math.max(.1, Math.min(1.9, (ys - th * .5 - SF[i]) / SD[i] - .12)), Math.max(.1, Math.min(1.9, (ys + th * .5 - SF[i]) / SD[i] + .12))); break; }
-  /* ракеты: берём летящие навстречу/рядом; для каждого варианта пути — момент максимального сближения по времени */
-  const MS = [], vx = Math.max(p.v * Math.max(.3, p.f.x), T.vmax * .2), Rd = 60 * cs + .02 * v;
-  for (const m of TUR.missiles) { if (m.life <= 0) continue; const rx = m.pos.x - p.pos.x, ry = m.pos.y - p.pos.y, rz = m.pos.z - p.pos.z, wx = m.vel.x - p.f.x * p.v, wy = m.vel.y - p.f.y * p.v, wz = m.vel.z - p.f.z * p.v;
-    if (rx * wx + ry * wy + rz * wz > 0 && rx * rx + ry * ry + rz * rz > Rd * Rd) continue; MS.push(m); }
-  if (window.__noDodge) MS.length = 0; // для проверки: без уклонения
+    acs.push(Math.max(.1, Math.min(1.9, (ys - 1.2 * th - SF[i]) / SD[i] - .1)), Math.max(.1, Math.min(1.9, (ys + th - SF[i]) / SD[i] + .1))); break; }
+  /* зенитные разрывы: точка и окно времени известны заранее — отрезок пути станции, проходящий рядом в это время, штрафуется */
+  const HZ = window.__noDodge ? [] : flakHazards(), vx = Math.max(p.v * Math.max(.3, p.f.x), T.vmax * .2), Rd = flakR() + 25 * cs + .01 * v;
   let best = null; if (window.__dbg) pl.dbg = [];
   for (const Lc of Lcs) for (const ac of (Math.abs(Lc) > .8 ? acHi : acs)) {
     let qx = p.pos.x, qy = p.pos.y, qz = p.pos.z, qt = 0;
@@ -544,9 +554,9 @@ function cyPlan(p) {
       const r2 = Math.min(r * 2.4, .9 * wi), gl2 = gf(xi + nx * r2, zi + nzz * r2), gr2 = gf(xi - nx * r2, zi - nzz * r2); if (Math.max(gl2, gr2) > yi) cost += .5;
       { if (Math.abs(Li) > 1.02 || yi > SR[i] - 30 * cs) { const q = OUT * (1 - Ei); cost += q; nOut++; } }
       pts[np++] = xi; pts[np++] = yi; pts[np++] = zi;
-      if (MS.length) { const ti = (xi - x0) / vx;
-        for (const m of MS) { const ax = qx - m.pos.x - m.vel.x * qt, ay = qy - m.pos.y - m.vel.y * qt, az = qz - m.pos.z - m.vel.z * qt, dx = xi - m.pos.x - m.vel.x * ti - ax, dy = yi - m.pos.y - m.vel.y * ti - ay, dz = zi - m.pos.z - m.vel.z * ti - az, dd = dx * dx + dy * dy + dz * dz;
-          const uu = dd > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy + az * dz) / dd)) : 0, d = Math.hypot(ax + dx * uu, ay + dy * uu, az + dz * uu); if (d < Rd) cost += AP.ARW * 1.5 * (1 - d / Rd) + AP.ARW * .5; }
+      if (HZ.length) { const ti = (xi - x0) / vx;
+        for (const h of HZ) { if (h[2] < qt - .15 || h[1] > ti + .15) continue; const P = h[0], ax = xi - qx, ay = yi - qy, az = zi - qz, aa = ax * ax + ay * ay + az * az, bx = P.x - qx, by = P.y - qy, bz = P.z - qz;
+          const uu = aa > 0 ? Math.max(0, Math.min(1, (bx * ax + by * ay + bz * az) / aa)) : 0, d = Math.hypot(bx - ax * uu, by - ay * uu, bz - az * uu); if (d < Rd) cost += AP.ARW * 1.5 * (1 - d / Rd) + AP.ARW * .5; }
         qx = xi; qy = yi; qz = zi; qt = ti; }
     }
     for (let i = 4; i <= 11; i++) { const j = i * 3; const ax = pts[j - 3] - pts[j - 6], ay = pts[j - 2] - pts[j - 5], az = pts[j - 1] - pts[j - 4], bx = pts[j] - pts[j - 3], by = pts[j + 1] - pts[j - 2], bz = pts[j + 2] - pts[j - 1], la = Math.hypot(ax, ay, az), lb = Math.hypot(bx, by, bz), ang = Math.hypot(ax / la - bx / lb, ay / la - by / lb, az / la - bz / lb); kmax = Math.max(kmax, ang / ((la + lb) / 2)); }
@@ -950,7 +960,7 @@ function cyCrash(msg) {
 }
 function simStepCanyon(dt) {
   tNow += dt; const c = playerControl(), p = player, px = p.pos.x, py = p.pos.y, pz = p.pos.z; p.step(dt, c[0], c[1], c[2]);
-  if ((+S.tur || TUR.missiles.length) && turretsStep(dt, px, py, pz)) { cyCrash("Сбит ракетой — возврат в каньон"); return; }
+  if ((+S.tur || TUR.shells.length || TUR.bursts.length) && turretsStep(dt, px, py, pz)) { cyCrash("Сбит зениткой — возврат в каньон"); return; }
   cy.segT += dt; if (ctl.steerMan) cy.segManual += dt;
   const x = p.pos.x, z = p.pos.z;
   if (p.pos.y < gnd(x, z) + 2 * T.cs || archHit(x, p.pos.y, z, 2 * T.cs) || shelfHit(x, p.pos.y, z, 2 * T.cs)) { const dist = x - cy.segX; if (cy.segManual / Math.max(cy.segT, 1) > .5 && dist > cy.best) { cy.best = dist; try { localStorage.setItem("race-canyon-best-" + S.preset, String(dist)); } catch {} } cyCrash(); return; }
@@ -1013,7 +1023,7 @@ function hud(t) {
   if (!inside) { if (!fwd) { x = W - x; y = Hh - y; } const cx = W / 2, cy = Hh / 2; let dx = x - cx, dy = y - cy; if (!dx && !dy) dy = -1; const k = Math.min((W / 2 - 34) / Math.abs(dx || 1e-6), (Hh / 2 - 130) / Math.abs(dy || 1e-6)); x = cx + dx * k; y = cy + dy * k; rot = Math.atan2(dy, dx) + Math.PI / 2; }
   mk.style.display = "block"; mk.style.transform = `translate(${x.toFixed(0)}px,${y.toFixed(0)}px)`; $("markArrow").parentNode.style.transform = inside ? "scale(.55) rotate(180deg)" : `rotate(${rot}rad)`;
   if (t - hudT < 0.1) return; hudT = t;
-  { let near = false; if (cyMode) for (const m of TUR.missiles) if (m.life > 0 && m.pos.distanceTo(pl.pos) < T.vmax * 2.2 && m.vel.dot(_v.subVectors(pl.pos, m.pos)) > 0) { near = true; break; } $("warn").style.display = near ? "block" : "none"; }
+  { let near = false; if (cyMode) for (const h of flakHazards()) if (h[1] < 1.2 && h[0].distanceTo(pl.pos) < T.vmax * 1.5) { near = true; break; } $("warn").style.display = near ? "block" : "none"; }
   const dist = pl.pos.distanceTo(g.p); $("markT").textContent = dist > 1000 ? (dist / 1000).toFixed(1) + " км" : dist.toFixed(0) + " м";
   $("vS").textContent = Math.round(pl.v * 3.6).toLocaleString("ru"); $("mach").textContent = "M " + (pl.v / 340).toFixed(1) + " · крен " + Math.abs(Math.round(pl.roll * 57.3)) + "°";
   if (cyMode) {
