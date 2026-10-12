@@ -93,7 +93,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 13.10, 00:31</small>
+  <small id="ver">версия 13.10, 00:45</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -338,13 +338,21 @@ const _o = new THREE.Vector3(), _V = new THREE.Vector3(), _D = new THREE.Vector3
 const flakR = () => 22 * T.cs + .008 * T.vmax; // радиус поражения разрыва
 /* общий выстрел разрывным снарядом: из точки from в точку упреждения (самолёт продолжит лететь вдоль каньона)
    с разбросом spK·ширины; rk — множитель радиуса разрыва; возвращает точку упреждения без разброса */
+/* линия огня свободна: точки отрезка (кроме самого начала у ствола) не внутри рельефа, арки или полки */
+function losClear(a, b) {
+  for (let i = 2; i <= 14; i++) { const k = i / 14, x = a.x + (b.x - a.x) * k, y = a.y + (b.y - a.y) * k, z = a.z + (b.z - a.z) * k;
+    if (y < gnd(x, z) || archHit(x, y, z, 0) || shelfHit(x, y, z, 0)) return false; }
+  return true;
+}
 function flakShot(from, spK, rk, vk = FLAK.vs) {
   const p = player, vs = T.vmax * vk, x0 = p.pos.x;
   const L = (p.pos.z - cyZc(x0)) / cyW(x0), ah = (p.pos.y - cyFl(x0)) / cyD(x0), vx = Math.max(p.v * Math.max(.3, p.f.x), T.vmax * .2);
   let tt = p.pos.distanceTo(from) / vs;
   for (let k = 0; k < 6; k++) { const x = x0 + vx * tt; _A.set(x, cyFl(x) + ah * cyD(x), cyZc(x) + L * cyW(x)); tt = _A.distanceTo(from) / vs; }
-  const track = _A.clone(), sp = spK * cyW(_A.x), r = Math.cbrt(rnd()) * sp, th = rnd() * 6.283, ph = Math.acos(2 * rnd() - 1);
+  const track = _A.clone(); if (!losClear(from, _A)) return track; // цель закрыта скалой, полкой или аркой — не стрелять
+  const sp = spK * cyW(_A.x), r = Math.cbrt(rnd()) * sp, th = rnd() * 6.283, ph = Math.acos(2 * rnd() - 1);
   _A.x += r * Math.sin(ph) * Math.cos(th) * 2.5; _A.y += r * Math.cos(ph) * .7; _A.z += r * Math.sin(ph) * Math.sin(th);
+  if (!losClear(from, _A)) return track; // точка разрыва с разбросом тоже должна быть видна
   TUR.shells.push({ from: from.clone(), to: _A.clone(), t0: tNow, tb: tNow + tt, r: flakR() * rk, mesh: null }); TUR.fired++; return track;
 }
 /* точка упреждения для выстрела из from (без разброса) */
@@ -480,13 +488,16 @@ function boatPos(b) { // положение и курс катера сейча�
 }
 function spawnPlane() {
   const p = player, L0 = (rnd() < .5 ? -1 : 1) * (.15 + .35 * rnd());
-  EN.planes.push({ x: p.pos.x + T.vmax * (3.6 + rnd()), L0, a: .16 + .16 * rnd(), ph: rnd() * 6.28, ve: T.vmax * (.45 + .2 * rnd()), pos: new THREE.Vector3(), vel: new THREE.Vector3(), prev: null, next: 0, t0: tNow, mesh: null, dead: false });
+  EN.planes.push({ x: p.pos.x + T.vmax * (3.6 + rnd()), L0, Lc: L0, ac: .2 + .2 * rnd(), a: .16 + .16 * rnd(), ph: rnd() * 6.28, ve: T.vmax * (.45 + .2 * rnd()), pos: new THREE.Vector3(), vel: new THREE.Vector3(), prev: null, next: 0, t0: tNow, mesh: null, dead: false });
 }
-function planePos(e, t) { // где перехватчик будет в момент t (детерминированно — так его видит и автопилот)
-  const sc = T.SC, x = e.x - e.ve * (t - e.t0), u = x / sc, fk = CW.fkz(u);
-  let L = e.L0 + .22 * Math.sin(e.ph + (t - e.t0) * 1.4); L = L * (1 - fk) + Math.sign(e.L0) * .32 * fk;   // в развилке — в свой рукав
-  let y = cyFl(x) + e.a * cyD(x); if (CW.shd(u) * sc < 300 * T.cs + 120 * sc) y = Math.min(y, CW.shy(u) * sc - 1.6 * CW.sht(u) * sc); // под полкой
-  return _D.set(x, Math.max(y, gnd(x, cyZc(x) + L * cyW(x)) + 60 * T.cs), cyZc(x) + L * cyW(x));
+/* перехватчик доворачивает на самолёт игрока: смещение и высота плавно тянутся к его (ограниченная скорость доворота), плюс вилянье */
+function planeStep(e, dt) {
+  const sc = T.SC, p = player, x = e.x - e.ve * (tNow - e.t0), u = x / sc, fk = CW.fkz(u), px = p.pos.x;
+  const Lp = (p.pos.z - cyZc(px)) / cyW(px), ap = (p.pos.y - cyFl(px)) / cyD(px), lim = e.pos.x - px > T.vmax * .25;
+  if (lim) { e.Lc += Math.max(-.45 * dt, Math.min(.45 * dt, Lp - e.Lc)); e.ac += Math.max(-.3 * dt, Math.min(.3 * dt, Math.max(.12, Math.min(.9, ap)) - e.ac)); }
+  let L = e.Lc + .12 * Math.sin(e.ph + (tNow - e.t0) * 2.1); if (fk > 0) L = L * (1 - fk) + Math.sign(L || e.L0) * .32 * fk; // в развилке — в рукав
+  let y = cyFl(x) + e.ac * cyD(x); if (CW.shd(u) * sc < 300 * T.cs + 120 * sc) y = Math.min(y, CW.shy(u) * sc - 1.6 * CW.sht(u) * sc); // под полкой
+  const z = cyZc(x) + L * cyW(x); return _D.set(x, Math.max(y, gnd(x, z) + 60 * T.cs), z);
 }
 /* шаг врагов; возвращает сообщение, если самолёт поражён */
 function enemiesStep(dt, px, py, pz) {
@@ -505,11 +516,11 @@ function enemiesStep(dt, px, py, pz) {
         b.track.copy(flakShot(b.muzzle || o, b.ship ? .1 : .06, b.ship ? .9 : .5, b.ship ? FLAK.vs : 1.3)); b.last = tNow; b.recoil = 1; b.side = -b.side; } } }
   if (+S.ints) { if (tNow >= EN.nextPlane) { spawnPlane(); EN.nextPlane = tNow + (+S.ints >= 2 ? 1.6 : 3.5) * (.6 + .8 * rnd()); }
     const R = 30 * cs, ax = p.pos.x - px, ay = p.pos.y - py, az = p.pos.z - pz;
-    for (const e of EN.planes) { if (e.dead) continue; const q = planePos(e, tNow); if (!e.prev) { e.pos.copy(q); e.prev = q.clone(); e.vel.set(-e.ve, 0, 0); continue; } e.vel.copy(q).sub(e.pos).divideScalar(Math.max(dt, 1e-4)); e.prev.copy(e.pos); e.pos.copy(q);
+    for (const e of EN.planes) { if (e.dead) continue; const q = planeStep(e, dt); if (!e.prev) { e.pos.copy(q); e.prev = q.clone(); e.vel.set(-e.ve, 0, 0); continue; } e.vel.copy(q).sub(e.pos).divideScalar(Math.max(dt, 1e-4)); e.prev.copy(e.pos); e.pos.copy(q);
       /* столкновение: сближение отрезков (относительное движение за шаг) */
       const rx = e.prev.x - px, ry = e.prev.y - py, rz = e.prev.z - pz, dx = (e.pos.x - e.prev.x) - ax, dy = (e.pos.y - e.prev.y) - ay, dz = (e.pos.z - e.prev.z) - az, dd = dx * dx + dy * dy + dz * dz;
       const uu = dd > 0 ? Math.max(0, Math.min(1, -(rx * dx + ry * dy + rz * dz) / dd)) : 0; if (tNow >= (cy.inv || 0) && Math.hypot(rx + dx * uu, ry + dy * uu, rz + dz * uu) < R) { e.dead = true; EN.rams++; TUR.bursts.push({ pos: e.pos.clone(), t0: tNow, r: R * 2, mesh: null, hitDone: true }); return "Столкновение с перехватчиком"; }
-      const ahead = e.pos.x - p.pos.x; if (ahead > T.vmax * .35 && ahead < T.vmax * 1.6 && tNow >= e.next) { e.next = tNow + .22; flakShot(e.pos, .05, .55, 1.4); }
+      const ahead = e.pos.x - p.pos.x; if (ahead > T.vmax * .3 && ahead < T.vmax * 2.6 && tNow >= e.next) { e.next = tNow + .12; flakShot(e.pos, .03, .8, 1.6); } // огонь раньше, чаще и кучнее
       if (ahead < -T.vmax * 1.2) e.dead = true; }
     EN.planes = EN.planes.filter(e => { if (!e.dead) return true; if (e.mesh) SCN.remove(e.mesh); if (e.trail) SCN.remove(e.trail); return false; }); }
   return null;
@@ -546,10 +557,10 @@ function enemiesDraw(dt) {
       b.muzzle = (b.muzzle || new THREE.Vector3()).set(0, 5, 0).applyMatrix4(U.gun.matrixWorld); } }
   for (const e of EN.planes) {
     if (!e.mesh) { e.mesh = makePlane(0xd8302a, 0x303030); e.mesh.userData.flame.visible = true; const nl = c => new THREE.Mesh(TUR.geo.ball, new THREE.MeshBasicMaterial({ color: c, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
-      const l1 = nl(0xff3030), l2 = nl(0x30ff60), l3 = nl(0xffffff); l1.position.set(-4.6, 0, 2.6); l2.position.set(4.6, 0, 2.6); l3.position.set(0, .8, -3); e.mesh.add(l1, l2, l3); e.mesh.userData.lights = [l1, l2, l3];
+      const l1 = nl(0xff3030), l2 = nl(0x30ff60), l3 = nl(0xffffff); l1.position.set(-4.9, -.1, 1.9); l2.position.set(4.9, -.1, 1.9); l3.position.set(0, 1, -1); e.mesh.add(l1, l2, l3); e.mesh.userData.lights = [l1, l2, l3];
       e.trail = makeTrail(new THREE.Color(1, 1, 1)); e.trail.userData.n = 40; SCN.add(e.mesh, e.trail); }
     /* в 2.5 раза крупнее самолёта игрока; огни на законцовках вдали растут — видно на подлёте */
-    const k = cs * 3.2, dc = e.pos.distanceTo(camera.position); e.mesh.position.copy(e.pos); e.mesh.scale.setScalar(k); e.mesh.lookAt(_V.copy(e.pos).sub(e.vel)); e.mesh.rotateZ(.5 * Math.sin(e.ph + (tNow - e.t0) * 1.4 + 1.2));
+    const k = cs * 2.6, dc = e.pos.distanceTo(camera.position); e.mesh.position.copy(e.pos); e.mesh.scale.setScalar(k); e.mesh.lookAt(_V.copy(e.pos).sub(e.vel)); e.mesh.rotateZ(.5 * Math.sin(e.ph + (tNow - e.t0) * 1.4 + 1.2));
     const ls = Math.max(.9, dc * .006 / k), bl = Math.sin(tNow * 10 + e.ph) > 0; e.mesh.userData.lights.forEach((l, i) => { l.scale.setScalar(ls * (i === 2 ? (bl ? 1.4 : .2) : 1)); });
     const d = e.trail.userData; d.t += dt; if (d.t > .03) { d.t = 0; d.hist.unshift(e.pos.clone()); if (d.hist.length > d.n) d.hist.pop(); }
     const arr = e.trail.geometry.attributes.position.array; for (let i = 0; i < 56; i++) { const q = d.hist[Math.min(i, d.hist.length - 1)] || e.pos; arr[3 * i] = q.x; arr[3 * i + 1] = q.y; arr[3 * i + 2] = q.z; } e.trail.geometry.attributes.position.needsUpdate = true; e.trail.visible = d.hist.length > 2; }
@@ -751,18 +762,7 @@ function threatNow(p) {
   for (const e of EN.planes) if (!e.dead && e.pos.x > p.pos.x && e.pos.x - p.pos.x < T.vmax * 1.6) return true;
   return false;
 }
-function maneuver(p, pl) {
-  /* бочка с физикой: подъёмная сила направлена по «верху» самолёта и поворачивается вместе с креном —
-     сначала тянет вверх, затем через бок, вниз и обратно: путь — спираль вокруг прямой, упреждение зениток сбивается.
-     Начинается, только если есть запас от скал и на ближайшем пути нет известного разрыва */
-  const thr = threatNow(p); if (thr) cy.thrT = tNow;
-  if (cy.man && tNow - cy.man.t0 > cy.man.dur) { cy.man = null; cy.manCool = tNow + 7; } // бочка изредка — для зрелища
-  const roomy = (pl.Cmin || 0) > 160 * T.cs, busy = (pl.hz || 0) > 0;
-  if (!cy.man && thr && roomy && !busy && tNow > (cy.manCool || 0)) { cy.man = { type: "roll", t0: tNow, dur: 2, dir: rnd() < .5 ? -1 : 1, r0: p.roll }; cy.manN = (cy.manN || 0) + 1; }
-  const M = cy.man; if (!M) return null;
-  const k = Math.min(1, (tNow - M.t0) / M.dur), th = 6.2832 * k * k * (3 - 2 * k), a = .35 * T.AMAX; M.th = th;
-  return [M.dir * a * Math.sin(th), a * Math.cos(th) - a * (1 - Math.sin(Math.PI * k)) * 0];
-}
+function maneuver(p, pl) { if (threatNow(p)) cy.thrT = tNow; cy.man = null; return null; } // фигуры высшего пилотажа убраны: от огня уходит планировщик
 function cyAI(p) {
   const pl = cy.plan; if (tNow - pl.t > .05) cyPlan(p);
   const sc = T.SC, cs = T.cs, v = Math.max(p.v, T.vmax * .2), Ld = Math.max(AP.LD * v, 80 * cs), xT = p.pos.x + Ld * AP.LDX;
@@ -783,13 +783,25 @@ const ctl = { steerMan: false, spdMan: false, sx: 0, sy: 0, thr: 0.75, lastStick
 const camState = { f: new THREE.Vector3(0, 0, -1), up: new THREE.Vector3(0, 1, 0), pos: new THREE.Vector3(), shake: 0 };
 const fogC = new THREE.Color(0.74, 0.82, 0.94);
 
+/* реактивный истребитель (нос — по −Z): обтекаемый фюзеляж (тело вращения), стреловидное крыло с толщиной,
+   двухкилевое оперение, стабилизаторы, фонарь, воздухозаборники, сопло с факелом */
 function makePlane(color, accent) {
-  const g = new THREE.Group(), mat = new THREE.MeshLambertMaterial({ color, flatShading: true }), mat2 = new THREE.MeshLambertMaterial({ color: accent, flatShading: true, side: THREE.DoubleSide });
-  const fu = new THREE.Mesh(new THREE.ConeGeometry(0.8, 7, 10), mat); fu.rotation.x = -Math.PI / 2; fu.scale.set(1, 1, 0.8); g.add(fu);
-  const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.6, 8, 6), new THREE.MeshLambertMaterial({ color: 0x223344 })); canopy.scale.set(0.8, 0.7, 2); canopy.position.set(0, 0.5, -0.7); g.add(canopy);
-  const wing = new THREE.BufferGeometry(); wing.setAttribute("position", new THREE.BufferAttribute(new Float32Array([0, 0, -1.2, 4.6, 0, 2.6, 0.6, 0, 2.6, 0, 0, -1.2, -0.6, 0, 2.6, -4.6, 0, 2.6]), 3)); wing.computeVertexNormals(); g.add(new THREE.Mesh(wing, mat2));
-  const fin = new THREE.BufferGeometry(); fin.setAttribute("position", new THREE.BufferAttribute(new Float32Array([0.5, 0.2, 2, 0.9, 1.9, 3.1, 0.5, 0.2, 3.1, -0.5, 0.2, 2, -0.9, 1.9, 3.1, -0.5, 0.2, 3.1]), 3)); fin.computeVertexNormals(); g.add(new THREE.Mesh(fin, mat2));
-  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.5, 4, 8), new THREE.MeshBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false })); flame.rotation.x = Math.PI / 2; flame.position.z = 5.2; g.add(flame);
+  const g = new THREE.Group(), body = new THREE.MeshLambertMaterial({ color, flatShading: true }), trim = new THREE.MeshLambertMaterial({ color: accent, flatShading: true, side: THREE.DoubleSide }),
+    dark = new THREE.MeshLambertMaterial({ color: 0x2c2f33, flatShading: true }), glass = new THREE.MeshLambertMaterial({ color: 0x1b3550, transparent: true, opacity: .85 });
+  const prof = [[0, 5.6], [.22, 5.1], [.5, 4.2], [.72, 3], [.86, 1.6], [.9, 0], [.88, -2], [.8, -3.4], [.66, -4.3], [.6, -4.6]].map(([r, y]) => new THREE.Vector2(r, y));
+  const fu = new THREE.Mesh(new THREE.LatheGeometry(prof, 14), body); fu.rotation.x = -Math.PI / 2; fu.scale.set(1, 1, .85); g.add(fu);
+  const can = new THREE.Mesh(new THREE.SphereGeometry(.55, 12, 8), glass); can.scale.set(.75, .7, 2.1); can.position.set(0, .55, -2.4); g.add(can);
+  const ext = (pts, depth, mat) => { const sh = new THREE.Shape(); pts.forEach(([x, y], i) => i ? sh.lineTo(x, y) : sh.moveTo(x, y)); sh.closePath();
+    const ge = new THREE.ExtrudeGeometry(sh, { depth, bevelEnabled: true, bevelThickness: depth * .4, bevelSize: depth * .5, bevelSegments: 1 }); ge.translate(0, 0, -depth / 2); return new THREE.Mesh(ge, mat); };
+  /* крыло: стреловидная трапеция, точки (размах, вдоль фюзеляжа); плоскость XY → горизонталь */
+  for (const sx of [-1, 1]) {
+    const w = ext([[0, -1.6], [sx * 4.9, 1.5], [sx * 4.9, 2.3], [0, 2.4]], .14, trim); w.rotation.x = Math.PI / 2; w.position.y = -.1; g.add(w);
+    const st = ext([[0, 3.2], [sx * 2.1, 4.3], [sx * 2.1, 4.7], [0, 4.6]], .1, trim); st.rotation.x = Math.PI / 2; st.position.y = .05; g.add(st);
+    const fin = ext([[0, 2.4], [0, 4.6], [2, 4.5], [2, 3.8]], .1, body); fin.geometry.rotateX(Math.PI / 2).rotateZ(Math.PI / 2); fin.rotation.z = -sx * .3; fin.position.set(sx * .5, .3, 0); g.add(fin); // киль: высота вверх, длина вдоль фюзеляжа, развал наружу
+    const intake = new THREE.Mesh(new THREE.BoxGeometry(.5, .6, 2.4), dark); intake.position.set(sx * .95, -.1, -.4); g.add(intake);
+  }
+  const noz = new THREE.Mesh(new THREE.CylinderGeometry(.55, .62, 1, 12, 1, true), dark); noz.rotation.x = Math.PI / 2; noz.position.z = 4.4; g.add(noz);
+  const flame = new THREE.Mesh(new THREE.ConeGeometry(.5, 4, 10), new THREE.MeshBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false })); flame.rotation.x = Math.PI / 2; flame.position.z = 6.6; g.add(flame);
   g.userData.flame = flame; return g;
 }
 function makeTrail(color) {
