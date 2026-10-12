@@ -98,7 +98,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 13.10, 01:31</small>
+  <small id="ver">версия 13.10, 01:36</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -607,9 +607,9 @@ function figureNow(p, shOn, E) {
   if (F && tNow - F.t0 > F.dur) { cy.fig = F = null; cy.figCool = tNow + 1; }
   /* арка впереди: заранее и решительно — под её середину (там просвет выше) или горкой над ней; держать до пролёта */
   if (!window.__noArchFig && (!F || (F.k !== "under" && F.k !== "over")) && E < .2) { const na = nextArch(x), dx = na.x - x, v = Math.max(p.v, T.vmax * .3);
-    if (dx > v * .5 && dx < v * 1.6) { const top = (na.yc + na.Th) / na.D, low = ah < top + .03; // «над» — только если уже явно выше арки, иначе под неё
-      cy.fig = F = low ? { k: "under", a: Math.min(.4, na.yc / na.D - .2), L: 0 } : { k: "over", a: Math.min(1.05, top + .17), L: null }; F.t0 = tNow; F.dur = dx / v + .25; cy.afN = (cy.afN || 0) + 1; } }
-  if (F && (F.k === "under" || F.k === "over")) return { a: F.a, L: F.L };
+    if (dx > v * .5 && dx < v * 2.2) { const top = (na.yc + na.Th) / na.D, low = ah < top + .03; // «над» — только если уже явно выше арки, иначе под неё
+      cy.fig = F = low ? { k: "under", a: Math.max(.15, Math.min(ah, .4, na.yc / na.D - .2)), L: 0 } : { k: "over", a: Math.min(1.05, top + .17), L: null }; F.t0 = tNow; F.dur = dx / v + .25; cy.afN = (cy.afN || 0) + 1; } }
+  if (F && (F.k === "under" || F.k === "over")) return { a: F.a, L: F.L, arch: true };
   if (shOn) return null;
   if (!F && tNow > (cy.figCool || 0)) {
     let pick = null;
@@ -826,7 +826,7 @@ function cyPlan(p) {
   let best = null; if (window.__dbg) pl.dbg = [];
   for (const Lc of Lcs) for (const ac of (Math.abs(Lc) > .8 ? acHi : acs)) {
     let qx = p.pos.x, qy = p.pos.y, qz = p.pos.z, qt = 0, hzc = 0, fire = 0; // fire — штраф за огонь и перехватчиков, ограничен сверху: скала всегда хуже обстрела
-    let cost = (Math.abs(Lc) > .8 ? 0 : AP.LCW * Lc * Lc + AP.AW * (FIG && FIG.a != null ? 2.5 : dive ? .3 : 1) * (ac - pref) * (ac - pref) + (ATK ? 4 * ((Lc - ATK.L) ** 2 + (ac - ATK.a) ** 2) : 0) + (FIG && FIG.L != null ? 4 * (Lc - FIG.L) ** 2 : 0)) + AP.HY * (Math.abs(Lc - pl.Lc) + AP.HYA * Math.abs(ac - pl.ac)), Cmin = 1e9, wmin = 1e9, kmax = 0, nOut = 0; const pts = PTS; let np = 0;
+    let cost = (Math.abs(Lc) > .8 ? 0 : AP.LCW * Lc * Lc + AP.AW * (FIG && FIG.a != null ? 2.5 : dive ? .3 : 1) * (ac - pref) * (ac - pref) + (ATK ? 4 * ((Lc - ATK.L) ** 2 + (ac - ATK.a) ** 2) : 0) + (FIG && FIG.L != null ? (FIG.arch ? 8 : 4) * (Lc - FIG.L) ** 2 : 0)) + AP.HY * (Math.abs(Lc - pl.Lc) + AP.HYA * Math.abs(ac - pl.ac)), Cmin = 1e9, wmin = 1e9, kmax = 0, nOut = 0; const pts = PTS; let np = 0;
     for (let i = 1; i <= N; i++) {
       const s = i / N, bl = SB[i], xi = SX[i], Ei = SE[i], Li = L0 + (Lc - L0) * bl, ai = a0 + (ac - a0) * bl, wi = SW[i], Di = SD[i], zi = SZ[i] + Li * wi, yi = SF[i] + ai * Di, nx = SNX[i], nzz = SNZ[i];
       const ri = Math.min(r, .42 * wi), g0 = gf(xi, zi), gl = gf(xi + nx * ri, zi + nzz * ri), gr = gf(xi - nx * ri, zi - nzz * ri), C = Math.min(yi - g0, yi - gl, yi - gr);
