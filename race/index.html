@@ -58,7 +58,7 @@
   <div id="mid"><div id="lapT">0:00.0</div><div id="gateS"></div><div id="best"></div></div>
   <div id="btns"><button id="bAuto">АВТО</button><button id="bCam">📷</button><button id="bSet">⚙</button></div>
 </div>
-<div id="info"><span id="alt"></span><span id="gap"></span></div>
+<div id="info"><span id="alt"></span><span id="gap"></span><span id="armor" style="margin-left:8px;color:#ffd060"></span></div>
 <div id="chip" class="auto">АВТОПИЛОТ</div>
 <div id="mark"><svg viewBox="0 0 40 40"><path id="markArrow" d="M20 4 L32 30 L20 24 L8 30 Z" fill="#ffd54a" stroke="#000" stroke-width="1.5"/></svg><span id="markT"></span></div>
 <div id="toast"></div>
@@ -78,6 +78,7 @@
   <div class="row"><button id="bPilotFile">⬆ Загрузить пилотов из JSON</button><input type="file" id="fPilot" accept=".json,application/json" style="display:none"></div>
   <div class="row"><a href="train.html" style="color:#9cf">🧬 Тренировка пилотов на вашей видеокарте</a></div>
   <label>Зенитки на кромке <select id="sTur"><option value="0">нет</option><option value="1">редко</option><option value="2">часто</option></select></label>
+  <label>Броня самолёта <select id="sArmor"><option value="1">1 попадание</option><option value="3">3 попадания</option><option value="5">5 попаданий</option></select></label>
   <label>Катера и корабли на реке <select id="sBoats"><option value="0">нет</option><option value="1">немного</option><option value="2">много</option></select></label>
   <label>Самолёты-перехватчики <select id="sInts"><option value="0">нет</option><option value="1">иногда</option><option value="2">часто</option></select></label>
   <label>Облака <select id="sCloud"><option value="0">нет</option><option value="1">немного</option><option value="2">много</option></select></label>
@@ -92,7 +93,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 13.10, 00:24</small>
+  <small id="ver">версия 13.10, 00:28</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -104,7 +105,7 @@ import { PRESETS, H_SRC, CZC, C_SRC, WRAPJS, toJs, CW, paramsFor, AP_STD, PILOTS
 /* ================= настройки ================= */
 const $ = id => document.getElementById(id);
 const KEY = "race-settings-v1";
-const S = Object.assign({ mode:"canyon", alt:1, style:"easy", preset:"fast", seed:7, skill:92, fx:1, cam:0, rival:true, resume:4, inv:false, assist:true, q:1.5, pop:1, cloud:1, pilot:"c2", tur:1, boats:1, ints:1 }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
+const S = Object.assign({ mode:"canyon", alt:1, style:"easy", preset:"fast", seed:7, skill:92, fx:1, cam:0, rival:true, resume:4, inv:false, assist:true, q:1.5, pop:1, cloud:1, pilot:"c2", tur:1, boats:1, ints:1, armor:3 }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
 const saveS = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
 
 /* ================= рельеф: одна формула для JS и шейдера ================= */
@@ -380,7 +381,7 @@ function turretsStep(dt, px, py, pz) {
   for (const sh of TUR.shells) if (!sh.done && tNow >= sh.tb) { sh.done = true; if (sh.to.y > gnd(sh.to.x, sh.to.z)) TUR.bursts.push({ pos: sh.to, t0: sh.tb, r: sh.r, mesh: null }); }
   /* поражение: отрезок пути самолёта за шаг проходит через активный разрыв */
   const ax = p.pos.x - px, ay = p.pos.y - py, az = p.pos.z - pz, aa = ax * ax + ay * ay + az * az;
-  for (const b of TUR.bursts) { if (b.hitDone || tNow - b.t0 > FLAK.act) continue;
+  for (const b of TUR.bursts) { if (b.hitDone || tNow - b.t0 > FLAK.act || tNow < (cy.inv || 0)) continue;
     const qx = b.pos.x - px, qy = b.pos.y - py, qz = b.pos.z - pz, u = aa > 0 ? Math.max(0, Math.min(1, (qx * ax + qy * ay + qz * az) / aa)) : 0;
     if (Math.hypot(qx - ax * u, qy - ay * u, qz - az * u) < b.r) { hit = true; b.hitDone = true; TUR.hits++; } }
   return hit;
@@ -507,7 +508,7 @@ function enemiesStep(dt, px, py, pz) {
     for (const e of EN.planes) { if (e.dead) continue; const q = planePos(e, tNow); if (!e.prev) { e.pos.copy(q); e.prev = q.clone(); e.vel.set(-e.ve, 0, 0); continue; } e.vel.copy(q).sub(e.pos).divideScalar(Math.max(dt, 1e-4)); e.prev.copy(e.pos); e.pos.copy(q);
       /* столкновение: сближение отрезков (относительное движение за шаг) */
       const rx = e.prev.x - px, ry = e.prev.y - py, rz = e.prev.z - pz, dx = (e.pos.x - e.prev.x) - ax, dy = (e.pos.y - e.prev.y) - ay, dz = (e.pos.z - e.prev.z) - az, dd = dx * dx + dy * dy + dz * dz;
-      const uu = dd > 0 ? Math.max(0, Math.min(1, -(rx * dx + ry * dy + rz * dz) / dd)) : 0; if (Math.hypot(rx + dx * uu, ry + dy * uu, rz + dz * uu) < R) { e.dead = true; EN.rams++; TUR.bursts.push({ pos: e.pos.clone(), t0: tNow, r: R * 2, mesh: null, hitDone: true }); return "Столкновение с перехватчиком"; }
+      const uu = dd > 0 ? Math.max(0, Math.min(1, -(rx * dx + ry * dy + rz * dz) / dd)) : 0; if (tNow >= (cy.inv || 0) && Math.hypot(rx + dx * uu, ry + dy * uu, rz + dz * uu) < R) { e.dead = true; EN.rams++; TUR.bursts.push({ pos: e.pos.clone(), t0: tNow, r: R * 2, mesh: null, hitDone: true }); return "Столкновение с перехватчиком"; }
       const ahead = e.pos.x - p.pos.x; if (ahead > T.vmax * .35 && ahead < T.vmax * 1.6 && tNow >= e.next) { e.next = tNow + .22; flakShot(e.pos, .05, .55, 1.4); }
       if (ahead < -T.vmax * 1.2) e.dead = true; }
     EN.planes = EN.planes.filter(e => { if (!e.dead) return true; if (e.mesh) SCN.remove(e.mesh); if (e.trail) SCN.remove(e.trail); return false; }); }
@@ -747,11 +748,16 @@ function threatNow(p) {
   return false;
 }
 function maneuver(p, pl) {
-  /* управляемая бочка: полный оборот вокруг продольной оси без схода с траектории — обход разрывов не нарушается */
+  /* бочка с физикой: подъёмная сила направлена по «верху» самолёта и поворачивается вместе с креном —
+     сначала тянет вверх, затем через бок, вниз и обратно: путь — спираль вокруг прямой, упреждение зениток сбивается.
+     Начинается, только если есть запас от скал и на ближайшем пути нет известного разрыва */
   const thr = threatNow(p); if (thr) cy.thrT = tNow;
   if (cy.man && tNow - cy.man.t0 > cy.man.dur) { cy.man = null; cy.manCool = tNow + .8; }
-  if (!cy.man && thr && tNow > (cy.manCool || 0)) { cy.man = { type: "roll", t0: tNow, dur: 1.1, dir: rnd() < .5 ? -1 : 1, r0: p.roll }; cy.manN = (cy.manN || 0) + 1; }
-  return null;
+  const roomy = (pl.Cmin || 0) > 160 * T.cs, busy = (pl.hz || 0) > 0;
+  if (!cy.man && thr && roomy && !busy && tNow > (cy.manCool || 0)) { cy.man = { type: "roll", t0: tNow, dur: 2, dir: rnd() < .5 ? -1 : 1, r0: p.roll }; cy.manN = (cy.manN || 0) + 1; }
+  const M = cy.man; if (!M) return null;
+  const k = Math.min(1, (tNow - M.t0) / M.dur), th = 6.2832 * k * k * (3 - 2 * k), a = .35 * T.AMAX; M.th = th;
+  return [M.dir * a * Math.sin(th), a * Math.cos(th) - a * (1 - Math.sin(Math.PI * k)) * 0];
 }
 function cyAI(p) {
   const pl = cy.plan; if (tNow - pl.t > .05) cyPlan(p);
@@ -1025,7 +1031,7 @@ function startCanyon() {
   player = new Plane(T); rival = player;
   const x0 = (window.__x0 || 0) * T.SC, a = altPref(x0), [y0, z0] = safeSpot(x0, a);
   player.pos.set(x0, y0, z0); player.prev.copy(player.pos); player.f.set(1, 0, CW.czd(x0 / T.SC)).normalize(); player.v = T.vmax * .55; player.roll = 0; player.rollV = 0; player.basis();
-  Object.assign(cy, { man: null, manCool: 0, thrT: -9, manN: 0, x0, segX: x0, segT: 0, segManual: 0, passed: 0, crashes: 0, nextK: nextArch(x0).k });
+  Object.assign(cy, { man: null, manCool: 0, thrT: -9, manN: 0, hp: armorMax(), inv: 0, blink: 0, dmg: 0, x0, segX: x0, segT: 0, segManual: 0, passed: 0, crashes: 0, nextK: nextArch(x0).k });
   cy.plan = { Lc: 0, ac: a, L0: 0, a0: a, x0, Lsx: 1000, vt: player.v, t: -1e9 };
   cy.best = (() => { try { return +localStorage.getItem("race-canyon-best-" + S.preset) || 0; } catch { return 0; } })();
   tNow = 0; ctl.steerMan = false; ctl.spdMan = false; ctl.thr = 0.75; camState.f.copy(player.f); camState.pos.copy(player.pos);
@@ -1136,18 +1142,36 @@ function playerControlCanyon() {
   if (ctl.spdMan || ctl.steerMan) vt = T.vmax * (0.1 + 1.0 * ctl.thr);
   return [ar, au, vt];
 }
+/* броня: попадание разрыва −1, таран −2; после попадания 0.4 с передышки, после возврата 2.5 с неуязвимости (самолёт мигает) */
+const armorMax = () => Math.max(1, +S.armor || 3);
+function damage(n, msg) {
+  if (tNow < (cy.inv || 0)) return false;
+  cy.hp = (cy.hp ?? armorMax()) - n; cy.dmg = (cy.dmg || 0) + 1; cy.inv = tNow + .4;
+  $("flash").style.opacity = .35; setTimeout(() => $("flash").style.opacity = 0, 90);
+  if (cy.hp > 0) { toast(`${msg}! Броня ${cy.hp}/${armorMax()}`, 1200); return false; }
+  shotDown(msg); return true;
+}
+/* сбит: появиться чуть впереди (а не позади), в безопасной точке; броня восстановлена, 2.5 с неуязвимости */
+function shotDown(msg) {
+  cy.crashes++; $("flash").style.opacity = 0.55; setTimeout(() => $("flash").style.opacity = 0, 120);
+  const p = player, cs = T.cs; let x = p.pos.x + T.vmax * .35, y, z;
+  for (let i = 0; i < 10; i++) { [y, z] = safeSpot(x, altPref(x)); if (!archHit(x, y, z, 80 * cs) && !shelfHit(x, y, z, 80 * cs) && y > gnd(x, z) + 50 * cs) break; x += T.vmax * .25; }
+  p.pos.set(x, y, z); p.prev.copy(p.pos); p.f.set(1, 0, CW.czd(x / T.SC)).normalize(); p.v = Math.max(p.v, T.vmax * .6); p.roll = 0; p.rollV = 0; p.basis();
+  cy.hp = armorMax(); cy.inv = tNow + 2.5; cy.blink = tNow + 2.5; cy.man = null; ctl.steerMan = false; cy.plan.t = -1e9; cy.nextK = nextArch(x).k; toast(msg + " — сбит, вылет дальше · неуязвимость 2.5 с", 1800);
+}
 function cyCrash(msg) {
   cy.crashes++; $("flash").style.opacity = 0.55; setTimeout(() => $("flash").style.opacity = 0, 120);
   const p = player, x = p.pos.x - 150 * T.cs - T.vmax * .8, a = altPref(x);
   const [ys, zs] = safeSpot(x, a); p.pos.set(x, ys, zs); p.prev.copy(p.pos); p.f.set(1, 0, CW.czd(x / T.SC)).normalize(); p.v = T.vmax * .5; p.roll = 0; p.rollV = 0; p.basis();
   ctl.steerMan = false; camState.f.copy(p.f); cy.plan.t = -1e9; cy.segX = x; cy.segT = 0; cy.segManual = 0; cy.nextK = nextArch(x).k; toast(msg || "Падение — возврат в каньон", 1600);
+  cy.hp = armorMax(); cy.inv = tNow + 2.5; cy.blink = tNow + 2.5; cy.man = null;
 }
 function simStepCanyon(dt) {
   tNow += dt; const c = playerControl(), p = player, px = p.pos.x, py = p.pos.y, pz = p.pos.z; p.step(dt, c[0], c[1], c[2]);
-  if (cy.man && cy.man.type === "roll" && !ctl.steerMan) { const M = cy.man, k = Math.min(1, (tNow - M.t0) / M.dur); p.roll = M.r0 + M.dir * 6.2832 * k * k * (3 - 2 * k); p.rollV = 0; p.basis(); }
+  if (cy.man && cy.man.type === "roll" && !ctl.steerMan) { const M = cy.man; p.roll = M.r0 + M.dir * (M.th || 0); p.rollV = 0; p.basis(); } // крен совпадает с направлением подъёмной силы
   else if (cy.man && ctl.steerMan) cy.man = null;
-  { const em = (+S.boats || +S.ints) ? enemiesStep(dt, px, py, pz) : null; if (em) { cyCrash(em + " — возврат в каньон"); return; } }
-  if ((+S.tur || TUR.shells.length || TUR.bursts.length) && turretsStep(dt, px, py, pz)) { cyCrash("Сбит огнём — возврат в каньон"); return; }
+  { const em = (+S.boats || +S.ints) ? enemiesStep(dt, px, py, pz) : null; if (em && damage(2, em)) return; }
+  if ((+S.tur || TUR.shells.length || TUR.bursts.length) && turretsStep(dt, px, py, pz) && damage(1, "Попадание")) return;
   cy.segT += dt; if (ctl.steerMan) cy.segManual += dt;
   const x = p.pos.x, z = p.pos.z;
   if (p.pos.y < gnd(x, z) + 2 * T.cs || archHit(x, p.pos.y, z, 2 * T.cs) || shelfHit(x, p.pos.y, z, 2 * T.cs)) { const dist = x - cy.segX; if (cy.segManual / Math.max(cy.segT, 1) > .5 && dist > cy.best) { cy.best = dist; try { localStorage.setItem("race-canyon-best-" + S.preset, String(dist)); } catch {} } cyCrash(); return; }
@@ -1191,7 +1215,7 @@ function frame(ms) {
   if (sh) { camera.rotateX((rnd() - 0.5) * sh); camera.rotateY((rnd() - 0.5) * sh); }
   const fov = fovBase + 14 * Math.min(1, pl.v / T.vmax); if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = fov; camera.updateProjectionMatrix(); }
   camera.updateMatrixWorld();
-  planeMesh.p.visible = camMode !== 2;
+  planeMesh.p.visible = camMode !== 2 && !(cyMode && tNow < (cy.blink || 0) && Math.sin(tNow * 28) > 0);
   // мир следует за камерой
   const u = terrain.material.uniforms; u.uC.value.set(pl.pos.x, pl.pos.z); u.uCam.value.copy(camera.position); sky.position.copy(camera.position);
   applyPlane(planeMesh.p, pl, trail.p, dt); if (S.rival && !cyMode) applyPlane(planeMesh.r, rival, trail.r, dt);
@@ -1213,6 +1237,7 @@ function hud(t) {
   if (!inside) { if (!fwd) { x = W - x; y = Hh - y; } const cx = W / 2, cy = Hh / 2; let dx = x - cx, dy = y - cy; if (!dx && !dy) dy = -1; const k = Math.min((W / 2 - 34) / Math.abs(dx || 1e-6), (Hh / 2 - 130) / Math.abs(dy || 1e-6)); x = cx + dx * k; y = cy + dy * k; rot = Math.atan2(dy, dx) + Math.PI / 2; }
   mk.style.display = "block"; mk.style.transform = `translate(${x.toFixed(0)}px,${y.toFixed(0)}px)`; $("markArrow").parentNode.style.transform = inside ? "scale(.55) rotate(180deg)" : `rotate(${rot}rad)`;
   if (t - hudT < 0.1) return; hudT = t;
+  $("armor").textContent = cyMode && (+S.tur || +S.boats || +S.ints) ? " · броня " + "■".repeat(Math.max(0, cy.hp ?? armorMax())) + "□".repeat(Math.max(0, armorMax() - (cy.hp ?? armorMax()))) + (tNow < (cy.blink || 0) ? " неуязвим" : "") : "";
   { let near = false; if (cyMode) for (const h of flakHazards()) if (h[1] < 1.2 && h[0].distanceTo(pl.pos) < T.vmax * 1.5) { near = true; break; } let ram = false; if (cyMode) for (const e of EN.planes) if (!e.dead && e.pos.x > pl.pos.x && e.pos.x - pl.pos.x < T.vmax * 1.8) { ram = true; break; }
     const mn = cy.man ? " · БОЧКА" : "", fs = cyMode && tNow - (cy.thrT || -9) < 1 && !ctl.steerMan ? " · ФОРСАЖ" : "";
     $("warn").textContent = (ram ? "⚠ ПЕРЕХВАТЧИК" : "⚠ ОБСТРЕЛ") + fs + mn; $("warn").style.display = near || ram ? "block" : "none"; }
@@ -1256,7 +1281,7 @@ addEventListener("keyup", e => { ctl.keys[e.key.length === 1 ? e.key.toLowerCase
 
 /* ================= панель ================= */
 const sP = $("sPreset"); PRESETS.forEach(p => sP.add(new Option(p.name, p.id)));
-function syncPanel() { sP.value = S.preset; $("sMode").value = S.mode === "race" ? "race" : "canyon"; $("sAlt").value = S.alt; $("sStyle").value = S.style === "wild" ? "wild" : "easy"; $("sSkill").value = S.skill; $("sRival").checked = !!S.rival; $("sResume").value = S.resume; $("sAssist").checked = !!S.assist; $("sInv").checked = !!S.inv; $("sFx").value = S.fx; $("sLife").value = S.life === 0 ? 0 : 1; $("sQ").value = S.q; $("sPop").value = S.pop; $("sCloud").value = S.cloud; $("sTur").value = S.tur; $("sBoats").value = S.boats ?? 1; $("sInts").value = S.ints ?? 1; $("sPilot").value = PILOTS[S.pilot] || S.pilot === "std" ? S.pilot : "c2"; }
+function syncPanel() { sP.value = S.preset; $("sMode").value = S.mode === "race" ? "race" : "canyon"; $("sAlt").value = S.alt; $("sStyle").value = S.style === "wild" ? "wild" : "easy"; $("sSkill").value = S.skill; $("sRival").checked = !!S.rival; $("sResume").value = S.resume; $("sAssist").checked = !!S.assist; $("sInv").checked = !!S.inv; $("sFx").value = S.fx; $("sLife").value = S.life === 0 ? 0 : 1; $("sQ").value = S.q; $("sPop").value = S.pop; $("sCloud").value = S.cloud; $("sTur").value = S.tur; $("sArmor").value = S.armor ?? 3; $("sBoats").value = S.boats ?? 1; $("sInts").value = S.ints ?? 1; $("sPilot").value = PILOTS[S.pilot] || S.pilot === "std" ? S.pilot : "c2"; }
 $("bSet").onclick = () => { syncPanel(); $("panel").style.display = "block"; };
 $("bClose").onclick = $("bX").onclick = () => $("panel").style.display = "none";
 addEventListener("keydown", e => { if (e.key === "Escape") $("panel").style.display = "none"; });
@@ -1301,6 +1326,7 @@ for (const [file, id, mark, tail] of [["champions.json", "site", "🌐", ""], ["
     parsePilots(j).forEach((h, i) => { PILOTS[id + i] = { name: pilotLabel({ ...h, name: h.name + tail }, mark), ap: h.ap }; });
     fillPilots(); if (S.pilot.startsWith(id)) applyPilot(); }).catch(() => {});
 $("sPilot").onchange = e => { S.pilot = e.target.value; saveS(); applyPilot(); };
+$("sArmor").onchange = e => { S.armor = +e.target.value; saveS(); cy.hp = armorMax(); };
 $("sBoats").onchange = e => { S.boats = +e.target.value; saveS(); clearEnemies(); };
 $("sInts").onchange = e => { S.ints = +e.target.value; saveS(); clearEnemies(); };
 $("sTur").onchange = e => { S.tur = +e.target.value; saveS(); clearTurrets(); };
