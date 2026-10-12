@@ -66,6 +66,7 @@
 <div id="flash"></div>
 <div id="thr"><div id="thrFill"></div><span>ГАЗ</span></div>
 <div id="stick"><i></i></div>
+<button id="bRocket" style="position:fixed;right:18px;bottom:calc(env(safe-area-inset-bottom) + 170px);width:64px;height:64px;border-radius:50%;border:2px solid #ffffff70;background:#00000055;color:#fff;font-size:28px;z-index:40;touch-action:none">🚀</button>
 <div id="zoneL"></div><div id="zoneR"></div>
 <div id="hint"></div>
 
@@ -78,6 +79,7 @@
   <div class="row"><button id="bPilotFile">⬆ Загрузить пилотов из JSON</button><input type="file" id="fPilot" accept=".json,application/json" style="display:none"></div>
   <div class="row"><a href="train.html" style="color:#9cf">🧬 Тренировка пилотов на вашей видеокарте</a></div>
   <label>Зенитки на кромке <select id="sTur"><option value="0">нет</option><option value="1">редко</option><option value="2">часто</option></select></label>
+  <label>Автопилот стреляет ракетами <select id="sAutoFire"><option value="1">да</option><option value="0">нет</option></select></label>
   <label>Броня самолёта <select id="sArmor"><option value="1">1 попадание</option><option value="3">3 попадания</option><option value="5">5 попаданий</option></select></label>
   <label>Катера и корабли на реке <select id="sBoats"><option value="0">нет</option><option value="1">немного</option><option value="2">много</option></select></label>
   <label>Самолёты-перехватчики <select id="sInts"><option value="0">нет</option><option value="1">иногда</option><option value="2">часто</option></select></label>
@@ -93,7 +95,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 13.10, 00:45</small>
+  <small id="ver">версия 13.10, 00:58</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -105,7 +107,7 @@ import { PRESETS, H_SRC, CZC, C_SRC, WRAPJS, toJs, CW, paramsFor, AP_STD, PILOTS
 /* ================= настройки ================= */
 const $ = id => document.getElementById(id);
 const KEY = "race-settings-v1";
-const S = Object.assign({ mode:"canyon", alt:1, style:"easy", preset:"fast", seed:7, skill:92, fx:1, cam:0, rival:true, resume:4, inv:false, assist:true, q:1.5, pop:1, cloud:1, pilot:"c2", tur:1, boats:1, ints:1, armor:3 }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
+const S = Object.assign({ mode:"canyon", alt:1, style:"easy", preset:"fast", seed:7, skill:92, fx:1, cam:0, rival:true, resume:4, inv:false, assist:true, q:1.5, pop:1, cloud:1, pilot:"c2", tur:1, boats:1, ints:1, armor:3, autoFire:1 }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
 const saveS = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
 
 /* ================= рельеф: одна формула для JS и шейдера ================= */
@@ -379,7 +381,7 @@ function turretsStep(dt, px, py, pz) {
   if (+S.tur) { const kc = Math.floor(p.pos.x / sc / TUR.SP), ahead = Math.ceil(T.vmax * 3.6 / sc / TUR.SP) + 1;
     for (let k = kc - 1; k <= kc + ahead; k++) if (!TUR.list.has(k)) TUR.list.set(k, turretAt(k));
     for (const [k, t] of TUR.list) { if (k < kc - 2) { if (t && t.mesh) t.mesh.visible = false; TUR.list.delete(k); continue; } if (!t) continue;
-      const dx = t.x - p.pos.x; if (dx < -T.vmax * .5 || dx > T.vmax * 3.8) continue;
+      if (t.dead) continue; const dx = t.x - p.pos.x; if (dx < -T.vmax * .5 || dx > T.vmax * 3.8) continue;
       const sk = T.cs * 3, piv = _o.set(t.x, t.y + (GUN_PED - 1.5 + 36) * sk, t.z), lead = leadPoint(piv), ok = aimGun(t, piv, lead, dt, -1.05, 1.48);
       /* стреляет, только когда стволы довернулись до точки упреждения: снаряд уходит по оси ствола */
       if (ok && dx > T.vmax * .3 && dx < T.vmax * 3.4 && tNow >= t.next) { t.next = tNow + FLAK.rate * (.7 + .6 * rnd()); t.side = -(t.side || 1);
@@ -449,7 +451,7 @@ function turretsDraw(dt) {
       g.userData = { yawG, pitchG, b1, b2, f1, f2, light }; SCN.add(g); t.mesh = g; }
     const g = t.mesh, U = g.userData, sk = cs * 3; g.visible = true; g.position.set(t.x, t.y + (GUN_PED - 1.5) * sk, t.z); g.scale.setScalar(sk);
     /* куда целиться: если по самолёту уже ведётся огонь — в точку упреждения, иначе просто за самолётом */
-    U.yawG.rotation.y = t.yaw; U.pitchG.rotation.x = -t.pitch; // углы считает симуляция (aimGun)
+    if (t.dead) { U.light.visible = false; continue; } U.yawG.rotation.y = t.yaw; U.pitchG.rotation.x = -t.pitch; // углы считает симуляция (aimGun)
     t.recoil = Math.max(0, (t.recoil || 0) - dt * 9); const r1 = t.side > 0 ? t.recoil : 0, r2 = t.side < 0 ? t.recoil : 0;
     U.b1.position.z = -9 * r1; U.b2.position.z = -9 * r2; U.f1.visible = r1 > .55; U.f2.visible = r2 > .55;
     U.light.visible = Math.sin(tNow * 6 + t.kt) > 0;
@@ -505,7 +507,7 @@ function enemiesStep(dt, px, py, pz) {
   if (+S.boats) { const kc = Math.floor(p.pos.x / sc / EN.SP), ahead = Math.ceil(T.vmax * 3.6 / sc / EN.SP) + 1;
     for (let k = kc - 1; k <= kc + ahead; k++) if (!EN.boats.has(k)) EN.boats.set(k, boatAt(k));
     for (const [k, b] of EN.boats) { if (k < kc - 2) { if (b && b.mesh) SCN.remove(b.mesh); EN.boats.delete(k); continue; } if (!b) continue;
-      boatPos(b); const dx = b.pos.x - p.pos.x;
+      if (b.dead) { if (b.mesh) b.mesh.visible = false; continue; } boatPos(b); const dx = b.pos.x - p.pos.x;
       if (b.ship) { /* зенитка корабля: та же логика — стреляет, только когда стволы довернулись */
         const Sb = sc * 1.1, piv = _o.set(b.pos.x + Math.sin(b.hd) * 18 * Sb, b.pos.y + (7 + 36 * .22) * Sb, b.pos.z + Math.cos(b.hd) * 18 * Sb), ok = aimGun(b, piv, leadPoint(piv), dt, -.15, 1.45);
         if (ok && dx > T.vmax * .25 && dx < T.vmax * 3.2 && tNow >= b.next) { b.next = tNow + FLAK.rate * 1.2 * (.7 + .6 * rnd()); b.side = -b.side;
@@ -548,7 +550,7 @@ function enemiesDraw(dt) {
   if (!TUR.geo) return; const sc = T.SC, cs = T.cs, p = player;
   if (!EN.mats) EN.mats = { hullW: new THREE.MeshLambertMaterial({ color: 0xe8e4da, flatShading: true }), hullG: new THREE.MeshLambertMaterial({ color: 0x69707a, flatShading: true }), hullG2: new THREE.MeshLambertMaterial({ color: 0x7c848e, flatShading: true }),
     glass: new THREE.MeshLambertMaterial({ color: 0x24323e }), dark: new THREE.MeshLambertMaterial({ color: 0x2b2e28 }), wake: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .55, depthWrite: false }) };
-  for (const b of EN.boats.values()) { if (!b) continue; if (!b.mesh) { b.mesh = boatModel(b.ship); SCN.add(b.mesh); }
+  for (const b of EN.boats.values()) { if (!b || b.dead) continue; if (!b.mesh) { b.mesh = boatModel(b.ship); SCN.add(b.mesh); }
     const g = b.mesh, U = g.userData; g.position.copy(b.pos); g.scale.setScalar(sc * (b.ship ? 1.1 : .9)); g.rotation.y = b.hd || 0;
     U.wake.material.opacity = .35 + .2 * Math.sin(tNow * 13 + b.kb); U.wake.scale.set(1, .8 + .3 * Math.sin(tNow * 7 + b.kb), 1);
     g.updateMatrixWorld();
@@ -566,6 +568,55 @@ function enemiesDraw(dt) {
     const arr = e.trail.geometry.attributes.position.array; for (let i = 0; i < 56; i++) { const q = d.hist[Math.min(i, d.hist.length - 1)] || e.pos; arr[3 * i] = q.x; arr[3 * i + 1] = q.y; arr[3 * i + 2] = q.z; } e.trail.geometry.attributes.position.needsUpdate = true; e.trail.visible = d.hist.length > 2; }
 }
 function clearEnemies() { for (const b of EN.boats.values()) if (b && b.mesh) SCN.remove(b.mesh); for (const e of EN.planes) { if (e.mesh) SCN.remove(e.mesh); if (e.trail) SCN.remove(e.trail); } EN.boats.clear(); EN.planes = []; EN.nextPlane = tNow + 3; EN.hits = 0; EN.rams = 0; }
+/* ===== ракеты игрока =====
+   Летят вперёд намного быстрее самолёта; если в конусе ±12° перед носом есть цель — слегка доворачивают на неё
+   (ограниченная скорость доворота: прицелиться носом всё равно нужно). Попадание уничтожает зенитку, корабль, катер, перехватчик. */
+const RK = { list: [], next: 0, kills: 0, n: 0, why: {} };
+function rkTargets() {
+  const T_ = [], sk = T.cs * 3;
+  for (const t of TUR.list.values()) if (t && !t.dead) T_.push({ o: t, kind: "gun", p: new THREE.Vector3(t.x, t.y + (GUN_PED + 20) * sk, t.z), r: 70 * T.cs });
+  for (const b of EN.boats.values()) if (b && !b.dead && b.pos) T_.push({ o: b, kind: b.ship ? "ship" : "boat", p: b.pos.clone().setY(b.pos.y + (b.ship ? 10 : 4) * T.SC), r: (b.ship ? 45 : 22) * T.SC });
+  for (const e of EN.planes) if (!e.dead) T_.push({ o: e, kind: "plane", p: e.pos, r: 35 * T.cs });
+  return T_;
+}
+function rkLock(pos, dir, cone) { let best = null, bd = 1e30; for (const q of rkTargets()) { const d = _V.copy(q.p).sub(pos), L = d.length(); if (L < 1 || L > T.vmax * 3.5) continue; const c = d.dot(dir) / L; if (c > Math.cos(cone) && L < bd) { bd = L; best = q; } } return best; }
+function fireRocket() {
+  const p = player; if (!cyMode || tNow < RK.next) return; RK.next = tNow + .5; RK.n++;
+  const q0 = rkLock(p.pos, p.f, .16); RK.why.fireAt = q0 ? q0.kind : 'none'; RK.list.push({ tq: q0, tgt: q0 ? q0.o : null, minD: 1e30, pos: p.pos.clone().addScaledVector(p.f, 12 * T.cs).addScaledVector(p.u0, -2 * T.cs), vel: p.f.clone().multiplyScalar(p.v + T.vmax * 1.6), t0: tNow, mesh: null, trail: null, side: (RK.n % 2) * 2 - 1 });
+}
+function rkKill(q, pos) {
+  const o = q.o; o.dead = true; RK.kills++; TUR.bursts.push({ pos: pos.clone(), t0: tNow, r: q.r * 2.5, mesh: null, hitDone: true });
+  if (q.kind === "gun" && o.mesh) { o.mesh.userData.yawG.rotation.z = .5; o.mesh.userData.yawG.position.y -= 6; } // обломки: башню сорвало набок
+  toast({ gun: "Зенитка уничтожена", ship: "Корабль потоплен", boat: "Катер уничтожен", plane: "Перехватчик сбит" }[q.kind] + " · всего " + RK.kills, 1300);
+}
+function rocketsStep(dt) {
+  const vs = T.vmax * 2.6;
+  for (const r of RK.list) { if (r.done) continue;
+    const dir = _A.copy(r.vel).normalize();
+    /* цель, захваченная при пуске, держится до конца; если её не было — захват в конусе по пути */
+    if (r.tq && r.tq.o.dead) r.tq = null; if (!r.tq) r.tq = rkLock(r.pos, dir, .21);
+    const q = r.tq; if (q && q.kind === "plane") q.p = q.o.pos; else if (q && q.o.pos && q.kind !== "gun") q.p = q.o.pos.clone().setY(q.o.pos.y + (q.kind === "ship" ? 10 : 4) * T.SC);
+    if (q) { /* наведение с упреждением: точка встречи с учётом скорости цели */
+      const tv = q.o.vel || null, tg = r.vel.length() || vs, tgo = q.p.distanceTo(r.pos) / tg, aimP = _D.copy(q.p); if (tv) aimP.addScaledVector(tv, tgo);
+      const want = _V.copy(aimP).sub(r.pos).normalize(), ang = Math.acos(Math.max(-1, Math.min(1, dir.dot(want)))), k = Math.min(1, 5 * dt / Math.max(ang, 1e-4)); dir.lerp(want, k).normalize(); }
+    const spd = Math.min(vs, r.vel.length() + T.vmax * 3 * dt); r.vel.copy(dir).multiplyScalar(spd);
+    const a = r.pos.clone(); r.pos.addScaledVector(r.vel, dt); if (r.tgt && r.tgt.pos) { const dd = r.pos.distanceTo(r.tgt.pos) / T.cs; if (dd < r.minD) r.minD = dd; }
+    for (const t of rkTargets()) { const ab = _D.copy(r.pos).sub(a), aa = ab.lengthSq(), u = aa > 0 ? Math.max(0, Math.min(1, _V.copy(t.p).sub(a).dot(ab) / aa)) : 0; if (_V.copy(a).addScaledVector(ab, u).distanceTo(t.p) < t.r * 1.8) { /* неконтактный взрыватель */ rkKill(t, r.pos); r.done = true; RK.why.kill = (RK.why.kill || 0) + 1; break; } }
+    if (!r.done && (r.pos.y < gnd(r.pos.x, r.pos.z) || archHit(r.pos.x, r.pos.y, r.pos.z, 0) || shelfHit(r.pos.x, r.pos.y, r.pos.z, 0))) { r.done = true; RK.why.rock = (RK.why.rock || 0) + 1; const q0 = rkLock(r.pos, _A.copy(r.vel).normalize(), 1.5); RK.why.last = q0 ? [q0.kind, Math.round(q0.p.distanceTo(r.pos) / T.cs), Math.round((q0.p.y - r.pos.y) / T.cs)] : null; TUR.bursts.push({ pos: r.pos.clone(), t0: tNow, r: 60 * T.cs, mesh: null, hitDone: true }); }
+    if (!r.done && tNow - r.t0 > 3.5) { r.done = true; RK.why.time = (RK.why.time || 0) + 1; (RK.why.miss = RK.why.miss || []).push(Math.round(r.minD)); } }
+  /* автопилот стреляет сам, когда цель точно перед носом */
+  if (!ctl.steerMan && +S.autoFire !== 0 && tNow >= RK.next) { const q = rkLock(player.pos, player.f, .16); if (q && q.p.distanceTo(player.pos) < T.vmax * 3 && losClear(player.pos, q.p)) fireRocket(); }
+}
+function rocketsDraw(dt) {
+  for (const r of RK.list) {
+    if (!r.mesh) { const g = new THREE.Group(), b = new THREE.Mesh(new THREE.CylinderGeometry(.35, .35, 4, 8).rotateX(Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0xe8e8e8 })), f = new THREE.Mesh(new THREE.ConeGeometry(.6, 4, 8).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffb040, transparent: true, opacity: .9, blending: THREE.AdditiveBlending, depthWrite: false }));
+      f.position.z = 4; g.add(b, f); r.mesh = g; r.trail = makeTrail(new THREE.Color(.8, .8, .8)); SCN.add(g, r.trail); }
+    const dc = r.pos.distanceTo(camera.position); r.mesh.position.copy(r.pos); r.mesh.lookAt(_V.copy(r.pos).sub(r.vel)); r.mesh.scale.setScalar(Math.max(T.cs * 2, dc * .004)); r.mesh.visible = !r.done;
+    const d = r.trail.userData; d.t += dt; if (d.t > .02 && !r.done) { d.t = 0; d.hist.unshift(r.pos.clone()); if (d.hist.length > d.n) d.hist.pop(); }
+    const arr = r.trail.geometry.attributes.position.array; for (let i = 0; i < 56; i++) { const q = d.hist[Math.min(i, d.hist.length - 1)] || r.pos; arr[3 * i] = q.x; arr[3 * i + 1] = q.y; arr[3 * i + 2] = q.z; } r.trail.geometry.attributes.position.needsUpdate = true; r.trail.visible = d.hist.length > 2; }
+  RK.list = RK.list.filter(r => { if (!r.done || tNow - r.t0 < 4) return true; SCN.remove(r.mesh, r.trail); return false; });
+}
+function clearRockets() { for (const r of RK.list) if (r.mesh) SCN.remove(r.mesh, r.trail); RK.list = []; RK.kills = 0; RK.n = 0; RK.why = {}; RK.next = 0; }
 function clearShelves() { for (const m of shelves.values()) { SCN.remove(m); m.geometry.dispose(); } shelves.clear(); }
 function nextArch(x) { const SP = archSP(); let k = Math.floor(x / SP) - 1; for (;; k++) { const a = archParams(k); if (a.x > x) return a; } }
 function buildArchGeo() {
@@ -712,8 +763,8 @@ function cyPlan(p) {
   const HZ = window.__noDodge ? [] : flakHazards(), vx = Math.max(p.v * Math.max(.3, p.f.x), T.vmax * .2), Rm = (!window.__noFear ? 50 * cs + .025 * v : 25 * cs + .01 * v), FEAR = !window.__noFear ? 2 : 1; // «страх»: уходить от разрывов раньше и решительнее
   const MV = window.__noDodge ? [] : moverHazards(), Rmv = 45 * cs + .015 * v;
   /* установки, которые сейчас ведут огонь (зенитки, корабль): зона страха вокруг них */
-  const GUNS = []; if (!window.__noFear && !window.__noDodge) { for (const t of TUR.list.values()) if (t && tNow - (t.last || -9) < 2 && t.x > x0 - Lsx * .2 && t.x < x0 + Lsx) GUNS.push({ x: t.x, y: t.y, z: t.z, r: .95 * cyW(t.x) });
-    for (const b of EN.boats.values()) if (b && b.ship && tNow - (b.last || -9) < 2 && b.pos.x > x0 - Lsx * .2 && b.pos.x < x0 + Lsx) GUNS.push({ x: b.pos.x, y: b.pos.y, z: b.pos.z, r: .6 * cyW(b.pos.x) }); }
+  const GUNS = []; if (!window.__noFear && !window.__noDodge) { for (const t of TUR.list.values()) if (t && !t.dead && tNow - (t.last || -9) < 2 && t.x > x0 - Lsx * .2 && t.x < x0 + Lsx) GUNS.push({ x: t.x, y: t.y, z: t.z, r: .95 * cyW(t.x) });
+    for (const b of EN.boats.values()) if (b && b.ship && !b.dead && tNow - (b.last || -9) < 2 && b.pos.x > x0 - Lsx * .2 && b.pos.x < x0 + Lsx) GUNS.push({ x: b.pos.x, y: b.pos.y, z: b.pos.z, r: .6 * cyW(b.pos.x) }); }
   let best = null; if (window.__dbg) pl.dbg = [];
   for (const Lc of Lcs) for (const ac of (Math.abs(Lc) > .8 ? acHi : acs)) {
     let qx = p.pos.x, qy = p.pos.y, qz = p.pos.z, qt = 0, hzc = 0, fire = 0; // fire — штраф за огонь и перехватчиков, ограничен сверху: скала всегда хуже обстрела
@@ -1043,7 +1094,7 @@ function startCanyon() {
   camera.near = 2 * T.cs; camera.far = T.R * 1.7; camera.updateProjectionMatrix(); sky.scale.setScalar(T.R * 1.5);
   planeMesh.p.scale.setScalar(T.cs); planeMesh.r.visible = false; life.A.visible = life.B.visible = life.C.visible = false;
   if (gates) gates.visible = false;
-  cy.arches.clear(); for (const m of cy.pool) m.visible = false; clearShelves(); clearTurrets(); clearEnemies();
+  cy.arches.clear(); for (const m of cy.pool) m.visible = false; clearShelves(); clearTurrets(); clearEnemies(); clearRockets();
   player = new Plane(T); rival = player;
   const x0 = (window.__x0 || 0) * T.SC, a = altPref(x0), [y0, z0] = safeSpot(x0, a);
   player.pos.set(x0, y0, z0); player.prev.copy(player.pos); player.f.set(1, 0, CW.czd(x0 / T.SC)).normalize(); player.v = T.vmax * .55; player.roll = 0; player.rollV = 0; player.basis();
@@ -1058,7 +1109,7 @@ function startCanyon() {
 
 function startGame() {
   if (S.mode !== "race") return startCanyon();
-  cyMode = false; clearShelves(); clearTurrets(); clearEnemies(); terrain.visible = true; if (CHK.group) { CHK.group.visible = false; chunkClear(); } if (clouds) clouds.visible = false; terrain.material = terrMat.race; for (const m of cy.pool) m.visible = false; planeMesh.r.visible = !!S.rival;
+  cyMode = false; clearShelves(); clearTurrets(); clearEnemies(); clearRockets(); terrain.visible = true; if (CHK.group) { CHK.group.visible = false; chunkClear(); } if (clouds) clouds.visible = false; terrain.material = terrMat.race; for (const m of cy.pool) m.visible = false; planeMesh.r.visible = !!S.rival;
   const preset = PRESETS.find(p => p.id === S.preset) || PRESETS[1];
   T = buildTrack(preset, S.seed, S.skill / 100, S.style);
   terrain.material.uniforms.uSC.value = T.SC; terrain.material.uniforms.uR.value = T.R;
@@ -1187,6 +1238,7 @@ function simStepCanyon(dt) {
   if (cy.man && cy.man.type === "roll" && !ctl.steerMan) { const M = cy.man; p.roll = M.r0 + M.dir * (M.th || 0); p.rollV = 0; p.basis(); } // крен совпадает с направлением подъёмной силы
   else if (cy.man && ctl.steerMan) cy.man = null;
   { const em = (+S.boats || +S.ints) ? enemiesStep(dt, px, py, pz) : null; if (em && damage(2, em)) return; }
+  rocketsStep(dt);
   if ((+S.tur || TUR.shells.length || TUR.bursts.length) && turretsStep(dt, px, py, pz) && damage(1, "Попадание")) return;
   cy.segT += dt; if (ctl.steerMan) cy.segManual += dt;
   const x = p.pos.x, z = p.pos.z;
@@ -1235,7 +1287,7 @@ function frame(ms) {
   // мир следует за камерой
   const u = terrain.material.uniforms; u.uC.value.set(pl.pos.x, pl.pos.z); u.uCam.value.copy(camera.position); sky.position.copy(camera.position);
   applyPlane(planeMesh.p, pl, trail.p, dt); if (S.rival && !cyMode) applyPlane(planeMesh.r, rival, trail.r, dt);
-  if (cyMode) { updateChunks(pl.pos.x); updateArches(); updateShelves(); turretsDraw(dt); enemiesDraw(dt); }
+  if (cyMode) { updateChunks(pl.pos.x); updateArches(); updateShelves(); turretsDraw(dt); enemiesDraw(dt); rocketsDraw(dt); }
   updateStreaks(dt);
   renderer.render(SCN, camera);
   hud(t);
@@ -1253,7 +1305,7 @@ function hud(t) {
   if (!inside) { if (!fwd) { x = W - x; y = Hh - y; } const cx = W / 2, cy = Hh / 2; let dx = x - cx, dy = y - cy; if (!dx && !dy) dy = -1; const k = Math.min((W / 2 - 34) / Math.abs(dx || 1e-6), (Hh / 2 - 130) / Math.abs(dy || 1e-6)); x = cx + dx * k; y = cy + dy * k; rot = Math.atan2(dy, dx) + Math.PI / 2; }
   mk.style.display = "block"; mk.style.transform = `translate(${x.toFixed(0)}px,${y.toFixed(0)}px)`; $("markArrow").parentNode.style.transform = inside ? "scale(.55) rotate(180deg)" : `rotate(${rot}rad)`;
   if (t - hudT < 0.1) return; hudT = t;
-  $("armor").textContent = cyMode && (+S.tur || +S.boats || +S.ints) ? " · броня " + "■".repeat(Math.max(0, cy.hp ?? armorMax())) + "□".repeat(Math.max(0, armorMax() - (cy.hp ?? armorMax()))) + (tNow < (cy.blink || 0) ? " неуязвим" : "") : "";
+  $("armor").textContent = cyMode && (+S.tur || +S.boats || +S.ints) ? " · броня " + "■".repeat(Math.max(0, cy.hp ?? armorMax())) + "□".repeat(Math.max(0, armorMax() - (cy.hp ?? armorMax()))) + (tNow < (cy.blink || 0) ? " неуязвим" : "") + (RK.kills ? " · уничтожено " + RK.kills : "") : "";
   { let near = false; if (cyMode) for (const h of flakHazards()) if (h[1] < 1.2 && h[0].distanceTo(pl.pos) < T.vmax * 1.5) { near = true; break; } let ram = false; if (cyMode) for (const e of EN.planes) if (!e.dead && e.pos.x > pl.pos.x && e.pos.x - pl.pos.x < T.vmax * 1.8) { ram = true; break; }
     const mn = cy.man ? " · БОЧКА" : "", fs = cyMode && tNow - (cy.thrT || -9) < 1 && !ctl.steerMan ? " · ФОРСАЖ" : "";
     $("warn").textContent = (ram ? "⚠ ПЕРЕХВАТЧИК" : "⚠ ОБСТРЕЛ") + fs + mn; $("warn").style.display = near || ram ? "block" : "none"; }
@@ -1292,12 +1344,14 @@ const endThr = e => { if (e.pointerId === thrId) thrId = null; }; zl.addEventLis
 const autoOn = () => { ctl.steerMan = false; ctl.spdMan = false; toast("Полный автопилот", 1000); };
 $("bAuto").onclick = () => { if (ctl.steerMan || ctl.spdMan) autoOn(); else { ctl.steerMan = true; ctl.lastStick = tNow + 1e6; ctl.thr = Math.min(1, player.v / T.vmax / 1.1); toast("Ручное управление", 1000); } };
 $("bCam").onclick = () => { camMode = (camMode + 1) % 4; S.cam = camMode; saveS(); toast(["Сзади", "Близко", "Из кабины", "Далеко"][camMode], 900); };
+$("bRocket").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); fireRocket(); });
+addEventListener("keydown", e => { if (e.key === "f" || e.key === "F" || e.key === "а" || e.key === "А" || e.key === "Enter") { fireRocket(); e.preventDefault(); } });
 addEventListener("keydown", e => { if (e.key === " ") { $("bAuto").onclick(); e.preventDefault(); } ctl.keys[e.key.length === 1 ? e.key.toLowerCase() : e.key] = true; });
 addEventListener("keyup", e => { ctl.keys[e.key.length === 1 ? e.key.toLowerCase() : e.key] = false; });
 
 /* ================= панель ================= */
 const sP = $("sPreset"); PRESETS.forEach(p => sP.add(new Option(p.name, p.id)));
-function syncPanel() { sP.value = S.preset; $("sMode").value = S.mode === "race" ? "race" : "canyon"; $("sAlt").value = S.alt; $("sStyle").value = S.style === "wild" ? "wild" : "easy"; $("sSkill").value = S.skill; $("sRival").checked = !!S.rival; $("sResume").value = S.resume; $("sAssist").checked = !!S.assist; $("sInv").checked = !!S.inv; $("sFx").value = S.fx; $("sLife").value = S.life === 0 ? 0 : 1; $("sQ").value = S.q; $("sPop").value = S.pop; $("sCloud").value = S.cloud; $("sTur").value = S.tur; $("sArmor").value = S.armor ?? 3; $("sBoats").value = S.boats ?? 1; $("sInts").value = S.ints ?? 1; $("sPilot").value = PILOTS[S.pilot] || S.pilot === "std" ? S.pilot : "c2"; }
+function syncPanel() { sP.value = S.preset; $("sMode").value = S.mode === "race" ? "race" : "canyon"; $("sAlt").value = S.alt; $("sStyle").value = S.style === "wild" ? "wild" : "easy"; $("sSkill").value = S.skill; $("sRival").checked = !!S.rival; $("sResume").value = S.resume; $("sAssist").checked = !!S.assist; $("sInv").checked = !!S.inv; $("sFx").value = S.fx; $("sLife").value = S.life === 0 ? 0 : 1; $("sQ").value = S.q; $("sPop").value = S.pop; $("sCloud").value = S.cloud; $("sTur").value = S.tur; $("sArmor").value = S.armor ?? 3; $("sAutoFire").value = S.autoFire ?? 1; $("sBoats").value = S.boats ?? 1; $("sInts").value = S.ints ?? 1; $("sPilot").value = PILOTS[S.pilot] || S.pilot === "std" ? S.pilot : "c2"; }
 $("bSet").onclick = () => { syncPanel(); $("panel").style.display = "block"; };
 $("bClose").onclick = $("bX").onclick = () => $("panel").style.display = "none";
 addEventListener("keydown", e => { if (e.key === "Escape") $("panel").style.display = "none"; });
@@ -1342,6 +1396,7 @@ for (const [file, id, mark, tail] of [["champions.json", "site", "🌐", ""], ["
     parsePilots(j).forEach((h, i) => { PILOTS[id + i] = { name: pilotLabel({ ...h, name: h.name + tail }, mark), ap: h.ap }; });
     fillPilots(); if (S.pilot.startsWith(id)) applyPilot(); }).catch(() => {});
 $("sPilot").onchange = e => { S.pilot = e.target.value; saveS(); applyPilot(); };
+$("sAutoFire").onchange = e => { S.autoFire = +e.target.value; saveS(); };
 $("sArmor").onchange = e => { S.armor = +e.target.value; saveS(); cy.hp = armorMax(); };
 $("sBoats").onchange = e => { S.boats = +e.target.value; saveS(); clearEnemies(); };
 $("sInts").onchange = e => { S.ints = +e.target.value; saveS(); clearEnemies(); };
@@ -1360,7 +1415,7 @@ initScene(); startGame(); renderer.setAnimationLoop(frame);
 
 /* отладка и тесты */
 window.__race = {
-  get life() { return life; }, get terrain() { return terrain; }, frame: t => frame(t), bio: (x, z) => { const h = hgtRaw(x, z, 1); return [h, bioRaw[0](x, z, 1, h), bioRaw[1](x, z, 1)]; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, get scene() { return SCN; }, get camera() { return camera; }, ctl, S, ground: (x, z) => gnd(x, z), cy, CW, archHit, shelfHit, shelves, TUR, clearTurrets, EN, clearEnemies, seedRnd, get cyMode() { return cyMode; }, popE, CHK, altPref, AP, applyPilot, HC,
+  get life() { return life; }, get terrain() { return terrain; }, frame: t => frame(t), bio: (x, z) => { const h = hgtRaw(x, z, 1); return [h, bioRaw[0](x, z, 1, h), bioRaw[1](x, z, 1)]; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, get scene() { return SCN; }, get camera() { return camera; }, ctl, S, ground: (x, z) => gnd(x, z), cy, CW, archHit, shelfHit, shelves, TUR, clearTurrets, EN, clearEnemies, seedRnd, RK, fireRocket, get cyMode() { return cyMode; }, popE, CHK, altPref, AP, applyPilot, HC,
   /* симуляция без рендера: автопилот, статистика */
   sim(seconds, dt = 1 / 60) {
     const st = { t: 0, maxErr: 0, sumErr: 0, n: 0, minAgl: 1e18, crashes0: crashes, misses0: misses, passed0: gatesPassed, laps0: lapCount, maxV: 0, minV: 1e18, rollMax: 0 };
