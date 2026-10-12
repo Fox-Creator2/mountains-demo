@@ -51,12 +51,12 @@ a { color:var(--blue); }
   <div class="card">
     <div class="kpis">
       <div class="kpi"><b id="kGen">—</b><span>поколение</span></div>
-      <div class="kpi"><b id="kBest">—</b><span>оценка чемпиона</span></div>
-      <div class="kpi"><b id="kSpeed">—</b><span>скорость чемпиона</span></div>
+      <div class="kpi"><b id="kBest">—</b><span>экзамен чемпиона</span></div>
+      <div class="kpi"><b id="kSpeed">—</b><span>скорость на экзамене</span></div>
       <div class="kpi"><b id="kRate">—</b><span>сек на поколение</span></div>
     </div>
     <canvas id="chart" width="720" height="180"></canvas>
-    <div class="sub" style="margin:4px 0 0">Оранжевый — лучший в поколении, синий — середина популяции, зелёный — чемпион (средняя оценка за несколько поколений на разных участках).</div>
+    <div class="sub" style="margin:4px 0 0">Зелёный (толстый) — <b>экзамен чемпиона</b>: каждое поколение на одних и тех же 6 участках, по нему виден прогресс. Серый пунктир — стандартный пилот на том же экзамене. Оранжевый — лучший пилот поколения, синий — середина популяции (участки каждое поколение новые, поэтому эти линии скачут).</div>
   </div>
 
   <div class="card">
@@ -67,7 +67,8 @@ a { color:var(--blue); }
     <table id="champ"><tr><td class="sub">Появится после первого поколения.</td></tr></table>
   </div>
 
-  <div class="card"><div class="log" id="log"></div></div>
+  <div class="card"><b>Проверка видеокарты</b> <button id="selfBtn">Проверить</button><div id="self" class="sub" style="margin-top:6px">Запускается автоматически перед тренировкой.</div></div>
+  <div class="card"><div class="log" id="log" style="max-height:260px"></div></div>
 </main>
 
 <script type="module">
@@ -85,6 +86,7 @@ const SEG_PRESETS = ["warm", "fast", "hyper", "orbit", "ultra", "max"];
 
 /* ---------- WebGL2 ---------- */
 const cv = document.createElement("canvas"); cv.width = cv.height = 1;
+cv.addEventListener("webglcontextlost", e => { e.preventDefault(); log("⚠ Видеокарта сброшена системой (webglcontextlost)"); });
 const gl = cv.getContext("webgl2", { antialias: false, depth: false, powerPreference: "high-performance" });
 if (!gl || !gl.getExtension("EXT_color_buffer_float")) { $("gpu").innerHTML = '<span class="bad">Нужен WebGL2 с float-текстурами — этот браузер не поддерживает.</span>'; $("go").disabled = true; throw new Error("no webgl2"); }
 const dbgInfo = gl.getExtension("WEBGL_debug_renderer_info");
@@ -220,24 +222,25 @@ const tex = (w, h, data) => { const t = gl.createTexture(); gl.bindTexture(gl.TE
 const fbo = texs => { const f = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, f); texs.forEach((t, i) => gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, t, 0)); return f; };
 
 /* ---------- JS-копии для стартовых состояний ---------- */
-function startState(seg, SC) {
+function startState(seg, SC, safe) {
   const zc = x => CW.czc(x / SC) * SC, D = x => CW.cD(x / SC) * SC, fl = x => (30 + CW.cfl(x / SC)) * SC;
   const r = [[.08, .3], [.1, .62], [.26, .8]][seg.alt], u = x => x / SC, alt = x => r[0] + (r[1] - r[0]) * (.5 + .5 * Math.sin(u(x) * 1.5e-3 + .8 + 1.3 * Math.sin(u(x) * 4e-4)));
-  const x0 = seg.x0 * SC, a = alt(x0), sl = CW.czd(x0 / SC), n = Math.hypot(1, sl);
+  let u0 = seg.x0; if (safe) while (CW.archd(u0) < 1200) u0 += 300; // не стартовать прямо перед аркой
+  const x0 = u0 * SC, a = alt(x0), sl = CW.czd(x0 / SC), n = Math.hypot(1, sl);
   const SP = 4300 * SC; let k = Math.floor(x0 / SP) - 1; while (SP * (k + .5 + .22 * Math.sin(k * 2.3 + .6)) <= x0) k++;
   return { p: [x0, fl(x0) + a * D(x0), zc(x0)], f: [1 / n, 0, sl / n], a, k };
 }
 
 /* ---------- одна оценка поколения на GPU ---------- */
-async function evaluate(pop, segs, simSec, onProgress) {
+async function evaluate(pop, segs, simSec, onProgress, opt = {}) {
   const S = segs.length, N = pop.length * S, H = Math.ceil(N / W), n4 = W * H * 4;
   const P = Array.from({ length: 6 }, () => new Float32Array(n4)), S0 = new Float32Array(n4), S1 = new Float32Array(n4), S2 = new Float32Array(n4), S3 = new Float32Array(n4);
   for (let i = 0; i < pop.length; i++) for (let j = 0; j < S; j++) {
     const q = (i * S + j) * 4, g = pop[i], seg = segs[j], pr = PRESETS.find(x => x.id === seg.preset), T = paramsFor(pr.vmax), AMAX = Math.max(T.AMAX, pr.vmax / 2);
     const vals = [g.LS, g.BLE, g.LCW, g.AW, g.HY, g.HYA, g.M, g.COLW, g.ARW, g.OUT, g.KW, g.NF, g.NW, g.CF, g.CWD, g.AU, g.LD, g.LDX, g.VF, seg.alt, pr.vmax, T.SC, AMAX, 0];
     for (let t = 0; t < 6; t++) for (let c = 0; c < 4; c++) P[t][q + c] = vals[t * 4 + c];
-    const st = startState(seg, T.SC); const v0 = pr.vmax * .55;
-    S0.set([...st.p, v0], q); S1.set([...st.f, 0], q); S2.set([0, st.a, 0, st.a], q); S3.set([st.p[0], 1000, v0, -1e9], q);
+    const st = startState(seg, T.SC, !opt.exact); const v0 = pr.vmax * .55;
+    S0.set([...st.p, v0], q); S1.set([...st.f, 0], q); S2.set([0, st.a, 0, st.a], q); S3.set([st.p[0], 1000, v0, opt.exact ? -1e9 : -((i * S + j) % 4) / 60], q); // пилоты планируют по очереди, а не все в один кадр
     seg._k = st.k; P[5][q + 3] = st.k;
   }
   const T0 = new Float32Array(n4), T1 = new Float32Array(n4);
@@ -248,6 +251,8 @@ async function evaluate(pop, segs, simSec, onProgress) {
   const fS = [fbo(st[0]), fbo(st[1])], fT = [fbo(stt[0]), fbo(stt[1])];
   gl.viewport(0, 0, W, H);
   const bind = (p, name, unit, t) => { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(gl.getUniformLocation(p, name), unit); };
+  const RPD = Math.max(1, Math.floor((opt.chunk || 1024) / W));
+  const drawChunks = heavy => { gl.enable(gl.SCISSOR_TEST); for (let y = 0; y < H; y += RPD) { gl.scissor(0, y, W, Math.min(RPD, H - y)); gl.drawArrays(gl.TRIANGLES, 0, 3); if (heavy) gl.flush(); } gl.disable(gl.SCISSOR_TEST); };
   const steps = Math.round(simSec * 60); let cur = 0, done = 0, batch = 8;
   while (done < steps && !stopFlag) {
     const t0 = performance.now();
@@ -255,14 +260,14 @@ async function evaluate(pop, segs, simSec, onProgress) {
       const nx = 1 - cur;
       gl.useProgram(PS); gl.bindFramebuffer(gl.FRAMEBUFFER, fS[nx]); gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2, gl.COLOR_ATTACHMENT3]);
       ["uS0", "uS1", "uS2", "uS3"].forEach((n, i) => bind(PS, n, i, st[cur][i])); ["uP0", "uP1", "uP2", "uP3", "uP4", "uP5"].forEach((n, i) => bind(PS, n, 4 + i, pt[i]));
-      gl.uniform1f(gl.getUniformLocation(PS, "uDt"), 1 / 60); gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.uniform1f(gl.getUniformLocation(PS, "uDt"), 1 / 60); drawChunks(true);
       gl.useProgram(PT); gl.bindFramebuffer(gl.FRAMEBUFFER, fT[nx]); gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
       bind(PT, "uS0", 0, st[cur][0]); bind(PT, "uN0", 1, st[nx][0]); bind(PT, "uT0", 2, stt[cur][0]); bind(PT, "uT1", 3, stt[cur][1]);
       ["uP0", "uP1", "uP2", "uP3", "uP4", "uP5"].forEach((n, i) => bind(PT, n, 4 + i, pt[i]));
-      gl.uniform1f(gl.getUniformLocation(PT, "uDt"), 1 / 60); gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.uniform1f(gl.getUniformLocation(PT, "uDt"), 1 / 60); drawChunks(false);
       cur = nx;
     }
-    gl.finish(); const ms = performance.now() - t0;
+    gl.finish(); if (gl.isContextLost()) throw new Error("видеокарта сброшена системой (перегрузка) — уменьшите число пилотов или время полёта"); const ms = performance.now() - t0;
     batch = Math.max(1, Math.min(240, Math.round(batch * (40 / Math.max(ms, 1)))));
     onProgress && onProgress(done / steps);
     await new Promise(r => setTimeout(r, 0));
@@ -271,6 +276,9 @@ async function evaluate(pop, segs, simSec, onProgress) {
   gl.bindFramebuffer(gl.FRAMEBUFFER, fT[cur]); gl.readBuffer(gl.COLOR_ATTACHMENT0); gl.readPixels(0, 0, W, H, gl.RGBA, gl.FLOAT, out0);
   gl.readBuffer(gl.COLOR_ATTACHMENT1); gl.readPixels(0, 0, W, H, gl.RGBA, gl.FLOAT, out1);
   [...pt, ...st[0], ...st[1], ...stt[0], ...stt[1]].forEach(t => gl.deleteTexture(t)); [...fS, ...fT].forEach(f => gl.deleteFramebuffer(f));
+  if (gl.isContextLost()) throw new Error("видеокарта сброшена системой (перегрузка) — уменьшите число пилотов");
+  let bad = 0; for (let k = 0; k < N; k++) { const st_ = out0[k * 4 + 2], vv_ = out0[k * 4 + 1]; if (!(st_ > 0) || !isFinite(vv_)) bad++; }
+  if (bad) throw new Error(`видеокарта вернула пустые/битые данные у ${bad} из ${N} самолётов`);
   const res = [];
   for (let i = 0; i < pop.length; i++) { const runs = [];
     for (let j = 0; j < S; j++) { const q = (i * S + j) * 4, pr = PRESETS.find(x => x.id === segs[j].preset), steps_ = out0[q + 2] || 1;
@@ -301,28 +309,53 @@ function seeds(n) {
   while (pop.length < n) pop.push(Math.random() < .7 ? mutate(base[Math.floor(Math.random() * base.length)], .5, .12) : mutate(base[0], .8, .3));
   return pop.slice(0, n);
 }
+/* самотест: 2 пилота на 6 эталонных участках по 20 с — сверка с теми же полётами в игре (процессор) */
+const REF_SEGS = [["warm", 1, 23000], ["fast", 0, 61000], ["hyper", 2, 97000], ["orbit", 1, 140000], ["ultra", 0, 45000], ["max", 2, 183000]].map(([preset, alt, x0]) => ({ preset, alt, x0 }));
+const REF = { std: [.544, .916, .943, .924, .812, .860], c2: [.788, .929, .960, .960, .850, .877] };
+let selfOk = false;
+async function selfTest() {
+  log("Самотест видеокарты: 2 пилота × 6 эталонных участков…");
+  const t0 = performance.now(), r = await evaluate([AP_STD, PILOTS.c2.ap], REF_SEGS, 20, null, { exact: true });
+  let worst = 0; const lines = [];
+  ["std", "c2"].forEach((name, k) => r[k].forEach((x, j) => { const d = Math.abs(x.v - REF[name][j]); worst = Math.max(worst, d); lines.push(`${name}/${REF_SEGS[j].preset}: ${(x.v * 100).toFixed(1)}% (игра ${(REF[name][j] * 100).toFixed(1)}%)`); }));
+  selfOk = worst < .03;
+  $("self").innerHTML = (selfOk ? `<span class="ok">✓ Видеокарта считает так же, как игра</span>` : `<span class="bad">✗ Расхождение с игрой до ${(worst * 100).toFixed(1)}% — результаты тренировки ненадёжны</span>`) +
+    ` <span class="sub">(${((performance.now() - t0) / 1000).toFixed(1)} с)</span><div class="log" style="max-height:none">${lines.join("\n")}</div>`;
+  log(`Самотест: ${selfOk ? "OK" : "РАСХОЖДЕНИЕ"}, макс. отклонение ${(worst * 100).toFixed(1)}%`);
+  return selfOk;
+}
+/* экзамен: чемпион и стандартный пилот каждое поколение на одних и тех же участках — сравнимая кривая прогресса */
+const EXAM_SEGS = [["warm", 1, 300000], ["fast", 0, 330000], ["hyper", 2, 360000], ["orbit", 1, 390000], ["ultra", 0, 420000], ["max", 2, 450000]].map(([preset, alt, x0]) => ({ preset, alt, x0 }));
 async function run() {
   stopFlag = false; $("go").disabled = true; $("stop").disabled = false;
+  if (!selfOk && !(await selfTest())) { $("go").disabled = false; $("stop").disabled = true; return; }
   const N = +$("pop").value, simSec = +$("sim").value, boldW = +$("bold").value, elite = Math.max(2, Math.round(N / 16));
-  let pop = seeds(N), gen = 0;
+  let pop = seeds(N), gen = 0, prevKey = null, stdExam = null; hist = [];
   log(`Старт: ${N} пилотов × 6 участков = ${N * 6} самолётов одновременно, ${simSec} с полёта`);
   while (!stopFlag) {
-    const segs = SEG_PRESETS.map(p => ({ preset: p, alt: Math.floor(Math.random() * 3), x0: 20000 + Math.random() * 380000 }));
+    const segs = SEG_PRESETS.map(p => ({ preset: p, alt: Math.floor(Math.random() * 3), x0: 20000 + Math.random() * 260000 }));
     const t0 = performance.now();
     const res = await evaluate(pop, segs, simSec, f => { $("kGen").textContent = gen + " · " + Math.round(f * 100) + "%"; });
     if (stopFlag) break;
-    const fits = res.map(r => fitness(r, boldW)), dt = (performance.now() - t0) / 1000;
+    const fits = res.map(r => fitness(r, boldW));
     pop.forEach((g, i) => { const k = JSON.stringify(round3(g)); const h = H.get(k) || { g: round3(g), fs: [], last: null }; h.fs.push(fits[i].f); h.last = fits[i]; H.set(k, h); });
     const score = h => h.fs.reduce((a, b) => a + b, 0) / h.fs.length - .06 / h.fs.length;
     let best = null; for (const h of H.values()) if (!best || score(h) > score(best)) best = h;
-    champ = { ap: best.g, score: score(best), seen: best.fs.length, last: best.last };
+    const key = JSON.stringify(best.g), changed = key !== prevKey; prevKey = key;
+    /* экзамен */
+    const ex = await evaluate(stdExam ? [best.g] : [best.g, AP_STD], EXAM_SEGS, simSec);
+    const exC = fitness(ex[0], boldW); if (!stdExam) stdExam = fitness(ex[1], boldW);
+    champ = { ap: best.g, score: score(best), seen: best.fs.length, last: best.last, exam: exC, examStd: stdExam };
+    const dt = (performance.now() - t0) / 1000;
     const order = fits.map((f, i) => i).sort((a, b) => fits[b].f - fits[a].f);
-    hist.push({ best: fits[order[0]].f, med: fits[order[order.length >> 1]].f, champ: champ.score });
+    const meanV = fits.reduce((a, f) => a + f.v, 0) / fits.length, crashed = fits.filter(f => f.c > 0).length / fits.length;
+    hist.push({ best: fits[order[0]].f, med: fits[order[order.length >> 1]].f, exam: exC.f, std: stdExam.f });
     try { localStorage.setItem("race-train-best", JSON.stringify(champ)); } catch {}
     showChamp(); drawChart();
-    $("kGen").textContent = gen; $("kBest").textContent = champ.score.toFixed(3); $("kSpeed").textContent = Math.round(champ.last.v * 100) + "%"; $("kRate").textContent = dt.toFixed(1);
+    $("kGen").textContent = gen; $("kBest").innerHTML = exC.f.toFixed(3) + ` <span class="sub">станд. ${stdExam.f.toFixed(3)}</span>`;
+    $("kSpeed").innerHTML = (exC.v * 100).toFixed(1) + "%" + ` <span class="${exC.c ? "bad" : "ok"}">${exC.c ? "падений " + exC.c : "без падений"}</span>`; $("kRate").textContent = dt.toFixed(1);
     const b = fits[order[0]];
-    log(`поколение ${gen}: лучший ${b.f.toFixed(3)} (скорость ${(b.v * 100).toFixed(1)}%, падений ${b.c}, под арками ${b.u}/${b.a}), чемпион ${champ.score.toFixed(3)} (оценён ${champ.seen}×), ${dt.toFixed(1)} с`);
+    log(`пок. ${gen} · ${dt.toFixed(1)} с\n  экзамен: чемпион ${exC.f.toFixed(3)} (скорость ${(exC.v * 100).toFixed(1)}%, падений ${exC.c}, под арками ${exC.u}/${exC.a}) · стандартный ${stdExam.f.toFixed(3)} (${(stdExam.v * 100).toFixed(1)}%, падений ${stdExam.c})\n  популяция: лучший ${b.f.toFixed(3)} (${(b.v * 100).toFixed(1)}%), средняя скорость ${(meanV * 100).toFixed(1)}%, разбились ${Math.round(crashed * 100)}% пилотов\n  чемпион: ${changed ? "НОВЫЙ" : "тот же"}, оценён в ${best.fs.length} поколениях`);
     const ranked = order.map(i => pop[i]); const top = ranked.slice(0, Math.max(4, N >> 1));
     const pick = () => { const a = Math.floor(Math.random() * top.length), b = Math.floor(Math.random() * top.length); return top[Math.min(a, b)]; };
     pop = [champ.ap, ...ranked.slice(0, elite - 1)];
@@ -334,21 +367,24 @@ async function run() {
 function showChamp() {
   const c = champ, l = c.last, enc = btoa(JSON.stringify(c.ap));
   $("fly").href = "./?ap=" + encodeURIComponent(enc); $("fly").style.pointerEvents = "auto"; $("fly").style.opacity = 1; $("copy").disabled = false;
-  const rows = [["Оценка (средняя)", c.score.toFixed(3) + ` за ${c.seen} поколен.`], ["Скорость", (l.v * 100).toFixed(1) + "% от максимума"], ["Падения (посл. поколение)", `<span class="${l.c ? "bad" : "ok"}">${l.c}</span>`],
+  const rows = [...(c.exam ? [["Экзамен", `${c.exam.f.toFixed(3)} · скорость ${(c.exam.v * 100).toFixed(1)}% · падений ${c.exam.c} <span class="sub">(стандартный ${c.examStd.f.toFixed(3)})</span>`]] : []), ["Оценка на тренировке (средняя)", c.score.toFixed(3) + ` за ${c.seen} поколен.`], ["Скорость", (l.v * 100).toFixed(1) + "% от максимума"], ["Падения (посл. поколение)", `<span class="${l.c ? "bad" : "ok"}">${l.c}</span>`],
     ["Под арками", `${l.u} из ${l.a}`], ["Время над кромкой", Math.round(l.o * 100) + "%"]];
   for (const k of Object.keys(NAMES)) rows.push([NAMES[k], c.ap[k] + ` <span class="sub">(станд. ${AP_STD[k]})</span>`]);
   $("champ").innerHTML = rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("");
 }
 function drawChart() {
   const c = $("chart"), x = c.getContext("2d"), w = c.width, h = c.height; x.clearRect(0, 0, w, h);
-  const vals = hist.flatMap(p => [p.best, p.med, p.champ]).filter(v => v > -1), lo = Math.min(...vals, .7), hi = Math.max(...vals, 1);
-  x.strokeStyle = "#2a303b"; x.lineWidth = 1; for (let i = 0; i <= 4; i++) { const y = h - 10 - (h - 20) * i / 4; x.beginPath(); x.moveTo(0, y); x.lineTo(w, y); x.stroke(); x.fillStyle = "#8b94a3"; x.font = "11px system-ui"; x.fillText((lo + (hi - lo) * i / 4).toFixed(2), 2, y - 2); }
-  for (const [key, col] of [["med", "#4ea1ff"], ["best", "#ff8a3d"], ["champ", "#4cc38a"]]) {
-    x.strokeStyle = col; x.lineWidth = 2; x.beginPath();
-    hist.forEach((p, i) => { const X = 30 + (w - 40) * (hist.length < 2 ? 1 : i / (hist.length - 1)), Y = h - 10 - (h - 20) * (Math.max(lo, p[key]) - lo) / (hi - lo); i ? x.lineTo(X, Y) : x.moveTo(X, Y); }); x.stroke(); }
+  const vals = hist.flatMap(p => [p.best, p.med, p.exam, p.std]).filter(v => isFinite(v) && v > -1), lo = Math.min(...vals, .8) - .01, hi = Math.max(...vals, .9) + .01;
+  x.font = "11px system-ui";
+  for (let i = 0; i <= 4; i++) { const y = h - 10 - (h - 20) * i / 4; x.strokeStyle = "#2a303b"; x.lineWidth = 1; x.beginPath(); x.moveTo(0, y); x.lineTo(w, y); x.stroke(); x.fillStyle = "#8b94a3"; x.fillText((lo + (hi - lo) * i / 4).toFixed(2), 2, y - 2); }
+  const X = i => 34 + (w - 44) * (hist.length < 2 ? 1 : i / (hist.length - 1)), Y = v => h - 10 - (h - 20) * (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo);
+  for (const [key, col, lw, dash] of [["std", "#8b94a3", 1.5, [5, 4]], ["med", "#4ea1ff", 1.5, []], ["best", "#ff8a3d", 1.5, []], ["exam", "#4cc38a", 3, []]]) {
+    x.strokeStyle = col; x.lineWidth = lw; x.setLineDash(dash); x.beginPath(); hist.forEach((p, i) => i ? x.lineTo(X(i), Y(p[key])) : x.moveTo(X(i), Y(p[key]))); x.stroke(); }
+  x.setLineDash([]);
 }
 $("go").onclick = () => run().catch(e => { log("Ошибка: " + e.message); $("go").disabled = false; });
 $("stop").onclick = () => { stopFlag = true; };
+$("selfBtn").onclick = () => selfTest().catch(e => log("Ошибка: " + e.message));
 $("copy").onclick = () => navigator.clipboard && navigator.clipboard.writeText(JSON.stringify(champ.ap));
 try { const c = JSON.parse(localStorage.getItem("race-train-best") || "null"); if (c) { champ = c; showChamp(); log("Загружен прошлый чемпион, оценка " + c.score.toFixed(3)); } } catch {}
 window.__train = { evaluate, fitness, AP_STD, PILOTS, gl };
