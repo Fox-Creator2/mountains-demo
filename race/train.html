@@ -130,7 +130,7 @@ bool archHit(vec3 p, float m){ float k0 = floor(p.x / SPA());
     float r = abs(n) / a.Sa, yb = a.fl + a.yc - (a.yc - a.yl) * pow(r, 2.4), yt = yb + a.Th * (1. - .4 * r * r);
     if (p.y > yb - m && p.y < yt + m) return true; }
   return false; }
-bool shelfHit(vec3 p, float m){ float u = p.x / SC; if (shd(u) * SC > m + 120. * SC) return false;
+bool shelfHit(vec3 p, float m){ float u = p.x / SC; if (shd(u) * SC > m + 420. * SC) return false;
   float sl = czd(u), a = (p.z - ZC(p.x)) * inversesqrt(1. + sl * sl) / WW(p.x); if (abs(a) > 1.3) return false;
   float ys = shy(u) * SC, up = shU(u, a), dn = shB(u, a); return p.y < ys + up * SC + m && p.y > ys - dn * SC - m && up + dn > 0.; }
 float nextArchK(float x){ float k = floor(x / SPA()) - 1.; for (int i = 0; i < 4; i++){ if (AX(k) > x) return k; k += 1.; } return k; }
@@ -160,21 +160,25 @@ void plan(vec3 P, float v_, inout vec4 pl1, inout vec4 pl2, float tNow){
   float w0 = WW(x0), D0 = DD(x0), L0 = clamp((P.z - ZC(x0)) / w0, -1.4, 1.4), a0 = (P.y - fl) / D0, r = 80. * CS, m = MM * CS;
   float xm = x0 + Lsx * .6, pref0 = altPref(xm), E = popE(xm), pref = pref0 + (popAc(xm) - pref0) * E;
   float acs[7]; int nac = 5; acs[5] = 0.; acs[6] = 0.; acs[0] = clamp(pref * .6, .1, 1.9); acs[1] = clamp(pref * .8, .1, 1.9); acs[2] = clamp(pref, .1, 1.9); acs[3] = clamp(pref * 1.25, .1, 1.9); acs[4] = clamp(pref * 1.6, .1, 1.9);
-  float SX[15], SE[15], SW[15], SD[15], SZ[15], SF[15], SNX[15], SNZ[15], SB[15], SR[15]; bool SA[15], SH[15];
+  float SX[15], SE[15], SW[15], SD[15], SZ[15], SF[15], SNX[15], SNZ[15], SB[15], SR[15], SK[15]; bool SA[15], SH[15];
   for (int i = 1; i <= 14; i++){ float s = float(i) / 14., xi = x0 + Lsx * s, sl = czd(xi / SC), il = inversesqrt(1. + sl * sl);
-    SX[i] = xi; SE[i] = popE(xi); SW[i] = WW(xi); SD[i] = DD(xi); SZ[i] = ZC(xi); SF[i] = FL(xi); SNX[i] = -sl * il; SNZ[i] = il; SB[i] = ss(0., BLE, s);
+    SX[i] = xi; SE[i] = popE(xi); SW[i] = WW(xi); SD[i] = DD(xi); SZ[i] = ZC(xi); SF[i] = FL(xi); SNX[i] = -sl * il; SNZ[i] = il; SB[i] = ss(0., BLE, s); SK[i] = max(fkz(xi / SC), fkz((xi + .6 * v) / SC));
     float rx = SW[i] * 1.3; SR[i] = min(GND(xi + SNX[i] * rx, SZ[i] + SNZ[i] * rx), GND(xi - SNX[i] * rx, SZ[i] - SNZ[i] * rx));
-    float kk = nextArchK(xi - 40. * CS - 300. * SC); Arch na = AP_(kk); SA[i] = abs(na.x - xi) < na.Lt + 80. * CS; SH[i] = shd(xi / SC) * SC < 120. * CS + 120. * SC; }
+    float kk = nextArchK(xi - 40. * CS - 300. * SC); Arch na = AP_(kk); SA[i] = abs(na.x - xi) < na.Lt + 80. * CS; SH[i] = shd(xi / SC) * SC < 120. * CS + 420. * SC; }
+  float shTg = -1.; bool shUn = false;
   for (int i = 1; i <= 14; i++){ if (SH[i]){ float u = SX[i] / SC, ys = shy(u) * SC, th = sht(u) * SC;
-    acs[5] = clamp((ys - 1.2 * th - SF[i]) / SD[i] - .1, .1, 1.9); acs[6] = clamp((ys + th - SF[i]) / SD[i] + .1, .1, 1.9); nac = 7; break; } }
+    acs[5] = clamp((ys - 1.6 * th - SF[i]) / SD[i] - .1, .1, 1.9); acs[6] = clamp((ys + 1.5 * th - SF[i]) / SD[i] + .1, .1, 1.9); nac = 7; shUn = a0 < (ys - SF[i]) / SD[i]; shTg = shUn ? acs[5] : acs[6]; break; } }
+  float fsd = sign(abs(pl1.x) > .05 ? pl1.x : L0); if (fsd == 0.) fsd = 1.;
   float bestC = 1e30, bLc = 0., bac = .3, bCmin = 0., bwmin = 0., bk = 0., bOut = 0.;
   vec3 pts[15];
   for (int li = 0; li < 11; li++){ float Lc = LCS[li]; bool hi = abs(Lc) > .8; int na = hi ? 3 : nac;
     for (int ai = 0; ai < 7; ai++){ if (ai >= na) break; float ac = hi ? ACHI[ai] : acs[ai];
-      float cost = (hi ? 0. : LCW * Lc * Lc + AW * (ac - pref) * (ac - pref)) + HY * (abs(Lc - pl1.x) + HYA * abs(ac - pl1.y)), Cmin = 1e9, wmin = 1e9, kmax = 0., nOut = 0.;
+      float cost = (hi ? (shUn ? 150. : 0.) : LCW * Lc * Lc + AW * (ac - pref) * (ac - pref)) + HY * (abs(Lc - pl1.x) + HYA * abs(ac - pl1.y)), Cmin = 1e9, wmin = 1e9, kmax = 0., nOut = 0.;
       for (int i = 1; i <= 14; i++){ float s = float(i) / 14., bl = SB[i], xi = SX[i], Li = L0 + (Lc - L0) * bl, ai_ = a0 + (ac - a0) * bl, wi = SW[i], zi = SZ[i] + Li * wi, yi = SF[i] + ai_ * SD[i], nx = SNX[i], nzz = SNZ[i];
         float ri = min(r, .42 * wi), g0 = GND(xi, zi), gl = GND(xi + nx * ri, zi + nzz * ri), gr = GND(xi - nx * ri, zi - nzz * ri), C = min(yi - g0, min(yi - gl, yi - gr));
-        Cmin = min(Cmin, C); wmin = min(wmin, wi);
+        Cmin = min(Cmin, C); wmin = min(wmin, wi * (1. - .4 * SK[i]));
+        if (shTg >= 0. && SH[i]) cost += 4. * (1. - smoothstep(0., 500., shd(xi / SC))) * (ai_ - shTg) * (ai_ - shTg);
+        cost += 5. * SK[i] * (Li - fsd * .35) * (Li - fsd * .35);
         if (C < m) cost += pow((m - C) / m, 2.) * COLW * (1.25 - s * .7) + (C < 0. ? 1000. : 0.);
         if (SA[i] && archHit(vec3(xi, yi, zi), 35. * CS)) cost += ARW + (archHit(vec3(xi, yi, zi), 8. * CS) ? 1000. : 0.);
         if (SH[i] && shelfHit(vec3(xi, yi, zi), 35. * CS + .04 * v)) cost += ARW + (shelfHit(vec3(xi, yi, zi), 8. * CS) ? 1000. : 0.);
@@ -203,6 +207,7 @@ void main(){
   vec3 d = tp - P; d -= f * dot(d, f); vec3 diff = tp - P;
   float L2 = max(Ld * Ld * .5, dot(diff, diff)); vec3 aw = d * (2. / L2 * vv * vv);
   float ar = dot(aw, r0), au = dot(aw, u0), vt = pl2.z;
+  if (length(vec2(ar, au)) > 1.15 * AMAX) vt = min(vt, max(VMAX * .5, v * .9)); /* не вписываемся — тормоз */
   /* физика (Plane.step) */
   float mg = length(vec2(ar, au)); if (mg > AMAX){ ar *= AMAX / mg; au *= AMAX / mg; }
   float vq = max(v, VMAX * .1); f += r0 * (ar * uDt / vq) + u0 * (au * uDt / vq);
@@ -210,8 +215,8 @@ void main(){
   f = normalize(f); float brk = vt < v - .12 * VMAX ? BRK * 3. : BRK; v += max(-brk * uDt, min(ACC * uDt, vt - v)); P += f * (v * uDt);
   /* падение → возврат назад в каньон */
   if (P.y < GND(P.x, P.z) + 2. * CS || archHit(P, 2. * CS) || shelfHit(P, 2. * CS)){
-    float x = P.x - 150. * CS - VMAX * .8, ap = altPref(x); P = vec3(x, FL(x) + ap * DD(x), ZC(x) + .32 * fkz(x / SC) * WW(x)); P.y = max(P.y, GND(x, P.z) + 60. * CS);
-    if (shd(x / SC) * SC < 300. * CS + 120. * SC){ float ys = shy(x / SC) * SC, th = sht(x / SC) * SC; if (P.y > ys - 1.2 * th - 60. * CS && P.y < ys + th + 60. * CS) P.y = (FL(x) + ys - 1.2 * th) / 2.; } f = normalize(vec3(1., 0., czd(x / SC))); v = VMAX * .5; pl2.w = -1e9; }
+    float x = P.x - 150. * CS - VMAX * .8, ap = altPref(x); P = vec3(x, FL(x) + ap * DD(x), ZC(x) + fko(x / SC) * SC); P.y = max(P.y, GND(x, P.z) + 60. * CS);
+    if (shd(x / SC) * SC < 300. * CS + 420. * SC){ float ys = shy(x / SC) * SC, th = sht(x / SC) * SC; if (P.y > ys - 1.6 * th - 60. * CS && P.y < ys + 1.5 * th + 60. * CS) P.y = (FL(x) + ys - 1.6 * th) / 2.; } f = normalize(vec3(1., 0., czd(x / SC))); v = VMAX * .5; pl2.w = -1e9; }
   o0 = vec4(P, v); o1 = vec4(f, t); o2 = pl1; o3 = pl2; }`;
 /* статистика: скорость, падения, время над кромкой, пролёты под арками, высота над дном */
 const FS_STAT = COMMON + `
@@ -249,8 +254,8 @@ function startState(seg, SC, safe) {
   const r = [[.08, .3], [.1, .62], [.26, .8]][seg.alt], u = x => x / SC, alt = x => r[0] + (r[1] - r[0]) * (.5 + .5 * Math.sin(u(x) * 1.5e-3 + .8 + 1.3 * Math.sin(u(x) * 4e-4)));
   let u0 = seg.x0; if (safe) while (CW.archd(u0) < 1200) u0 += 300; // не стартовать прямо перед аркой
   const x0 = u0 * SC, a = alt(x0), sl = CW.czd(x0 / SC), n = Math.hypot(1, sl), cs = 1 + .7 * SC;
-  const z0 = zc(x0) + .32 * CW.fkz(x0 / SC) * CW.cw0(x0 / SC) * SC; let y0 = Math.max(fl(x0) + a * D(x0), Math.max(0, CW.chgt(x0, z0, SC)) + 60 * cs); // как safeSpot в игре: в развилке — в правый рукав, у полки — под неё
-  if (CW.shd(x0 / SC) * SC < 300 * cs + 120 * SC) { const ys = CW.shy(x0 / SC) * SC, th = CW.sht(x0 / SC) * SC; if (y0 > ys - 1.2 * th - 60 * cs && y0 < ys + th + 60 * cs) y0 = (fl(x0) + ys - 1.2 * th) / 2; }
+  const z0 = zc(x0) + CW.fko(x0 / SC) * SC; let y0 = Math.max(fl(x0) + a * D(x0), Math.max(0, CW.chgt(x0, z0, SC)) + 60 * cs); // как safeSpot в игре: в развилке — в правый рукав, у полки — под неё
+  if (CW.shd(x0 / SC) * SC < 300 * cs + 420 * SC) { const ys = CW.shy(x0 / SC) * SC, th = CW.sht(x0 / SC) * SC; if (y0 > ys - 1.6 * th - 60 * cs && y0 < ys + 1.5 * th + 60 * cs) y0 = (fl(x0) + ys - 1.6 * th) / 2; }
   const SP = 4300 * SC; let k = Math.floor(x0 / SP) - 1; while (SP * (k + .5 + .22 * Math.sin(k * 2.3 + .6)) <= x0) k++;
   return { p: [x0, y0, z0], f: [1 / n, 0, sl / n], a, k };
 }
@@ -376,7 +381,7 @@ function seeds(n) {
 }
 /* самотест: 2 пилота на 6 эталонных участках по 20 с — сверка с теми же полётами в игре (процессор) */
 const REF_SEGS = [["warm", 1, 23000], ["fast", 0, 61000], ["hyper", 2, 97000], ["orbit", 1, 140000], ["ultra", 0, 45000], ["max", 2, 183000]].map(([preset, alt, x0]) => ({ preset, alt, x0 }));
-const REF = { std: [.552, .684, .883, .714, .818, .857], c2: [.784, .883, .961, .869, .847, .874] }; // эталоны игры после развилок и полок (12.10)
+const REF = { std: [.552, .659, .903, .631, .786, .748], c2: [.78, .884, .92, .881, .835, .794] }; // эталоны игры: полка-мост, выбор рукава/«под-над» полкой, тормоз при перегрузке (13.10)
 let selfOk = false;
 async function selfTest() {
   log("Самотест видеокарты: 2 пилота × 6 эталонных участков…");
@@ -398,7 +403,7 @@ const EXAM_MAX = [["max", 0, 300000], ["max", 1, 330000], ["max", 2, 360000], ["
 const examSegs = () => TGT() === "max" ? EXAM_MAX : EXAM_SEGS;
 const EXAM_SEGS = [["warm", 1, 300000], ["fast", 0, 330000], ["hyper", 2, 360000], ["orbit", 1, 390000], ["ultra", 0, 420000], ["max", 2, 450000]].map(([preset, alt, x0]) => ({ preset, alt, x0 }));
 /* единый экзамен: всегда 60 с, точный шаг 1/60, смелость «немного» — оценки разных запусков сравнимы */
-const EXAM_SIM = 60, EXAM_BOLD = .08, EXAM_OPT = { dt: 1 / 60 }, EV = 8; // EV 4: развилки и полки в рельефе — старые оценки пересдаются // dt задан → без разнесения планирования: оценка не зависит от соседей по пачке; старт безопасный (не перед аркой)
+const EXAM_SIM = 60, EXAM_BOLD = .08, EXAM_OPT = { dt: 1 / 60 }, EV = 9; // EV 4: развилки и полки в рельефе — старые оценки пересдаются // dt задан → без разнесения планирования: оценка не зависит от соседей по пачке; старт безопасный (не перед аркой)
 const loadHof = sfx => { try { return JSON.parse(localStorage.getItem("race-train-hof" + sfx) || "[]"); } catch { return []; } };
 let HOF = loadHof(SFX());
 const keyOf = g => JSON.stringify(round3({ ...AP_STD, ...g }));

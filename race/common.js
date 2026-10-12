@@ -39,6 +39,8 @@ float czd(float x){ return .798*cos(x*5.7e-4+.7)+.695*cos(x*1.337e-3+2.1)+.24*co
 float fkk(float x,float kk){ float a=4300.*(kk+.5+.22*sin(2.3*kk+.6)); float b=4300.*(kk+1.5+.22*sin(2.3*kk+2.9)); float hl=min(1300.,(b-a)*.5-650.); return step(.1,sin(kk*3.71+2.2))*(1.-smoothstep(hl-600.,hl,abs(x-(a+b)*.5))); }
 float fkz(float x){ float k=floor(x/4300.-.5); return max(fkk(x,k-1.),max(fkk(x,k),fkk(x,k+1.))); }
 float cw0(float x){ return (260.+90.*sin(x*3.1e-4+1.1)+50.*sin(x*7.3e-4+.5))*(1.+.85*fkz(x)); }
+/* точка возврата в развилке: середина правого рукава с учётом острова, который вырастет впереди (а не только здесь) */
+float fko(float x){ float f=max(fkz(x),max(fkz(x+700.),fkz(x+1400.))); return .32*f*cw0(x)*(1.+.85*f)/(1.+.85*fkz(x)); }
 float cD(float x){ return 650.+220.*sin(x*2.3e-4+2.2)+90.*sin(x*5.1e-4+.3); }
 float axk(float x,float k){ return abs(x-4300.*(k+.5+.22*sin(2.3*k+.6))); }
 float archd(float x){ float k=floor(x/4300.); return min(axk(x,k-1.),min(axk(x,k),axk(x,k+1.))); }
@@ -48,10 +50,11 @@ float shd(float x){ float k=floor(x/4300.-.5); return min(shk(x,k-1.),min(shk(x,
 float shy(float x){ return 30.+cfl(x)+cD(x)*(.52+.06*sin(x*7e-4)); }
 float sht(float x){ return cD(x)*.07; }
 /* форма полки — природный каменный мост: a — поперечное положение в долях ширины (по перпендикуляру к оси, знак — сторона).
-   К стенам толстеет и перетекает в них, низ и верх неровные, края рваные; shU — толщина вверх от shy, shB — вниз */
-float shT(float x,float a){ return sqrt(clamp((-shd(x)+110.*nz(x*1.1e-3,a*1.7,.8,.6,3.3))/320.,0.,1.)); }
-float shU(float x,float a){ return max(0.,sht(x)*shT(x,a)*(.5+1.6*smoothstep(.5,1.2,abs(a))+.35*nz(x*3.7e-3,a*2.9,.7,.7,1.3))); }
-float shB(float x,float a){ return max(0.,sht(x)*shT(x,a)*(.55+2.6*smoothstep(.45,1.2,abs(a))+.55*nz(x*2.9e-3,a*2.3+5.,.6,.8,4.1))); }
+   Низ — арка: к стенам опускается и уходит в склон (контрфорсы), верх поднимается к кромкам; у стен мост длиннее, чем посередине,
+   толщина «гуляет» вдоль и поперёк, края рваные; shU — толщина вверх от shy, shB — вниз */
+float shT(float x,float a){ return sqrt(clamp((-shd(x)+110.*nz(x*1.1e-3,a*1.7,.8,.6,3.3)+300.*smoothstep(.3,1.1,abs(a)))/320.,0.,1.)); }
+float shU(float x,float a){ float t=shT(x,a); float q=smoothstep(.35,1.05,abs(a)); return max(0.,sht(x)*t*(.5+1.6*smoothstep(.5,1.2,abs(a))+.35*nz(x*3.7e-3,a*2.9,.7,.7,1.3))*(1.+.3*nz(x*1.3e-3,a*.7,.9,.4,2.6))+cD(x)*.22*t*q*q); }
+float shB(float x,float a){ float t=shT(x,a); float q=smoothstep(.3,1.,abs(a)); return max(0.,sht(x)*t*(.55+2.6*smoothstep(.45,1.2,abs(a))+.55*nz(x*2.9e-3,a*2.3+5.,.6,.8,4.1))*(1.+.3*nz(x*1.1e-3,a*.8,.4,.9,5.2))+cD(x)*.38*t*q*q); }
 float chgt(float x,float z,float sc){
   x/=sc; z/=sc;
   float sl=czd(x); float isl=inversesqrt(1.+sl*sl);
@@ -83,7 +86,7 @@ float chgt(float x,float z,float sc){
 }`;
 export const WRAPJS = "const abs=Math.abs,sin=Math.sin,cos=Math.cos,floor=Math.floor,sign=Math.sign,pow=Math.pow,sqrt=Math.sqrt,max=Math.max,min=Math.min,fract=x=>x-Math.floor(x),inversesqrt=x=>1/Math.sqrt(x),smoothstep=(a,b,x)=>{const t=Math.min(1,Math.max(0,(x-a)/(b-a)));return t*t*(3-2*t)},mix=(a,b,t)=>a+(b-a)*t,clamp=(x,a,b)=>Math.min(b,Math.max(a,x)),step=(e,x)=>x<e?0:1;";
 export const toJs = src => src.replace(/float (\w+)(?=\s*[,)])/g, "$1").replace(/float\s+(\w+)\s*\(/g, "function $1(").replace(/float\s+(\w+)\s*=/g, "let $1 =");
-export const CW = new Function(WRAPJS + toJs(H_SRC) + toJs(C_SRC) + ";return {czc,czd,cw0,cD,chgt,archd,cfl,fkz,shd,shy,sht,shU,shB};")();
+export const CW = new Function(WRAPJS + toJs(H_SRC) + toJs(C_SRC) + ";return {czc,czd,cw0,cD,chgt,archd,cfl,fkz,fko,shd,shy,sht,shU,shB};")();
 
 export function paramsFor(vmax) {
   const SC = Math.pow(vmax / 250, 0.8);

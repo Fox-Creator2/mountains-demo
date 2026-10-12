@@ -98,7 +98,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 13.10, 01:36</small>
+  <small id="ver">версия 13.10, 02:25</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -249,10 +249,13 @@ class Plane {
     const ab = T.canyon && vt < this.v - .12 * T.vmax, brk = ab ? T.BRK * 3 : T.BRK; this.ab = (this.ab || 0) + ((ab ? 1 : 0) - (this.ab || 0)) * Math.min(1, dt * 6);
     this.vt = vt; this.v += Math.max(-brk * dt, Math.min(T.ACC * dt, vt - this.v));
     this.prev.copy(this.pos); this.pos.addScaledVector(this.f, this.v * dt);
-    const G0 = Math.max(9.81, T.AMAX * 0.15); let rt = Math.max(-1.4, Math.min(1.4, Math.atan2(ar, G0)));
+    /* крен: цель — по перегрузке, которая понадобится через ~0.2 с (автопилот заранее подаёт rollAr), поэтому перекладка начинается до смены поворота */
+    const arR = this.rollAr != null ? Math.max(-T.AMAX, Math.min(T.AMAX, this.rollAr)) : ar; this.rollAr = null;
+    const G0 = Math.max(9.81, T.AMAX * 0.15); let rt = Math.max(-1.4, Math.min(1.4, Math.atan2(arR, G0)));
     /* резкий нырок: пилот переворачивает машину и «тянет» к земле (как в реальном пилотаже), а не просто отдаёт ручку от себя */
     if (T.canyon && au < -.3 * T.AMAX) { const k = Math.min(1, (-au / T.AMAX - .3) / .35), sg = Math.sign(rt || this.rollSg || 1); this.rollSg = sg; rt = sg * (Math.abs(rt) + (2.6 - Math.abs(rt)) * k); }
-    const w = 7, z = 0.85; this.rollV += (w * w * (rt - this.roll) - 2 * z * w * this.rollV) * dt; this.rollV = Math.max(-3.4, Math.min(3.4, this.rollV)); this.roll += this.rollV * dt;
+    const w = 13, z = 0.9, sub = Math.max(1, Math.ceil(dt * 120)), h = dt / sub; // быстрая перекладка: до ~400°/с, как у истребителя
+    for (let k = 0; k < sub; k++) { this.rollV += (w * w * (rt - this.roll) - 2 * z * w * this.rollV) * h; this.rollV = Math.max(-7, Math.min(7, this.rollV)); this.roll += this.rollV * h; }
     this.basis();
   }
 }
@@ -299,14 +302,14 @@ function archHit(x, y, z, m) {
 }
 /* полки: каменная плита поперёк каньона (над ней и под ней — проходы) */
 function shelfHit(x, y, z, m) {
-  const sc = T.SC, u = x / sc; if (CW.shd(u) * sc > m + 120 * sc) return false;
+  const sc = T.SC, u = x / sc; if (CW.shd(u) * sc > m + 420 * sc) return false;
   const sl = CW.czd(u), a = (z - cyZc(x)) / Math.sqrt(1 + sl * sl) / cyW(x); if (Math.abs(a) > 1.3) return false;
   const ys = CW.shy(u) * sc; return y < ys + CW.shU(u, a) * sc + m && y > ys - CW.shB(u, a) * sc - m && CW.shU(u, a) + CW.shB(u, a) > 0;
 }
 const shelves = new Map();
 /* меш полки строится по той же формуле, что и столкновение: сетка вдоль оси (u) × поперёк (a — доля ширины по перпендикуляру) */
 function shelfGeo(kk) {
-  const sc = T.SC, a0 = 4300 * (kk + .5 + .22 * Math.sin(2.3 * kk + .6)), b0 = 4300 * (kk + 1.5 + .22 * Math.sin(2.3 * kk + 2.9)), mid = (a0 + b0) / 2, hl = Math.min(950, (b0 - a0) * .5 - 800) + 160;
+  const sc = T.SC, a0 = 4300 * (kk + .5 + .22 * Math.sin(2.3 * kk + .6)), b0 = 4300 * (kk + 1.5 + .22 * Math.sin(2.3 * kk + 2.9)), mid = (a0 + b0) / 2, hl = Math.min(950, (b0 - a0) * .5 - 800) + 460;
   const NS = 72, NA = 28, pos = [], idx = [];
   for (const side of [1, -1]) { const base = pos.length / 3;
     for (let i = 0; i <= NS; i++) { const u = mid - hl + 2 * hl * i / NS, sl = CW.czd(u), il = 1 / Math.sqrt(1 + sl * sl), w = CW.cw0(u), zc = CW.czc(u), ys = CW.shy(u);
@@ -322,8 +325,8 @@ function updateShelves() {
 }
 /* безопасная точка возврата/старта: в развилке — в правый рукав (на оси стоит остров), у полки — под неё */
 function safeSpot(x, a) {
-  const sc = T.SC, cs = T.cs, u = x / sc, fl = cyFl(x), D = cyD(x), z = cyZc(x) + .32 * CW.fkz(u) * cyW(x); let y = Math.max(fl + a * D, gnd(x, z) + 60 * cs); // середина правого рукава, не ниже 60·cs над грунтом
-  if (CW.shd(u) * sc < 300 * cs + 120 * sc) { const ys = CW.shy(u) * sc, th = CW.sht(u) * sc; if (y > ys - 1.2 * th - 60 * cs && y < ys + th + 60 * cs) y = (fl + ys - 1.2 * th) / 2; }
+  const sc = T.SC, cs = T.cs, u = x / sc, fl = cyFl(x), D = cyD(x), z = cyZc(x) + CW.fko(u) * sc; let y = Math.max(fl + a * D, gnd(x, z) + 60 * cs); // середина правого рукава, не ниже 60·cs над грунтом
+  if (CW.shd(u) * sc < 300 * cs + 420 * sc) { const ys = CW.shy(u) * sc, th = CW.sht(u) * sc; if (y > ys - 1.6 * th - 60 * cs && y < ys + 1.5 * th + 60 * cs) y = (fl + ys - 1.6 * th) / 2; }
   return [y, z];
 }
 /* ===== зенитки на кромке каньона =====
@@ -352,7 +355,9 @@ const flakR = () => 22 * T.cs + .008 * T.vmax; // радиус поражени�
    с разбросом spK·ширины; rk — множитель радиуса разрыва; возвращает точку упреждения без разброса */
 /* линия огня свободна: точки отрезка (кроме самого начала у ствола) не внутри рельефа, арки или полки */
 function losClear(a, b) {
-  for (let i = 2; i <= 14; i++) { const k = i / 14, x = a.x + (b.x - a.x) * k, y = a.y + (b.y - a.y) * k, z = a.z + (b.z - a.z) * k;
+  /* шаг проверки — не длиннее ~60 м·масштаб, чтобы трасса снаряда не «перепрыгивала» тонкие арки и гребни */
+  const n = Math.max(14, Math.min(96, Math.ceil(a.distanceTo(b) / (60 * T.SC))));
+  for (let i = 2; i <= n; i++) { const k = i / n, x = a.x + (b.x - a.x) * k, y = a.y + (b.y - a.y) * k, z = a.z + (b.z - a.z) * k;
     if (y < gnd(x, z) || archHit(x, y, z, 0) || shelfHit(x, y, z, 0)) return false; }
   return true;
 }
@@ -508,8 +513,12 @@ function planeStep(e, dt) {
   const Lp = (p.pos.z - cyZc(px)) / cyW(px), ap = (p.pos.y - cyFl(px)) / cyD(px), lim = e.pos.x - px > T.vmax * .25;
   if (lim) { e.Lc += Math.max(-.45 * dt, Math.min(.45 * dt, Lp - e.Lc)); e.ac += Math.max(-.3 * dt, Math.min(.3 * dt, Math.max(.12, Math.min(.9, ap)) - e.ac)); }
   let L = e.Lc + .12 * Math.sin(e.ph + (tNow - e.t0) * 2.1); if (fk > 0) L = L * (1 - fk) + Math.sign(L || e.L0) * .32 * fk; // в развилке — в рукав
-  let y = cyFl(x) + e.ac * cyD(x); if (CW.shd(u) * sc < 300 * T.cs + 120 * sc) y = Math.min(y, CW.shy(u) * sc - 1.6 * CW.sht(u) * sc); // под полкой
-  const z = cyZc(x) + L * cyW(x); return _D.set(x, Math.max(y, gnd(x, z) + 60 * T.cs), z);
+  let y = cyFl(x) + e.ac * cyD(x); const cs = T.cs;
+  /* полка: заранее и плавно уходит под неё, ближе к середине (у стен низ полки опускается к склону) */
+  { const ks = 1 - sstep(300 * cs + 300 * sc, 300 * cs + 1000 * sc, CW.shd(u) * sc); if (ks > 0) { const yb = (CW.shy(u) - 2.3 * CW.sht(u)) * sc - 40 * cs; y += (Math.min(y, yb) - y) * ks; L += (Math.max(-.3, Math.min(.3, L)) - L) * ks; } }
+  /* арка: тоже плавно — под свод, ближе к середине пролёта */
+  { const na = nextArch(x - 1200 * sc), ka = 1 - sstep(na.Lt / 2 + 150 * cs, na.Lt / 2 + 150 * cs + 900 * sc, Math.abs(x - na.x)); if (ka > 0) { const yb = na.fl + .5 * na.yc - 30 * cs; y += (Math.min(y, yb) - y) * ka; L += (Math.max(-.4, Math.min(.4, L)) - L) * ka; } }
+  const z = cyZc(x) + L * cyW(x); return _D.set(x, Math.max(y, gnd(x, z) + 60 * cs), z);
 }
 /* шаг врагов; возвращает сообщение, если самолёт поражён */
 function enemiesStep(dt, px, py, pz) {
@@ -607,8 +616,10 @@ function figureNow(p, shOn, E) {
   if (F && tNow - F.t0 > F.dur) { cy.fig = F = null; cy.figCool = tNow + 1; }
   /* арка впереди: заранее и решительно — под её середину (там просвет выше) или горкой над ней; держать до пролёта */
   if (!window.__noArchFig && (!F || (F.k !== "under" && F.k !== "over")) && E < .2) { const na = nextArch(x), dx = na.x - x, v = Math.max(p.v, T.vmax * .3);
-    if (dx > v * .5 && dx < v * 2.2) { const top = (na.yc + na.Th) / na.D, low = ah < top + .03; // «над» — только если уже явно выше арки, иначе под неё
-      cy.fig = F = low ? { k: "under", a: Math.max(.15, Math.min(ah, .4, na.yc / na.D - .2)), L: 0 } : { k: "over", a: Math.min(1.05, top + .17), L: null }; F.t0 = tNow; F.dur = dx / v + .25; cy.afN = (cy.afN || 0) + 1; } }
+    if (dx > v * .5 && dx < v * 2.6) { const top = (na.yc + na.Th) / na.D, low = ah < top + .03; // «над» — только если уже явно выше арки, иначе под неё
+      let aU = Math.max(.15, Math.min(ah, .4, na.yc / na.D - .2)); // если до арки или сразу за ней полка — ниже её нижней кромки, иначе фигура тянет в плиту
+      for (let k = 0; k <= 10; k++) { const xs = x + (dx + Math.max(v * 1.2, 1800 * T.SC)) * k / 10, us = xs / T.SC; if (CW.shd(us) * T.SC < 420 * T.SC + 150 * T.cs) aU = Math.min(aU, ((CW.shy(us) - 1.6 * CW.sht(us)) * T.SC - cyFl(xs)) / cyD(xs) - .1); }
+      cy.fig = F = low ? { k: "under", a: Math.max(.08, aU), L: 0 } :{ k: "over", a: Math.min(1.05, top + .17), L: null }; F.t0 = tNow; F.dur = dx / v + .25; cy.afN = (cy.afN || 0) + 1; } }
   if (F && (F.k === "under" || F.k === "over")) return { a: F.a, L: F.L, arch: true };
   if (shOn) return null;
   if (!F && tNow > (cy.figCool || 0)) {
@@ -808,32 +819,39 @@ function cyPlan(p) {
   const dive = !window.__noDive && tNow - (cy.thrT || -9) < 1.5 && !shOn; // под огнём — охотно нырять вниз
   const FIG = !window.__noFig ? figureNow(p, shOn, E) : null; if (FIG && FIG.a != null) pref = FIG.a; // фигура пилотажа — задание для планировщика
   const Lcs = [-1.5, -1.05, -.6, -.35, -.15, 0, .15, .35, .6, 1.05, 1.5], acs = [...new Set([pref * .6, pref * .8, pref, pref * 1.25, pref * 1.6].map(a => Math.max(.1, Math.min(1.9, a))))], acHi = [1.12, 1.5, 1.9];
-  const SR = [], SA = [], SHf = [], SX = [], SE = [], SW = [], SD = [], SZ = [], SF = [], SNX = [], SNZ = [], SB = [];
+  const SR = [], SA = [], SHf = [], SK = [], SX = [], SE = [], SW = [], SD = [], SZ = [], SF = [], SNX = [], SNZ = [], SB = [];
   for (let i = 1; i <= N; i++) { const s = i / N, xi = x0 + Lsx * s, sl = CW.czd(xi / sc), il = 1 / Math.sqrt(1 + sl * sl);
-    SX[i] = xi; SE[i] = popE(xi); SW[i] = cyW(xi); SD[i] = cyD(xi); SZ[i] = cyZc(xi); SF[i] = cyFl(xi); SNX[i] = -sl * il; SNZ[i] = il; SB[i] = sstep(0, AP.BLE, s);
+    SX[i] = xi; SE[i] = popE(xi); SW[i] = cyW(xi); SD[i] = cyD(xi); SZ[i] = cyZc(xi); SF[i] = cyFl(xi); SNX[i] = -sl * il; SNZ[i] = il; SB[i] = sstep(0, AP.BLE, s); SK[i] = Math.max(CW.fkz(xi / sc), CW.fkz((xi + .6 * v) / sc)); // рукав выбирается заранее, за ~0.6 с до острова
     const rx = SW[i] * 1.3; SR[i] = Math.min(gf(xi + SNX[i] * rx, SZ[i] + SNZ[i] * rx), gf(xi - SNX[i] * rx, SZ[i] - SNZ[i] * rx)); // кромка у оси
-    const na = nextArch(xi - 40 * cs - 300 * sc); SA[i] = Math.abs(na.x - xi) < na.Lt + 80 * cs; SHf[i] = CW.shd(xi / sc) * sc < 120 * cs + 120 * sc; }
+    const na = nextArch(xi - 40 * cs - 300 * sc); SA[i] = Math.abs(na.x - xi) < na.Lt + 80 * cs; SHf[i] = CW.shd(xi / sc) * sc < 120 * cs + 420 * sc; }
   /* у полки — явные варианты «под ней» и «над ней» (иначе все высоты вокруг желаемой могут оказаться в плите) */
-  for (let i = 1; i <= N; i++) if (SHf[i]) { const u = SX[i] / sc, ys = CW.shy(u) * sc, th = CW.sht(u) * sc;
-    acs.push(Math.max(.1, Math.min(1.9, (ys - 1.2 * th - SF[i]) / SD[i] - .1)), Math.max(.1, Math.min(1.9, (ys + th - SF[i]) / SD[i] + .1))); break; }
+  /* полка: решение «под/над» принимается один раз по текущей высоте (ниже середины плиты — под неё, выше — над) и дальше держится */
+  let shTg = -1, shUn = false; for (let i = 1; i <= N; i++) if (SHf[i]) { const u = SX[i] / sc, ys = CW.shy(u) * sc, th = CW.sht(u) * sc, aU = Math.max(.1, Math.min(1.9, (ys - 1.6 * th - SF[i]) / SD[i] - .1)), aO = Math.max(.1, Math.min(1.9, (ys + 1.5 * th - SF[i]) / SD[i] + .1));
+    acs.push(aU, aO); shTg = a0 < (ys - SF[i]) / SD[i] ? aU : aO; shUn = shTg === aU; break; }
   /* зенитные разрывы: точка и окно времени известны заранее — отрезок пути станции, проходящий рядом в это время, штрафуется */
-  const HZ = window.__noDodge || tNow < (cy.shOn || 0) ? [] : flakHazards(), vx = Math.max(p.v * Math.max(.3, p.f.x), T.vmax * .2), Rm = (!window.__noFear ? 50 * cs + .025 * v : 25 * cs + .01 * v), FEAR = !window.__noFear ? 2 : 1; // «страх»: уходить от разрывов раньше и решительнее
+  const HZ = window.__noDodge || tNow < (cy.shOn || 0) ? [] : flakHazards(), vx = Math.max(p.v * Math.max(.3, p.f.x), T.vmax * .2), Rm = (!window.__noFear ? 50 * cs + .025 * v : 25 * cs + .01 * v), FEAR = window.__noFear ? 1 : (window.__fear || 2); // «страх»: уходить от разрывов раньше и решительнее
   const MV = window.__noDodge ? [] : moverHazards(), Rmv = 45 * cs + .015 * v;
   /* установки, которые сейчас ведут огонь (зенитки, корабль): зона страха вокруг них */
   const GUNS = []; if (!window.__noFear && !window.__noDodge && tNow >= (cy.shOn || 0)) { for (const t of TUR.list.values()) if (t && !t.dead && tNow - (t.last || -9) < 2 && t.x > x0 - Lsx * .2 && t.x < x0 + Lsx) GUNS.push({ x: t.x, y: t.y, z: t.z, r: .95 * cyW(t.x) });
     for (const b of EN.boats.values()) if (b && b.ship && !b.dead && tNow - (b.last || -9) < 2 && b.pos.x > x0 - Lsx * .2 && b.pos.x < x0 + Lsx) GUNS.push({ x: b.pos.x, y: b.pos.y, z: b.pos.z, r: .6 * cyW(b.pos.x) }); }
   if (dive) acs.push(.07, .14);
+  /* развилка: рукав выбирается один раз — тот, куда уже смещён (или куда вёл прежний план), и дальше держится; без метаний через остров */
+  const fsd = Math.sign(Math.abs(pl.Lc) > .05 ? pl.Lc : L0) || 1;
+  /* под огнём запас до камня (арки, полки) — жёсткий и шире: уклоняясь от разрывов, нельзя «прижиматься» к скале */
+  const HM = (HZ.length || MV.length || GUNS.length) && !window.__oldPri ? (window.__hm != null ? window.__hm : 2) * (14 * cs + .02 * v) : 0;
   let best = null; if (window.__dbg) pl.dbg = [];
   for (const Lc of Lcs) for (const ac of (Math.abs(Lc) > .8 ? acHi : acs)) {
-    let qx = p.pos.x, qy = p.pos.y, qz = p.pos.z, qt = 0, hzc = 0, fire = 0; // fire — штраф за огонь и перехватчиков, ограничен сверху: скала всегда хуже обстрела
-    let cost = (Math.abs(Lc) > .8 ? 0 : AP.LCW * Lc * Lc + AP.AW * (FIG && FIG.a != null ? 2.5 : dive ? .3 : 1) * (ac - pref) * (ac - pref) + (ATK ? 4 * ((Lc - ATK.L) ** 2 + (ac - ATK.a) ** 2) : 0) + (FIG && FIG.L != null ? (FIG.arch ? 8 : 4) * (Lc - FIG.L) ** 2 : 0)) + AP.HY * (Math.abs(Lc - pl.Lc) + AP.HYA * Math.abs(ac - pl.ac)), Cmin = 1e9, wmin = 1e9, kmax = 0, nOut = 0; const pts = PTS; let np = 0;
+    let qx = p.pos.x, qy = p.pos.y, qz = p.pos.z, qt = 0, hzc = 0, fire = 0, terr = 0; // fire — штраф за огонь и перехватчиков, ограничен сверху: скала всегда хуже обстрела
+    let cost = (Math.abs(Lc) > .8 ? (FIG && FIG.arch && FIG.L != null ? 40 : 0) + (shUn ? 150 : 0) : AP.LCW * Lc * Lc + AP.AW * (FIG && FIG.a != null ? 2.5 : dive ? .3 : 1) * (ac - pref) * (ac - pref) + (ATK ? 4 * ((Lc - ATK.L) ** 2 + (ac - ATK.a) ** 2) : 0) + (FIG && FIG.L != null ? (FIG.arch ? 8 : 4) * (Lc - FIG.L) ** 2 : 0)) + AP.HY * (Math.abs(Lc - pl.Lc) + AP.HYA * Math.abs(ac - pl.ac)), Cmin = 1e9, wmin = 1e9, kmax = 0, nOut = 0; const pts = PTS; let np = 0;
     for (let i = 1; i <= N; i++) {
       const s = i / N, bl = SB[i], xi = SX[i], Ei = SE[i], Li = L0 + (Lc - L0) * bl, ai = a0 + (ac - a0) * bl, wi = SW[i], Di = SD[i], zi = SZ[i] + Li * wi, yi = SF[i] + ai * Di, nx = SNX[i], nzz = SNZ[i];
       const ri = Math.min(r, .42 * wi), g0 = gf(xi, zi), gl = gf(xi + nx * ri, zi + nzz * ri), gr = gf(xi - nx * ri, zi - nzz * ri), C = Math.min(yi - g0, yi - gl, yi - gr);
-      Cmin = Math.min(Cmin, C); wmin = Math.min(wmin, wi);
-      if (C < m) cost += Math.pow((m - C) / m, 2) * AP.COLW * (1.25 - s * .7) + (C < 0 ? 1000 : 0);
-      if (SA[i] && archHit(xi, yi, zi, 35 * cs)) cost += AP.ARW + (archHit(xi, yi, zi, 8 * cs) ? 1000 : 0); // сквозь камень — жёсткий запрет
-      if (SHf[i] && shelfHit(xi, yi, zi, 35 * cs + .04 * v)) cost += AP.ARW + (shelfHit(xi, yi, zi, 8 * cs) ? 1000 : 0); // запас растёт со скоростью: на 94 000 км/ч ошибка следования больше
+      Cmin = Math.min(Cmin, C); wmin = Math.min(wmin, wi * (window.__noFkW ? 1 : 1 - .4 * SK[i])); // в развилке рукав уже ширины каньона
+      if (shTg >= 0 && SHf[i]) cost += 4 * (1 - sstep(0, 500, CW.shd(xi / sc))) * (ai - shTg) ** 2;
+      if (SK[i] > 0 && !window.__noFk) cost += 5 * SK[i] * (Li - fsd * .35) ** 2; // держаться выбранного рукава там, где остров
+      if (C < m) terr += Math.pow((m - C) / m, 2) * AP.COLW * (1.25 - s * .7) + (C < 0 ? 1000 : 0);
+      if (SA[i] && archHit(xi, yi, zi, 35 * cs + HM)) terr += AP.ARW + (archHit(xi, yi, zi, 8 * cs + HM) ? 1000 : 0); // сквозь камень — жёсткий запрет
+      if (SHf[i] && shelfHit(xi, yi, zi, 35 * cs + .04 * v + HM)) terr += AP.ARW + (shelfHit(xi, yi, zi, 8 * cs + HM) ? 1000 : 0); // запас растёт со скоростью: на 94 000 км/ч ошибка следования больше
       if (false) { const rx = wi * 1.3, rim = Math.min(gf(xi + nx * rx, zi + nzz * rx), gf(xi - nx * rx, zi - nzz * rx)), lim = rim - 90 * cs; if (yi > lim) cost += Math.pow((yi - lim) / (90 * cs), 2) * 30; }
       const r2 = Math.min(r * 2.4, .9 * wi), gl2 = gf(xi + nx * r2, zi + nzz * r2), gr2 = gf(xi - nx * r2, zi - nzz * r2); if (Math.max(gl2, gr2) > yi) cost += .5;
       { if (Math.abs(Li) > 1.02 || yi > SR[i] - 30 * cs) { const q = OUT * (1 - Ei); cost += q; nOut++; } }
@@ -846,7 +864,9 @@ function cyPlan(p) {
         for (const [P, V] of MV) { const ax = sx0 - P.x - V.x * t0, ay = sy0 - P.y - V.y * t0, az = sz0 - P.z - V.z * t0, dx = xi - P.x - V.x * ti - ax, dy = yi - P.y - V.y * ti - ay, dz = zi - P.z - V.z * ti - az, dd = dx * dx + dy * dy + dz * dz;
           const uu = dd > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy + az * dz) / dd)) : 0, d = Math.hypot(ax + dx * uu, ay + dy * uu, az + dz * uu); if (d < Rmv) fire += AP.ARW * 2 * (1 - d / Rmv) + AP.ARW * .5; } }
     }
-    cost += fire;
+    /* приоритет: рельеф важнее врагов. Под угрозой штраф за близость скал удваивается, а штраф за огонь ограничен —
+       от разрывов спасают щит и ракеты, от скалы — ничто */
+    const THR = HZ.length || MV.length || GUNS.length; cost += THR && !window.__oldPri ? terr * (window.__terK || 2.2) + (Cmin < .45 * m ? 250 : 0) + Math.min(fire, AP.ARW * (window.__fcap || 1e9)) : terr + fire;
     if (GUNS.length) for (let i = 2; i <= N; i += 2) { const j = (i - 1) * 3, gx = pts[j], gy = pts[j + 1], gz = pts[j + 2]; for (const G of GUNS) { const d = Math.hypot(gx - G.x, (gy - G.y) * .5, gz - G.z); if (d < G.r) cost += AP.ARW * .35 * (1 - d / G.r); } }
     for (let i = 4; i <= 11; i++) { const j = i * 3; const ax = pts[j - 3] - pts[j - 6], ay = pts[j - 2] - pts[j - 5], az = pts[j - 1] - pts[j - 4], bx = pts[j] - pts[j - 3], by = pts[j + 1] - pts[j - 2], bz = pts[j + 2] - pts[j - 1], la = Math.hypot(ax, ay, az), lb = Math.hypot(bx, by, bz), ang = Math.hypot(ax / la - bx / lb, ay / la - by / lb, az / la - bz / lb); kmax = Math.max(kmax, ang / ((la + lb) / 2)); }
     cost += AP.KW * Math.min(2.5, kmax * 500 * sc); // гоночная линия: срезать дугу
@@ -880,8 +900,10 @@ function maneuver(p, pl) {
 } // фигуры высшего пилотажа убраны: от огня уходит планировщик
 function cyAI(p) {
   const pl = cy.plan; if (tNow - pl.t > .05) cyPlan(p);
-  const sc = T.SC, cs = T.cs, v = Math.max(p.v, T.vmax * .2), Ld = Math.max(AP.LD * v, 80 * cs), xT = p.pos.x + Ld * AP.LDX;
-  const s = Math.max(0, (xT - pl.x0) / pl.Lsx), bl = sstep(0, AP.BLE, Math.min(1, s)), L = pl.L0 + (pl.Lc - pl.L0) * bl, a = pl.a0 + (pl.ac - pl.a0) * bl;
+  const sc = T.SC, cs = T.cs, v = Math.max(p.v, T.vmax * .2), F = cy.fig, dUnder = F && F.k === "under" && !window.__noUB ? (p.pos.y - cyFl(p.pos.x)) / cyD(p.pos.x) - F.a : 0;
+  /* поднырнуть под арку, когда идём высоко: снижение резче и воздушный тормоз — выиграть время */
+  const Ld = Math.max(AP.LD * v, 80 * cs), xT = p.pos.x + Ld * AP.LDX;
+  const s = Math.max(0, (xT - pl.x0) / pl.Lsx), bl = sstep(0, AP.BLE, Math.min(1, s)), L = pl.L0 + (pl.Lc - pl.L0) * bl, a = pl.a0 + (pl.ac - pl.a0) * (dUnder > .1 ? Math.max(bl, .5) : bl); // под арку — снижение решительнее (половина пути сразу)
   _tp.set(xT, cyFl(xT) + a * cyD(xT), cyZc(xT) + L * cyW(xT));
   _d.subVectors(_tp, p.pos); const dd = _d.dot(p.f); _d.addScaledVector(p.f, -dd);
   const L2 = Math.max(Ld * Ld * .5, _tp.distanceToSquared(p.pos)), aw = _d.multiplyScalar(2 / L2 * v * v);
@@ -889,6 +911,13 @@ function cyAI(p) {
   const mv = maneuver(p, pl);
   if (tNow - (cy.thrT || -9) < 1) vt = Math.max(vt, Math.min(T.vmax, pl.vk || T.vmax)); // газ 100%, но не быстрее, чем позволяет перегрузка в повороте
   if (mv) { ar += mv[0]; au += mv[1]; }
+  /* не вписываемся: требуемая перегрузка заметно больше предельной — сбросить скорость (воздушным тормозом), а не вылетать на скалу */
+  if (!window.__noSat && Math.hypot(ar, au) > 1.15 * T.AMAX) vt = Math.min(vt, Math.max(T.vmax * .5, p.v * .9));
+  if (dUnder > .1) vt = Math.min(vt, Math.max(T.vmax * .5, pl.vt * (dUnder > .2 ? .78 : .88)));
+  { /* упреждение крена: какая боковая перегрузка понадобится через 0.22 с — туда и начинаем перекладывать крыло заранее */
+    const xT2 = xT + v * .22, s2 = Math.max(0, (xT2 - pl.x0) / pl.Lsx), b2 = sstep(0, AP.BLE, Math.min(1, s2)), L2b = pl.L0 + (pl.Lc - pl.L0) * b2, a2 = pl.a0 + (pl.ac - pl.a0) * b2;
+    _A.set(xT2, cyFl(xT2) + a2 * cyD(xT2), cyZc(xT2) + L2b * cyW(xT2)).sub(p.pos); const d2 = _A.dot(p.f); _A.addScaledVector(p.f, -d2);
+    const ar2 = _A.dot(p.r0) * 2 / Math.max(Ld * Ld * .5, (xT2 - p.pos.x) ** 2) * v * v; p.rollAr = .35 * ar + .65 * ar2; }
   return [ar, au, vt];
 }
 
@@ -1288,7 +1317,7 @@ function damage(n, msg) {
 }
 /* сбит: появиться чуть впереди (а не позади), в безопасной точке; броня восстановлена, 2.5 с неуязвимости */
 function shotDown(msg) {
-  cy.crashes++; $("flash").style.opacity = 0.55; setTimeout(() => $("flash").style.opacity = 0, 120);
+  cy.crashes++; cy.sd = (cy.sd || 0) + 1; $("flash").style.opacity = 0.55; setTimeout(() => $("flash").style.opacity = 0, 120);
   const p = player, cs = T.cs; let x = p.pos.x + T.vmax * .35, y, z;
   for (let i = 0; i < 10; i++) { [y, z] = safeSpot(x, altPref(x)); if (!archHit(x, y, z, 80 * cs) && !shelfHit(x, y, z, 80 * cs) && y > gnd(x, z) + 50 * cs) break; x += T.vmax * .25; }
   p.pos.set(x, y, z); p.prev.copy(p.pos); p.f.set(1, 0, CW.czd(x / T.SC)).normalize(); p.v = Math.max(p.v, T.vmax * .6); p.roll = 0; p.rollV = 0; p.basis();
@@ -1502,7 +1531,7 @@ window.__race = {
     const sc = T.SC, st = { out: 0, outLat: 0, outTop: 0, trans: 0, umax: 0, ynMax: 0, ynMin: 9, gMax: 0, vSum: 0, n: 0, wasOut: false, crashes0: cy.crashes, minClr: 1e18, rollMax: 0, aboveRim: 0, nearRim: 0, rimMin: 1e18 };
     let pf = null;
     for (let t = 0; t < seconds; t += dt) {
-      const k0 = cy.nextK, cr0 = cy.crashes, px = player.pos.x, py = player.pos.y, pz = player.pos.z, pv = player.v; simStep(dt); if (cy.crashes > cr0) (st.cl = st.cl || []).push({ x: Math.round(px), yn: +((py - cyFl(px)) / cyD(px)).toFixed(2), u: +(Math.abs(pz - cyZc(px)) / cyW(px)).toFixed(2), E: +popE(px).toFixed(2), v: Math.round(pv), arch: archHit(px, py, pz, 120 * T.cs), D: Math.round(cyD(px)), gnd: Math.round(py - gnd(px, pz)) }); const p = player, x = p.pos.x, sl = CW.czd(x / sc), isl = 1 / Math.sqrt(1 + sl * sl), w0 = cyW(x), D = cyD(x);
+      const k0 = cy.nextK, cr0 = cy.crashes, px = player.pos.x, py = player.pos.y, pz = player.pos.z, pv = player.v; simStep(dt); if (cy.crashes > cr0) (st.cl = st.cl || []).push({ x: Math.round(px), yn: +((py - cyFl(px)) / cyD(px)).toFixed(2), u: +(Math.abs(pz - cyZc(px)) / cyW(px)).toFixed(2), E: +popE(px).toFixed(2), v: Math.round(pv), arch: archHit(px, py, pz, 120 * T.cs), fk: +CW.fkz(px / T.SC).toFixed(2), sh: shelfHit(px, py, pz, 120 * T.cs), D: Math.round(cyD(px)), gnd: Math.round(py - gnd(px, pz)) }); const p = player, x = p.pos.x, sl = CW.czd(x / sc), isl = 1 / Math.sqrt(1 + sl * sl), w0 = cyW(x), D = cyD(x);
       const nxx = -sl * isl, nzz = isl, zc = cyZc(x), rx = w0 * 1.3, rim = Math.min(gnd(x + nxx * rx, zc + nzz * rx), gnd(x - nxx * rx, zc - nzz * rx)); if (p.pos.y > rim) st.aboveRim += dt; if (p.pos.y > rim - 60 * T.cs) st.nearRim += dt; st.rimMin = Math.min(st.rimMin, rim - p.pos.y);
       const u = Math.abs(p.pos.z - cyZc(x)) * isl / w0, yn = (p.pos.y - cyFl(x)) / D, lat = u > 1.0, top = yn > 1.0, o = lat || top;
       st.n++; st.vSum += p.v; { const q = cy.plan; st.fk = (st.fk || 0) + (q.fk || 1); st.fn = (st.fn || 0) + (q.fn || 1); st.fc = (st.fc || 0) + (q.fc || 1); st.fo = (st.fo || 0) + (q.fo || 0); st.vtS = (st.vtS || 0) + (q.vt || 0); } if (o) st.out += dt; if (lat) st.outLat += dt; if (top) st.outTop += dt; if (o !== st.wasOut) st.trans++; st.wasOut = o;
