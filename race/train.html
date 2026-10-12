@@ -39,6 +39,7 @@ a { color:var(--blue); }
 
   <div class="card">
     <div class="row">
+      <label>Цель <select id="target"><option value="max" selected>только 94 000 км/ч (Предел)</option><option value="all">все скорости (900–94 000)</option></select></label>
       <label>Пилотов <select id="pop"><option>64</option><option selected>256</option><option>1024</option><option value="4096">4096 (очень тяжело)</option></select></label>
       <label>Полёт, с <select id="sim"><option>30</option><option selected>60</option><option>120</option></select></label>
       <label>Смелость <select id="bold"><option value="0">не важна</option><option value="0.08" selected>немного</option><option value="0.25">важна</option></select></label>
@@ -359,7 +360,7 @@ const H = new Map(); // ключ пилота → оценки по поколе
 function seeds(n) {
   const base = [AP_STD, ...Object.values(PILOTS).map(p => p.ap)];
   try { const c = JSON.parse(localStorage.getItem("race-train-best") || "null"); if (c && c.ap) base.unshift(c.ap); } catch {}
-  for (const h of [...HOF].reverse()) base.unshift(h.ap);
+  for (const h of [...loadHof(SFX() ? "" : "-max"), ...HOF].reverse()) base.unshift(h.ap); // свои чемпионы первыми, чемпионы другой цели — тоже в стартовую популяцию
   const pop = base.map(g => ({ ...AP_STD, ...g }));
   while (pop.length < n) pop.push(Math.random() < .7 ? mutate(base[Math.floor(Math.random() * base.length)], .5, .12) : mutate(base[0], .8, .3));
   return pop.slice(0, n);
@@ -381,18 +382,24 @@ async function selfTest() {
   return selfOk;
 }
 /* экзамен: чемпион и стандартный пилот каждое поколение на одних и тех же участках — сравнимая кривая прогресса */
+/* цель тренировки: все пресеты или только «Предел» (94 000 км/ч); у каждой цели свой экзамен и свой зал славы */
+try { const t = localStorage.getItem("race-train-target"); if (t) $("target").value = t; } catch {}
+const TGT = () => $("target").value, SFX = () => TGT() === "max" ? "-max" : "";
+const EXAM_MAX = [["max", 0, 300000], ["max", 1, 330000], ["max", 2, 360000], ["max", 0, 390000], ["max", 1, 420000], ["max", 2, 450000]].map(([preset, alt, x0]) => ({ preset, alt, x0 }));
+const examSegs = () => TGT() === "max" ? EXAM_MAX : EXAM_SEGS;
 const EXAM_SEGS = [["warm", 1, 300000], ["fast", 0, 330000], ["hyper", 2, 360000], ["orbit", 1, 390000], ["ultra", 0, 420000], ["max", 2, 450000]].map(([preset, alt, x0]) => ({ preset, alt, x0 }));
 /* единый экзамен: всегда 60 с, точный шаг 1/60, смелость «немного» — оценки разных запусков сравнимы */
 const EXAM_SIM = 60, EXAM_BOLD = .08, EXAM_OPT = { dt: 1 / 60 }, EV = 3; // dt задан → без разнесения планирования: оценка не зависит от соседей по пачке; старт безопасный (не перед аркой)
-let HOF = []; try { HOF = JSON.parse(localStorage.getItem("race-train-hof") || "[]"); } catch {}
+const loadHof = sfx => { try { return JSON.parse(localStorage.getItem("race-train-hof" + sfx) || "[]"); } catch { return []; } };
+let HOF = loadHof(SFX());
 const keyOf = g => JSON.stringify(round3({ ...AP_STD, ...g }));
 const examCache = new Map(); let stdExam = null;
 /* файл champions.json в личном файловом хранилище сайта (OPFS): тренер пишет, игра читает при запуске */
 async function writeOpfs(list) {
-  try { const root = await navigator.storage.getDirectory(), fh = await root.getFileHandle("champions.json", { create: true }), w = await fh.createWritable();
+  try { const root = await navigator.storage.getDirectory(), fh = await root.getFileHandle(`champions${SFX()}.json`, { create: true }), w = await fh.createWritable();
     await w.write(JSON.stringify({ format: "race-champions", version: 1, saved: new Date().toISOString(), pilots: list })); await w.close(); } catch {}
 }
-async function readOpfs() { try { const root = await navigator.storage.getDirectory(), fh = await root.getFileHandle("champions.json"); return JSON.parse(await (await fh.getFile()).text()); } catch { return null; } }
+async function readOpfs() { try { const root = await navigator.storage.getDirectory(), fh = await root.getFileHandle(`champions${SFX()}.json`); return JSON.parse(await (await fh.getFile()).text()); } catch { return null; } }
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {} // попросить браузер не стирать данные сайта
 /* личность пилота по стилю полёта: позывной + характер + короткая биография */
 const CALLS = ["Гром", "Сокол", "Комета", "Вихрь", "Фантом", "Рысь", "Кондор", "Гюрза", "Искра", "Буран", "Скиф", "Беркут", "Мистраль", "Сапсан", "Тайфун", "Ворон", "Метеор", "Пума", "Сирокко", "Кречет"];
@@ -414,7 +421,7 @@ function saveHof() {
   const pend = HOF.filter(h => h.ev !== EV); // ещё не сдавали единый экзамен — не вытесняем, ждут пересдачи при старте
   HOF = [...HOF.filter(h => h.ev === EV).sort((a, b) => b.exam.f - a.exam.f).slice(0, 5), ...pend];
   const taken = new Set(); for (const h of HOF) { if (!h.call || taken.has(h.call)) Object.assign(h, persona(h, taken)); taken.add(h.call); } // имя даётся один раз, при входе в топ
-  try { localStorage.setItem("race-train-hof", JSON.stringify(HOF)); if (HOF[0]) localStorage.setItem("race-train-best", JSON.stringify(HOF[0])); } catch {}
+  try { localStorage.setItem("race-train-hof" + SFX(), JSON.stringify(HOF)); if (HOF[0] && !SFX()) localStorage.setItem("race-train-best", JSON.stringify(HOF[0])); } catch {}
   writeOpfs(HOF);
   showChamp();
 }
@@ -425,25 +432,25 @@ function addHof(ap, exam, note) {
   saveHof(); return keyOf(HOF[0].ap) === k && wasTop !== k;
 }
 async function examine(aps, label) { // экзамен нескольких пилотов сразу, с кэшем
-  const todo = aps.filter(g => !examCache.has(keyOf(g)));
-  if (todo.length) { const r = await evaluate(todo, EXAM_SEGS, EXAM_SIM, progressor(label, EXAM_SIM), EXAM_OPT); if (!r) return null; todo.forEach((g, i) => examCache.set(keyOf(g), fitness(r[i], EXAM_BOLD))); }
-  return aps.map(g => examCache.get(keyOf(g)));
+  const ck = g => TGT() + keyOf(g), todo = aps.filter(g => !examCache.has(ck(g)));
+  if (todo.length) { const r = await evaluate(todo, examSegs(), EXAM_SIM, progressor(label, EXAM_SIM), EXAM_OPT); if (!r) return null; todo.forEach((g, i) => examCache.set(ck(g), fitness(r[i], EXAM_BOLD))); }
+  return aps.map(g => examCache.get(ck(g)));
 }
 async function run() {
-  stopFlag = false; $("go").disabled = true; $("stop").disabled = false;
+  stopFlag = false; $("go").disabled = true; $("stop").disabled = false; $("target").disabled = true;
   if (!selfOk && !(await selfTest())) { $("go").disabled = false; $("stop").disabled = true; stage(stopFlag ? "Остановлено" : "Проверка видеокарты не прошла", 0); return; }
   const N = +$("pop").value, simSec = +$("sim").value, boldW = +$("bold").value, elite = Math.max(2, Math.round(N / 16));
   /* стандартный пилот и старые чемпионы (сохранённые до единого экзамена) — сдают экзамен заново */
   const legacy = HOF.filter(h => h.ev !== EV).map(h => h.ap);
-  try { const c = JSON.parse(localStorage.getItem("race-train-best") || "null"); if (c && c.ap && c.ev !== EV) legacy.push(c.ap); } catch {}
+  if (!SFX()) try { const c = JSON.parse(localStorage.getItem("race-train-best") || "null"); if (c && c.ap && c.ev !== EV) legacy.push(c.ap); } catch {}
   const pre = await examine([AP_STD, ...legacy], "Экзамен стандартного пилота" + (legacy.length ? " и прошлых чемпионов" : ""));
-  if (!pre) { $("go").disabled = false; $("stop").disabled = true; stage("Остановлено", 0); return; }
+  if (!pre) { $("go").disabled = false; $("stop").disabled = true; $("target").disabled = false; stage("Остановлено", 0); return; }
   stdExam = pre[0]; legacy.forEach((g, i) => addHof(g, pre[i + 1], "прошлый чемпион"));
   if (legacy.length) log(`Прошлые чемпионы пересданы на едином экзамене: ${pre.slice(1).map(e => e.f.toFixed(3)).join(", ")}`);
   let pop = seeds(N), gen = 0, prevKey = null; hist = [];
   log(`Старт: ${N} пилотов × 6 участков = ${N * 6} самолётов одновременно, ${simSec} с полёта`);
   while (!stopFlag) {
-    const segs = SEG_PRESETS.map(p => ({ preset: p, alt: Math.floor(Math.random() * 3), x0: 20000 + Math.random() * 260000 }));
+    const segs = (TGT() === "max" ? Array(6).fill("max") : SEG_PRESETS).map(p => ({ preset: p, alt: Math.floor(Math.random() * 3), x0: 20000 + Math.random() * 260000 }));
     const t0 = performance.now();
     $("kGen").textContent = gen;
     const res = await evaluate(pop, segs, simSec, progressor(`Поколение ${gen} (${N} пилотов × 6 участков)`, simSec));
@@ -474,7 +481,7 @@ async function run() {
     while (pop.length < N) pop.push(mutate(cross(pick(), pick())));
     gen++;
   }
-  $("go").disabled = false; $("stop").disabled = true; stage("Остановлено", 0); log("Остановлено.");
+  $("go").disabled = false; $("stop").disabled = true; $("target").disabled = false; stage("Остановлено", 0); log("Остановлено.");
 }
 function showChamp() {
   const c = HOF[0]; if (!c) return; const e = c.exam, enc = btoa(JSON.stringify(c.ap));
@@ -495,19 +502,19 @@ function drawChart() {
     x.strokeStyle = col; x.lineWidth = lw; x.setLineDash(dash); x.beginPath(); hist.forEach((p, i) => i ? x.lineTo(X(i), Y(p[key])) : x.moveTo(X(i), Y(p[key]))); x.stroke(); }
   x.setLineDash([]);
 }
-$("go").onclick = () => run().catch(e => { log("Ошибка: " + e.message); $("go").disabled = false; });
+$("go").onclick = () => run().catch(e => { log("Ошибка: " + e.message); $("go").disabled = false; $("target").disabled = false; });
 $("stop").onclick = () => { stopFlag = true; stage("Останавливаю…"); };
 $("selfBtn").onclick = () => { stopFlag = false; selfTest().catch(e => log("Ошибка: " + e.message)); };
 $("copy").onclick = () => navigator.clipboard && HOF[0] && navigator.clipboard.writeText(JSON.stringify(HOF[0].ap));
 /* зал славы в файл и обратно */
 $("dl").onclick = () => { if (!HOF.length) return log("Зал славы пуст — сохранять нечего");
-  const d = new Date(), p = x => String(x).padStart(2, "0"), name = `race-champions-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.json`;
-  const blob = new Blob([JSON.stringify({ format: "race-champions", version: 1, saved: d.toISOString(), exam: { sim: EXAM_SIM, dt: "1/60", bold: EXAM_BOLD, ev: EV }, pilots: HOF }, null, 1)], { type: "application/json" });
+  const d = new Date(), p = x => String(x).padStart(2, "0"), name = `race-champions${SFX()}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.json`;
+  const blob = new Blob([JSON.stringify({ format: "race-champions", version: 1, target: TGT(), saved: d.toISOString(), exam: { sim: EXAM_SIM, dt: "1/60", bold: EXAM_BOLD, ev: EV }, pilots: HOF }, null, 1)], { type: "application/json" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   log(`Зал славы сохранён в файл ${name} (${HOF.length} пилотов)`); };
 /* ссылка на игру с зашитыми пилотами: открыть на другом устройстве — пилоты загрузятся в игру */
 $("share").onclick = async () => { if (!HOF.length) return log("Зал славы пуст — делиться нечем");
-  const data = { pilots: HOF.map(h => ({ name: h.name, exam: h.exam ? { f: +h.exam.f.toFixed(3), c: h.exam.c } : undefined, ap: round3(h.ap) })) };
+  const data = { target: TGT(), pilots: HOF.map(h => ({ name: h.name, exam: h.exam ? { f: +h.exam.f.toFixed(3), c: h.exam.c } : undefined, ap: round3(h.ap) })) };
   const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(data)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const url = new URL("./?pilots=" + b64, location.href).href;
   try { if (navigator.share) { await navigator.share({ title: "Пилоты для каньона", text: `Зал славы: ${HOF.length} пилотов, рекорд ${HOF[0].exam.f.toFixed(3)}`, url }); log("Ссылка отправлена"); return; } } catch (e) { if (e.name === "AbortError") return; }
@@ -520,9 +527,16 @@ $("ulf").onchange = async e => { const f = e.target.files[0]; if (!f) return;
       HOF.push({ ...h, ap: round3({ ...AP_STD, ...h.ap }), exam: h.exam || { f: -9, v: 0, c: 0, u: 0, a: 0, o: 0 }, ev: h.exam ? h.ev : 0 }); n++; }
     saveHof(); log(`Загружено из файла: ${n} новых пилотов${HOF.some(h => h.ev !== EV) ? " (часть пересдаст экзамен при старте)" : ""}`);
   } catch (err) { log("Не удалось прочитать файл: " + err.message); } e.target.value = ""; };
-if (!HOF.length) { const j = await readOpfs(); if (j && Array.isArray(j.pilots) && j.pilots.length) { HOF = j.pilots; try { localStorage.setItem("race-train-hof", JSON.stringify(HOF)); } catch {} log("Зал славы восстановлен из файла champions.json"); } }
-if (HOF.length) { showChamp(); log(`Зал славы: ${HOF.length} пилот(ов), рекорд ${HOF[0].exam.f.toFixed(3)}`); }
-else try { const c = JSON.parse(localStorage.getItem("race-train-best") || "null"); if (c && c.ap) log("Найден прошлый чемпион — при старте он сдаст единый экзамен и попадёт в зал славы"); } catch {}
+async function openTarget() {
+  HOF = loadHof(SFX()); stdExam = null; hist = []; drawChart();
+  $("champ").innerHTML = '<tr><td class="sub">Появится после первого поколения.</td></tr>'; $("hof").innerHTML = '<tr><td class="sub">Пусто — появится после первого поколения.</td></tr>';
+  if (!HOF.length) { const j = await readOpfs(); if (j && Array.isArray(j.pilots) && j.pilots.length) { HOF = j.pilots; try { localStorage.setItem("race-train-hof" + SFX(), JSON.stringify(HOF)); } catch {} log(`Зал славы восстановлен из файла champions${SFX()}.json`); } }
+  const what = TGT() === "max" ? "«только 94 000 км/ч»" : "«все скорости»";
+  if (HOF.length) { showChamp(); log(`Цель ${what}: зал славы ${HOF.length} пилот(ов), рекорд ${HOF[0].exam.f.toFixed(3)}`); } else log(`Цель ${what}: зал славы пока пуст — стартовая популяция возьмёт чемпионов других целей`);
+}
+$("target").onchange = () => { try { localStorage.setItem("race-train-target", TGT()); } catch {} openTarget(); };
+await openTarget();
+if (!HOF.length && !SFX()) try { const c = JSON.parse(localStorage.getItem("race-train-best") || "null"); if (c && c.ap) log("Найден прошлый чемпион — при старте он сдаст единый экзамен и попадёт в зал славы"); } catch {}
 window.__train = { evaluate, fitness, AP_STD, PILOTS, gl, GPU, backend };
 </script>
 </body>
