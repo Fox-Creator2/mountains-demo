@@ -55,7 +55,7 @@ a { color:var(--blue); }
   <div class="card">
     <div class="kpis">
       <div class="kpi"><b id="kGen">—</b><span>поколение</span></div>
-      <div class="kpi"><b id="kBest">—</b><span>экзамен чемпиона</span></div>
+      <div class="kpi"><b id="kBest">—</b><span>экзамен чемпиона запуска</span></div>
       <div class="kpi"><b id="kSpeed">—</b><span>скорость на экзамене</span></div>
       <div class="kpi"><b id="kRate">—</b><span>сек на поколение</span></div>
     </div>
@@ -65,11 +65,13 @@ a { color:var(--blue); }
 
   <div class="card">
     <div class="row" style="justify-content:space-between">
-      <b>Чемпион</b> <span class="sub">сохраняется после каждого поколения и сам появляется в игре (Пилот → «Чемпион тренировки»)</span>
+      <b>Лучший за всё время</b> <span class="sub">по единому экзамену (6 одинаковых участков, 60 с, точный шаг); сам появляется в игре: Пилот → «Тренировка #1»</span>
       <div class="row"><a id="fly" href="#" class="main" style="pointer-events:none;opacity:.5">✈ Лететь с ним</a><button id="copy" disabled>Копировать</button></div>
     </div>
     <table id="champ"><tr><td class="sub">Появится после первого поколения.</td></tr></table>
   </div>
+
+  <div class="card"><div class="row" style="justify-content:space-between"><span><b>Зал славы</b> <span class="sub">топ-5 за все запуски, все доступны в игре</span></span><span class="row"><button id="dl">⬇ Скачать JSON</button><button id="ul">⬆ Загрузить JSON</button><input type="file" id="ulf" accept=".json,application/json" style="display:none"></span></div><table id="hof"><tr><td class="sub">Пусто — появится после первого поколения.</td></tr></table></div>
 
   <div class="card"><b>Проверка видеокарты</b> <button id="selfBtn">Проверить</button><div id="self" class="sub" style="margin-top:6px">Запускается автоматически перед тренировкой.</div></div>
   <div class="card"><div class="log" id="log" style="max-height:260px"></div></div>
@@ -251,12 +253,12 @@ async function evaluate(pop, segs, simSec, onProgress, opt = {}) {
     const vals = [g.LS, g.BLE, g.LCW, g.AW, g.HY, g.HYA, g.M, g.COLW, g.ARW, g.OUT, g.KW, g.NF, g.NW, g.CF, g.CWD, g.AU, g.LD, g.LDX, g.VF, seg.alt, pr.vmax, T.SC, AMAX, 0];
     for (let t = 0; t < 6; t++) for (let c = 0; c < 4; c++) P[t][q + c] = vals[t * 4 + c];
     const st = startState(seg, T.SC, !opt.exact); const v0 = pr.vmax * .55;
-    S0.set([...st.p, v0], q); S1.set([...st.f, 0], q); S2.set([0, st.a, 0, st.a], q); S3.set([st.p[0], 1000, v0, opt.exact ? -1e9 : -((i * S + j) % 4) / 60], q); // пилоты планируют по очереди, а не все в один кадр
+    S0.set([...st.p, v0], q); S1.set([...st.f, 0], q); S2.set([0, st.a, 0, st.a], q); S3.set([st.p[0], 1000, v0, opt.exact || opt.dt ? -1e9 : -((i * S + j) % 4) / 60], q); // пилоты планируют по очереди, а не все в один кадр
     seg._k = st.k; P[5][q + 3] = st.k;
   }
   const T0 = new Float32Array(n4), T1 = new Float32Array(n4);
   for (let q = 0; q < n4; q += 4) T1[q] = P[5][q + 3];
-  const DT = opt.exact ? 1 / 60 : 1 / (+$("hz").value || 60), steps = Math.round(simSec / DT);
+  const DT = opt.dt || (opt.exact ? 1 / 60 :  1 / (+$("hz").value || 60)), steps = Math.round(simSec / DT);
   const out = backend === "gpu" ? await runGPU({ N, n4, P, S0, S1, S2, S3, T0, T1 }, steps, onProgress, DT) : await runGL({ W, H, n4, P, S0, S1, S2, S3, T0, T1 }, steps, onProgress, opt, DT);
   if (!out) return null;
   const [out0, out1] = out;
@@ -355,7 +357,8 @@ function progressor(label, simSec) { const t0 = performance.now(); return f => {
 const H = new Map(); // ключ пилота → оценки по поколениям
 function seeds(n) {
   const base = [AP_STD, ...Object.values(PILOTS).map(p => p.ap)];
-  try { const c = JSON.parse(localStorage.getItem("race-train-best") || "null"); if (c) base.unshift(c.ap); } catch {}
+  try { const c = JSON.parse(localStorage.getItem("race-train-best") || "null"); if (c && c.ap) base.unshift(c.ap); } catch {}
+  for (const h of [...HOF].reverse()) base.unshift(h.ap);
   const pop = base.map(g => ({ ...AP_STD, ...g }));
   while (pop.length < n) pop.push(Math.random() < .7 ? mutate(base[Math.floor(Math.random() * base.length)], .5, .12) : mutate(base[0], .8, .3));
   return pop.slice(0, n);
@@ -378,11 +381,57 @@ async function selfTest() {
 }
 /* экзамен: чемпион и стандартный пилот каждое поколение на одних и тех же участках — сравнимая кривая прогресса */
 const EXAM_SEGS = [["warm", 1, 300000], ["fast", 0, 330000], ["hyper", 2, 360000], ["orbit", 1, 390000], ["ultra", 0, 420000], ["max", 2, 450000]].map(([preset, alt, x0]) => ({ preset, alt, x0 }));
+/* единый экзамен: всегда 60 с, точный шаг 1/60, смелость «немного» — оценки разных запусков сравнимы */
+const EXAM_SIM = 60, EXAM_BOLD = .08, EXAM_OPT = { dt: 1 / 60 }, EV = 3; // dt задан → без разнесения планирования: оценка не зависит от соседей по пачке; старт безопасный (не перед аркой)
+let HOF = []; try { HOF = JSON.parse(localStorage.getItem("race-train-hof") || "[]"); } catch {}
+const keyOf = g => JSON.stringify(round3({ ...AP_STD, ...g }));
+const examCache = new Map(); let stdExam = null;
+/* личность пилота по стилю полёта: позывной + характер + короткая биография */
+const CALLS = ["Гром", "Сокол", "Комета", "Вихрь", "Фантом", "Рысь", "Кондор", "Гюрза", "Искра", "Буран", "Скиф", "Беркут", "Мистраль", "Сапсан", "Тайфун", "Ворон", "Метеор", "Пума", "Сирокко", "Кречет"];
+function persona(h, taken) {
+  const e = h.exam, g = h.ap, n = x => Math.max(0, Math.min(1, x)), arch = e.a ? e.u / e.a : 0;
+  const T = [
+    ["Молния", n((e.v - .8) / .15), `летит на ${Math.round(e.v * 100)}% от предела скорости`],
+    ["Сорвиголова", n(arch / .7), `ныряет под арки (${e.u} из ${e.a})`],
+    ["Альбатрос", n(e.o / .5), `любит простор над кромкой (${Math.round(e.o * 100)}% времени)`],
+    ["Стратег", n((g.LS - 2) / 3), `смотрит далеко вперёд (${(+g.LS).toFixed(1)} с)`],
+    ["Таран", n(((g.AU - .8) / .2 + (g.VF - .3) / .3) / 2), "почти не сбрасывает скорость в поворотах"],
+    ["Тихоня", n(((g.COLW - 15) / 85 + (g.M - 30) / 50) / 2), "держит большой запас от скал"],
+  ].sort((a, b) => b[1] - a[1]);
+  let hsh = 0; for (const ch of keyOf(g)) hsh = (hsh * 31 + ch.charCodeAt(0)) >>> 0;
+  let call = CALLS[hsh % CALLS.length]; for (let i = 1; taken.has(call) && i < CALLS.length; i++) call = CALLS[(hsh + i) % CALLS.length];
+  return { call, name: `«${call}» — ${T[0][0]}`, bio: `${T[0][2]}, ${T[1][2]}; ${e.c ? `на экзамене падал ${e.c} раз` : "на экзамене ни разу не упал"}` };
+}
+function saveHof() {
+  const pend = HOF.filter(h => h.ev !== EV); // ещё не сдавали единый экзамен — не вытесняем, ждут пересдачи при старте
+  HOF = [...HOF.filter(h => h.ev === EV).sort((a, b) => b.exam.f - a.exam.f).slice(0, 5), ...pend];
+  const taken = new Set(); for (const h of HOF) { if (!h.call || taken.has(h.call)) Object.assign(h, persona(h, taken)); taken.add(h.call); } // имя даётся один раз, при входе в топ
+  try { localStorage.setItem("race-train-hof", JSON.stringify(HOF)); if (HOF[0]) localStorage.setItem("race-train-best", JSON.stringify(HOF[0])); } catch {}
+  showChamp();
+}
+/* добавить пилота в зал славы; true — если он стал новым рекордсменом за всё время */
+function addHof(ap, exam, note) {
+  const k = keyOf(ap), wasTop = HOF[0] ? keyOf(HOF[0].ap) : null, old = HOF.find(h => keyOf(h.ap) === k);
+  if (old) { old.exam = exam; old.ev = EV; if (old.call) Object.assign(old, { ...persona(old, new Set()), call: old.call, name: old.name.replace(/^«[^»]*»/, `«${old.call}»`) }); } else HOF.push({ ap: round3({ ...AP_STD, ...ap }), exam, note, date: new Date().toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }), ev: EV });
+  saveHof(); return keyOf(HOF[0].ap) === k && wasTop !== k;
+}
+async function examine(aps, label) { // экзамен нескольких пилотов сразу, с кэшем
+  const todo = aps.filter(g => !examCache.has(keyOf(g)));
+  if (todo.length) { const r = await evaluate(todo, EXAM_SEGS, EXAM_SIM, progressor(label, EXAM_SIM), EXAM_OPT); if (!r) return null; todo.forEach((g, i) => examCache.set(keyOf(g), fitness(r[i], EXAM_BOLD))); }
+  return aps.map(g => examCache.get(keyOf(g)));
+}
 async function run() {
   stopFlag = false; $("go").disabled = true; $("stop").disabled = false;
   if (!selfOk && !(await selfTest())) { $("go").disabled = false; $("stop").disabled = true; stage(stopFlag ? "Остановлено" : "Проверка видеокарты не прошла", 0); return; }
   const N = +$("pop").value, simSec = +$("sim").value, boldW = +$("bold").value, elite = Math.max(2, Math.round(N / 16));
-  let pop = seeds(N), gen = 0, prevKey = null, stdExam = null; hist = [];
+  /* стандартный пилот и старые чемпионы (сохранённые до единого экзамена) — сдают экзамен заново */
+  const legacy = HOF.filter(h => h.ev !== EV).map(h => h.ap);
+  try { const c = JSON.parse(localStorage.getItem("race-train-best") || "null"); if (c && c.ap && c.ev !== EV) legacy.push(c.ap); } catch {}
+  const pre = await examine([AP_STD, ...legacy], "Экзамен стандартного пилота" + (legacy.length ? " и прошлых чемпионов" : ""));
+  if (!pre) { $("go").disabled = false; $("stop").disabled = true; stage("Остановлено", 0); return; }
+  stdExam = pre[0]; legacy.forEach((g, i) => addHof(g, pre[i + 1], "прошлый чемпион"));
+  if (legacy.length) log(`Прошлые чемпионы пересданы на едином экзамене: ${pre.slice(1).map(e => e.f.toFixed(3)).join(", ")}`);
+  let pop = seeds(N), gen = 0, prevKey = null; hist = [];
   log(`Старт: ${N} пилотов × 6 участков = ${N * 6} самолётов одновременно, ${simSec} с полёта`);
   while (!stopFlag) {
     const segs = SEG_PRESETS.map(p => ({ preset: p, alt: Math.floor(Math.random() * 3), x0: 20000 + Math.random() * 260000 }));
@@ -396,20 +445,20 @@ async function run() {
     let best = null; for (const h of H.values()) if (!best || score(h) > score(best)) best = h;
     const key = JSON.stringify(best.g), changed = key !== prevKey; prevKey = key;
     /* экзамен */
-    const ex = await evaluate(stdExam ? [best.g] : [best.g, AP_STD], EXAM_SEGS, simSec, progressor(`Поколение ${gen}: экзамен чемпиона`, simSec));
+    const ex = await examine([best.g], `Поколение ${gen}: экзамен чемпиона запуска`);
     if (!ex) break;
-    const exC = fitness(ex[0], boldW); if (!stdExam) stdExam = fitness(ex[1], boldW);
+    const exC = ex[0];
     champ = { ap: best.g, score: score(best), seen: best.fs.length, last: best.last, exam: exC, examStd: stdExam };
+    const record = addHof(best.g, exC, `запуск ${new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}, пок. ${gen}`);
     const dt = (performance.now() - t0) / 1000;
     const order = fits.map((f, i) => i).sort((a, b) => fits[b].f - fits[a].f);
     const meanV = fits.reduce((a, f) => a + f.v, 0) / fits.length, crashed = fits.filter(f => f.c > 0).length / fits.length;
     hist.push({ best: fits[order[0]].f, med: fits[order[order.length >> 1]].f, exam: exC.f, std: stdExam.f });
-    try { localStorage.setItem("race-train-best", JSON.stringify(champ)); } catch {}
-    showChamp(); drawChart();
+    drawChart();
     $("kGen").textContent = gen; $("kBest").innerHTML = exC.f.toFixed(3) + ` <span class="sub">станд. ${stdExam.f.toFixed(3)}</span>`;
     $("kSpeed").innerHTML = (exC.v * 100).toFixed(1) + "%" + ` <span class="${exC.c ? "bad" : "ok"}">${exC.c ? "падений " + exC.c : "без падений"}</span>`; $("kRate").textContent = dt.toFixed(1);
     const b = fits[order[0]];
-    log(`пок. ${gen} · ${dt.toFixed(1)} с\n  экзамен: чемпион ${exC.f.toFixed(3)} (скорость ${(exC.v * 100).toFixed(1)}%, падений ${exC.c}, под арками ${exC.u}/${exC.a}) · стандартный ${stdExam.f.toFixed(3)} (${(stdExam.v * 100).toFixed(1)}%, падений ${stdExam.c})\n  популяция: лучший ${b.f.toFixed(3)} (${(b.v * 100).toFixed(1)}%), средняя скорость ${(meanV * 100).toFixed(1)}%, разбились ${Math.round(crashed * 100)}% пилотов\n  чемпион: ${changed ? "НОВЫЙ" : "тот же"}, оценён в ${best.fs.length} поколениях`);
+    log(`пок. ${gen} · ${dt.toFixed(1)} с\n  экзамен: чемпион ${exC.f.toFixed(3)} (скорость ${(exC.v * 100).toFixed(1)}%, падений ${exC.c}, под арками ${exC.u}/${exC.a}) · стандартный ${stdExam.f.toFixed(3)} (${(stdExam.v * 100).toFixed(1)}%, падений ${stdExam.c})\n  популяция: лучший ${b.f.toFixed(3)} (${(b.v * 100).toFixed(1)}%), средняя скорость ${(meanV * 100).toFixed(1)}%, разбились ${Math.round(crashed * 100)}% пилотов\n  чемпион запуска: ${changed ? "НОВЫЙ" : "тот же"}, оценён в ${best.fs.length} поколениях${record ? "\n  🏆 НОВЫЙ РЕКОРД ЗА ВСЁ ВРЕМЯ: " + exC.f.toFixed(3) : " · рекорд за всё время " + HOF[0].exam.f.toFixed(3)}`);
     const ranked = order.map(i => pop[i]); const top = ranked.slice(0, Math.max(4, N >> 1));
     const pick = () => { const a = Math.floor(Math.random() * top.length), b = Math.floor(Math.random() * top.length); return top[Math.min(a, b)]; };
     pop = [champ.ap, ...ranked.slice(0, elite - 1)];
@@ -419,12 +468,13 @@ async function run() {
   $("go").disabled = false; $("stop").disabled = true; stage("Остановлено", 0); log("Остановлено.");
 }
 function showChamp() {
-  const c = champ, l = c.last, enc = btoa(JSON.stringify(c.ap));
+  const c = HOF[0]; if (!c) return; const e = c.exam, enc = btoa(JSON.stringify(c.ap));
   $("fly").href = "./?ap=" + encodeURIComponent(enc); $("fly").style.pointerEvents = "auto"; $("fly").style.opacity = 1; $("copy").disabled = false;
-  const rows = [...(c.exam ? [["Экзамен", `${c.exam.f.toFixed(3)} · скорость ${(c.exam.v * 100).toFixed(1)}% · падений ${c.exam.c} <span class="sub">(стандартный ${c.examStd.f.toFixed(3)})</span>`]] : []), ["Оценка на тренировке (средняя)", c.score.toFixed(3) + ` за ${c.seen} поколен.`], ["Скорость", (l.v * 100).toFixed(1) + "% от максимума"], ["Падения (посл. поколение)", `<span class="${l.c ? "bad" : "ok"}">${l.c}</span>`],
-    ["Под арками", `${l.u} из ${l.a}`], ["Время над кромкой", Math.round(l.o * 100) + "%"]];
+  const rows = [["Пилот", `<b>${c.name || "—"}</b><div class="sub">${c.bio || ""}</div>`], ["Экзамен (единый)", `<b>${e.f.toFixed(3)}</b>` + (stdExam ? ` <span class="sub">(стандартный ${stdExam.f.toFixed(3)})</span>` : "")], ["Скорость", (e.v * 100).toFixed(1) + "% от максимума"],
+    ["Падения на экзамене", `<span class="${e.c ? "bad" : "ok"}">${e.c}</span>`], ["Под арками", `${e.u} из ${e.a}`], ["Время над кромкой", Math.round(e.o * 100) + "%"], ["Найден", `${c.date || "—"} · ${c.note || ""}`]];
   for (const k of Object.keys(NAMES)) rows.push([NAMES[k], c.ap[k] + ` <span class="sub">(станд. ${AP_STD[k]})</span>`]);
   $("champ").innerHTML = rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("");
+  $("hof").innerHTML = HOF.map((h, i) => `<tr><td>${i + 1}. <b>${h.name || ""}</b><div class="sub">${h.bio || ""}</div><b>${h.exam.f.toFixed(3)}</b> · ${(h.exam.v * 100).toFixed(1)}% · <span class="${h.exam.c ? "bad" : "ok"}">падений ${h.exam.c}</span> · арки ${h.exam.u}/${h.exam.a}<div class="sub">${h.date || ""} · ${h.note || ""}${h.ev !== EV ? " · ждёт пересдачи" : ""}</div></td><td><a href="./?ap=${encodeURIComponent(btoa(JSON.stringify(h.ap)))}">✈</a></td></tr>`).join("");
 }
 function drawChart() {
   const c = $("chart"), x = c.getContext("2d"), w = c.width, h = c.height; x.clearRect(0, 0, w, h);
@@ -439,8 +489,22 @@ function drawChart() {
 $("go").onclick = () => run().catch(e => { log("Ошибка: " + e.message); $("go").disabled = false; });
 $("stop").onclick = () => { stopFlag = true; stage("Останавливаю…"); };
 $("selfBtn").onclick = () => { stopFlag = false; selfTest().catch(e => log("Ошибка: " + e.message)); };
-$("copy").onclick = () => navigator.clipboard && navigator.clipboard.writeText(JSON.stringify(champ.ap));
-try { const c = JSON.parse(localStorage.getItem("race-train-best") || "null"); if (c) { champ = c; showChamp(); log("Загружен прошлый чемпион, оценка " + c.score.toFixed(3)); } } catch {}
+$("copy").onclick = () => navigator.clipboard && HOF[0] && navigator.clipboard.writeText(JSON.stringify(HOF[0].ap));
+/* зал славы в файл и обратно */
+$("dl").onclick = () => { if (!HOF.length) return log("Зал славы пуст — сохранять нечего");
+  const d = new Date(), p = x => String(x).padStart(2, "0"), name = `race-champions-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.json`;
+  const blob = new Blob([JSON.stringify({ format: "race-champions", version: 1, saved: d.toISOString(), exam: { sim: EXAM_SIM, dt: "1/60", bold: EXAM_BOLD, ev: EV }, pilots: HOF }, null, 1)], { type: "application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  log(`Зал славы сохранён в файл ${name} (${HOF.length} пилотов)`); };
+$("ul").onclick = () => $("ulf").click();
+$("ulf").onchange = async e => { const f = e.target.files[0]; if (!f) return;
+  try { const j = JSON.parse(await f.text()), list = Array.isArray(j) ? j : j.pilots || [];
+    let n = 0; for (const h of list) { if (!h || !h.ap) continue; const k = keyOf(h.ap), old = HOF.find(x => keyOf(x.ap) === k); if (old) continue;
+      HOF.push({ ...h, ap: round3({ ...AP_STD, ...h.ap }), exam: h.exam || { f: -9, v: 0, c: 0, u: 0, a: 0, o: 0 }, ev: h.exam ? h.ev : 0 }); n++; }
+    saveHof(); log(`Загружено из файла: ${n} новых пилотов${HOF.some(h => h.ev !== EV) ? " (часть пересдаст экзамен при старте)" : ""}`);
+  } catch (err) { log("Не удалось прочитать файл: " + err.message); } e.target.value = ""; };
+if (HOF.length) { showChamp(); log(`Зал славы: ${HOF.length} пилот(ов), рекорд ${HOF[0].exam.f.toFixed(3)}`); }
+else try { const c = JSON.parse(localStorage.getItem("race-train-best") || "null"); if (c && c.ap) log("Найден прошлый чемпион — при старте он сдаст единый экзамен и попадёт в зал славы"); } catch {}
 window.__train = { evaluate, fitness, AP_STD, PILOTS, gl, GPU, backend };
 </script>
 </body>
