@@ -88,7 +88,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 12.10, 06:00</small>
+  <small id="ver">версия 12.10, 06:10</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -977,9 +977,10 @@ try { navigator.storage && navigator.storage.persist && navigator.storage.persis
   list.forEach((h, i) => { PILOTS["hof" + i] = { name: `#${i + 1} ${h.name}` + (h.exam ? ` · экзамен ${h.exam.f.toFixed(3)}, падений ${h.exam.c}` : ""), ap: h.ap }; });
   const key = JSON.stringify(list[0].ap); if (localStorage.getItem("race-train-seen") !== key) { localStorage.setItem("race-train-seen", key); S.pilot = "hof0"; saveS(); }
   fillPilots(); if (S.pilot.startsWith("hof")) applyPilot(); } catch {} })();
-fetch("champions.json", { cache: "no-cache" }).then(r => r.ok ? r.json() : null).then(j => { if (!j) return;
-  parsePilots(j).forEach((h, i) => { PILOTS["site" + i] = { name: pilotLabel(h, "🌐"), ap: h.ap }; });
-  fillPilots(); if (S.pilot.startsWith("site")) applyPilot(); }).catch(() => {});
+for (const [file, id, mark, tail] of [["champions.json", "site", "🌐", ""], ["champions-max.json", "sitemax", "🌐⚡", " (94 000)"]])
+  fetch(file, { cache: "no-cache" }).then(r => r.ok ? r.json() : null).then(j => { if (!j) return;
+    parsePilots(j).forEach((h, i) => { PILOTS[id + i] = { name: pilotLabel({ ...h, name: h.name + tail }, mark), ap: h.ap }; });
+    fillPilots(); if (S.pilot.startsWith(id)) applyPilot(); }).catch(() => {});
 $("sPilot").onchange = e => { S.pilot = e.target.value; saveS(); applyPilot(); };
 $("sCloud").onchange = e => { S.cloud = +e.target.value; saveS(); applyClouds(); };
 $("sPop").onchange = e => { S.pop = +e.target.value; saveS(); };
