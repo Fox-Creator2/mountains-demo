@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Тренировка пилотов</title>
+<style>
+:root { --bg:#0e1116; --panel:#171b22; --line:#2a303b; --text:#e6e9ef; --dim:#8b94a3; --acc:#ff8a3d; --ok:#4cc38a; --bad:#e5534b; --blue:#4ea1ff; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+main { max-width:760px; margin:0 auto; padding:16px; }
+h1 { font-size:20px; margin:4px 0 2px; }
+.sub { color:var(--dim); font-size:13px; margin-bottom:14px; }
+.card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:12px; }
+.row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+label { color:var(--dim); font-size:13px; display:flex; gap:6px; align-items:center; }
+select, button, input { font:inherit; color:var(--text); background:#222833; border:1px solid var(--line); border-radius:8px; padding:7px 10px; }
+button { cursor:pointer; }
+button.main { background:var(--acc); color:#1a1006; border:none; font-weight:600; }
+button:disabled { opacity:.5; }
+.kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+.kpi { background:#11151b; border-radius:8px; padding:8px; }
+.kpi b { display:block; font-size:18px; }
+.kpi span { color:var(--dim); font-size:12px; }
+canvas { width:100%; height:180px; display:block; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+td, th { padding:5px 6px; border-bottom:1px solid var(--line); text-align:left; }
+th { color:var(--dim); font-weight:500; }
+.ok { color:var(--ok); } .bad { color:var(--bad); }
+.log { font:12px/1.4 ui-monospace,Menlo,monospace; color:var(--dim); max-height:150px; overflow:auto; white-space:pre-wrap; }
+a { color:var(--blue); }
+@media (max-width:520px) { .kpis { grid-template-columns:repeat(2,1fr); } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Тренировка пилотов</h1>
+  <div class="sub">Эволюция «характера» автопилота каньона на вашей видеокарте: сотни пилотов летят одновременно, лучшие скрещиваются. <a href="./">← к игре</a></div>
+
+  <div class="card">
+    <div class="row">
+      <label>Пилотов <select id="pop"><option>64</option><option selected>256</option><option>1024</option><option>4096</option></select></label>
+      <label>Полёт, с <select id="sim"><option>30</option><option selected>60</option><option>120</option></select></label>
+      <label>Смелость <select id="bold"><option value="0">не важна</option><option value="0.08" selected>немного</option><option value="0.25">важна</option></select></label>
+      <button class="main" id="go">▶ Старт</button>
+      <button id="stop" disabled>■ Стоп</button>
+    </div>
+    <div class="sub" id="gpu" style="margin:8px 0 0"></div>
+  </div>
+
+  <div class="card">
+    <div class="kpis">
+      <div class="kpi"><b id="kGen">—</b><span>поколение</span></div>
+      <div class="kpi"><b id="kBest">—</b><span>оценка чемпиона</span></div>
+      <div class="kpi"><b id="kSpeed">—</b><span>скорость чемпиона</span></div>
+      <div class="kpi"><b id="kRate">—</b><span>сек на поколение</span></div>
+    </div>
+    <canvas id="chart" width="720" height="180"></canvas>
+    <div class="sub" style="margin:4px 0 0">Оранжевый — лучший в поколении, синий — середина популяции, зелёный — чемпион (средняя оценка за несколько поколений на разных участках).</div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <b>Чемпион</b>
+      <div class="row"><a id="fly" href="#" class="main" style="pointer-events:none;opacity:.5">✈ Лететь с ним</a><button id="copy" disabled>Копировать</button></div>
+    </div>
+    <table id="champ"><tr><td class="sub">Появится после первого поколения.</td></tr></table>
+  </div>
+
+  <div class="card"><div class="log" id="log"></div></div>
+</main>
+
+<script type="module">
+import { PRESETS, H_SRC, C_SRC, CW, paramsFor, AP_STD, PILOTS } from "./common.js";
+const $ = id => document.getElementById(id);
+const logEl = $("log"); const log = s => { logEl.textContent = s + "\n" + logEl.textContent; };
+
+/* ---------- гены пилота ---------- */
+const GENES = { LS: [2, 5], BLE: [.35, .9], LCW: [0, 3], AW: [.5, 5], HY: [0, 1.5], HYA: [.5, 2], M: [30, 80], COLW: [15, 100], ARW: [30, 200],
+  OUT: [.3, 3], KW: [1, 10], NF: [.6, 1], NW: [80, 250], CF: [.5, 1], CWD: [30, 120], AU: [.8, 1], LD: [.4, 1.2], LDX: [.6, 1], VF: [.3, .6] };
+const GK = Object.keys(GENES);
+const NAMES = { LS: "взгляд вперёд, с", M: "запас от скал", COLW: "страх скал", ARW: "страх арок", OUT: "штраф выхода из каньона", KW: "неприязнь к кривизне",
+  AU: "использование перегрузки", LD: "упреждение руля", AW: "держать высоту", LCW: "держаться оси", VF: "мин. скорость", BLE: "плавность манёвра" };
+const SEG_PRESETS = ["warm", "fast", "hyper", "orbit", "ultra", "max"];
+
+/* ---------- WebGL2 ---------- */
+const cv = document.createElement("canvas"); cv.width = cv.height = 1;
+const gl = cv.getContext("webgl2", { antialias: false, depth: false, powerPreference: "high-performance" });
+if (!gl || !gl.getExtension("EXT_color_buffer_float")) { $("gpu").innerHTML = '<span class="bad">Нужен WebGL2 с float-текстурами — этот браузер не поддерживает.</span>'; $("go").disabled = true; throw new Error("no webgl2"); }
+const dbgInfo = gl.getExtension("WEBGL_debug_renderer_info");
+$("gpu").textContent = "Видеокарта: " + (dbgInfo ? gl.getParameter(dbgInfo.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+
+const VS = `#version 300 es
+in vec2 p; void main(){ gl_Position = vec4(p, 0., 1.); }`;
+const COMMON = `#version 300 es
+precision highp float; precision highp int;
+uniform highp sampler2D uS0, uS1, uS2, uS3, uP0, uP1, uP2, uP3, uP4, uP5;
+uniform float uDt;
+${H_SRC}
+${C_SRC}
+float SC, CS, VMAX, AMAX, ACC, BRK, ALT;
+float LS, BLE, LCW, AW, HY, HYA, MM, COLW, ARW, OUTW, KW, NF, NW, CF, CWD, AU, LD, LDX, VF;
+float ss(float a, float b, float x){ float t = clamp((x - a) / (b - a), 0., 1.); return t * t * (3. - 2. * t); }
+float ZC(float x){ return czc(x / SC) * SC; } float WW(float x){ return cw0(x / SC) * SC; } float DD(float x){ return cD(x / SC) * SC; } float FL(float x){ return (30. + cfl(x / SC)) * SC; }
+float GND(float x, float z){ return max(0., chgt(x, z, SC)); }
+float SPA(){ return 4300. * SC; }
+float AX(float k){ return SPA() * (k + .5 + .22 * sin(k * 2.3 + .6)); }
+struct Arch { float x, z, th, Sa, yc, yl, Th, Lt, fl; };
+Arch AP_(float k){ Arch a; a.x = AX(k); float w = WW(a.x), D = DD(a.x); a.z = ZC(a.x); a.th = atan(czd(a.x / SC)); a.Sa = 1.18 * w; a.yc = .64 * D; a.yl = -20. * SC; a.Th = .14 * D; a.Lt = max(90. * SC, .32 * w); a.fl = FL(a.x); return a; }
+bool archHit(vec3 p, float m){ float k0 = floor(p.x / SPA());
+  for (int i = -1; i <= 1; i++){ Arch a = AP_(k0 + float(i)); float dx = p.x - a.x, dz = p.z - a.z, c = cos(a.th), sn = sin(a.th), t = dx * c + dz * sn, n = -dx * sn + dz * c;
+    if (abs(t) > a.Lt / 2. + m || abs(n) > a.Sa) continue;
+    float r = abs(n) / a.Sa, yb = a.fl + a.yc - (a.yc - a.yl) * pow(r, 2.4), yt = yb + a.Th * (1. - .4 * r * r);
+    if (p.y > yb - m && p.y < yt + m) return true; }
+  return false; }
+float nextArchK(float x){ float k = floor(x / SPA()) - 1.; for (int i = 0; i < 4; i++){ if (AX(k) > x) return k; k += 1.; } return k; }
+float altPref(float x){ vec2 r = ALT < .5 ? vec2(.08, .3) : ALT < 1.5 ? vec2(.1, .62) : ALT < 2.5 ? vec2(.26, .8) : vec2(1.3, 1.3);
+  float u = x / SC, g = .5 + .5 * sin(u * 1.5e-3 + .8 + 1.3 * sin(u * 4e-4)); return r.x + (r.y - r.x) * g; }
+bool popFlag(float k){ return sin(k * 5.17 + 1.3) * .5 + .5 > .75; }
+float archU(float k, float SP){ return SP * (k + .5 + .22 * sin(k * 2.3 + .6)); }
+float popE(float x){ if (ALT >= 2.5) return 0.;
+  float u = x / SC, SP = 4300., k0 = floor(u / SP), ea = 0., dA = 1e9;
+  for (int i = -1; i <= 1; i++){ float k = k0 + float(i), ak = archU(k, SP), dd = u - ak, d = abs(dd); dA = min(dA, d);
+    if (popFlag(k)){ float k2 = k + (dd > 0. ? 1. : -1.); float a = 1500., b = 2800.; if (!popFlag(k2)){ b = min(2800., abs(archU(k2, SP) - ak) - 900.); a = max(300., min(1500., b - 600.)); } ea = max(ea, 1. - ss(a, max(b, a + 50.), d)); } }
+  float D = cD(u), es = ss(500., 1500., dA) * ss(.15, .55, sin(u * 1.1e-3 + .4)) * ss(700., 540., D);
+  return max(ea, es); }
+float popAc(float x){ float u = x / SC, y = (1350. + 350. * sin(u * 1.3e-3 + .5)) * SC; return clamp((y - FL(x)) / DD(x), 1.05, 1.9); }
+void loadParams(ivec2 ij){
+  vec4 a = texelFetch(uP0, ij, 0), b = texelFetch(uP1, ij, 0), c = texelFetch(uP2, ij, 0), d = texelFetch(uP3, ij, 0), e = texelFetch(uP4, ij, 0), f = texelFetch(uP5, ij, 0);
+  LS = a.x; BLE = a.y; LCW = a.z; AW = a.w; HY = b.x; HYA = b.y; MM = b.z; COLW = b.w; ARW = c.x; OUTW = c.y; KW = c.z; NF = c.w; NW = d.x; CF = d.y; CWD = d.z; AU = d.w;
+  LD = e.x; LDX = e.y; VF = e.z; ALT = e.w; VMAX = f.x; SC = f.y; AMAX = f.z; CS = 1. + .7 * SC; ACC = VMAX / 3.; BRK = VMAX / 2.; }
+`;
+/* шаг симуляции: автопилот (план + преследование) + физика + падение/возврат — построчно как в игре */
+const FS_STEP = COMMON + `
+layout(location = 0) out vec4 o0; layout(location = 1) out vec4 o1; layout(location = 2) out vec4 o2; layout(location = 3) out vec4 o3;
+const float LCS[11] = float[11](-1.5, -1.05, -.6, -.35, -.15, 0., .15, .35, .6, 1.05, 1.5);
+const float ACHI[3] = float[3](1.12, 1.5, 1.9);
+void plan(vec3 P, float v_, inout vec4 pl1, inout vec4 pl2, float tNow){
+  float sk = .92, v = max(v_, VMAX * .2), Ls = v * LS, Lsx = Ls * .85, x0 = P.x, fl = FL(x0);
+  float w0 = WW(x0), D0 = DD(x0), L0 = clamp((P.z - ZC(x0)) / w0, -1.4, 1.4), a0 = (P.y - fl) / D0, r = 80. * CS, m = MM * CS;
+  float xm = x0 + Lsx * .6, pref0 = altPref(xm), E = popE(xm), pref = pref0 + (popAc(xm) - pref0) * E;
+  float acs[5]; acs[0] = clamp(pref * .6, .1, 1.9); acs[1] = clamp(pref * .8, .1, 1.9); acs[2] = clamp(pref, .1, 1.9); acs[3] = clamp(pref * 1.25, .1, 1.9); acs[4] = clamp(pref * 1.6, .1, 1.9);
+  float SX[15], SE[15], SW[15], SD[15], SZ[15], SF[15], SNX[15], SNZ[15], SB[15], SR[15]; bool SA[15];
+  for (int i = 1; i <= 14; i++){ float s = float(i) / 14., xi = x0 + Lsx * s, sl = czd(xi / SC), il = inversesqrt(1. + sl * sl);
+    SX[i] = xi; SE[i] = popE(xi); SW[i] = WW(xi); SD[i] = DD(xi); SZ[i] = ZC(xi); SF[i] = FL(xi); SNX[i] = -sl * il; SNZ[i] = il; SB[i] = ss(0., BLE, s);
+    float rx = SW[i] * 1.3; SR[i] = min(GND(xi + SNX[i] * rx, SZ[i] + SNZ[i] * rx), GND(xi - SNX[i] * rx, SZ[i] - SNZ[i] * rx));
+    float kk = nextArchK(xi - 40. * CS - 300. * SC); Arch na = AP_(kk); SA[i] = abs(na.x - xi) < na.Lt + 80. * CS; }
+  float bestC = 1e30, bLc = 0., bac = .3, bCmin = 0., bwmin = 0., bk = 0., bOut = 0.;
+  vec3 pts[15];
+  for (int li = 0; li < 11; li++){ float Lc = LCS[li]; bool hi = abs(Lc) > .8; int na = hi ? 3 : 5;
+    for (int ai = 0; ai < 5; ai++){ if (ai >= na) break; float ac = hi ? ACHI[ai] : acs[ai];
+      float cost = (hi ? 0. : LCW * Lc * Lc + AW * (ac - pref) * (ac - pref)) + HY * (abs(Lc - pl1.x) + HYA * abs(ac - pl1.y)), Cmin = 1e9, wmin = 1e9, kmax = 0., nOut = 0.;
+      for (int i = 1; i <= 14; i++){ float s = float(i) / 14., bl = SB[i], xi = SX[i], Li = L0 + (Lc - L0) * bl, ai_ = a0 + (ac - a0) * bl, wi = SW[i], zi = SZ[i] + Li * wi, yi = SF[i] + ai_ * SD[i], nx = SNX[i], nzz = SNZ[i];
+        float ri = min(r, .42 * wi), g0 = GND(xi, zi), gl = GND(xi + nx * ri, zi + nzz * ri), gr = GND(xi - nx * ri, zi - nzz * ri), C = min(yi - g0, min(yi - gl, yi - gr));
+        Cmin = min(Cmin, C); wmin = min(wmin, wi);
+        if (C < m) cost += pow((m - C) / m, 2.) * COLW * (1.25 - s * .7);
+        if (SA[i] && archHit(vec3(xi, yi, zi), 35. * CS)) cost += ARW;
+        float r2 = min(r * 2.4, .9 * wi), gl2 = GND(xi + nx * r2, zi + nzz * r2), gr2 = GND(xi - nx * r2, zi - nzz * r2); if (max(gl2, gr2) > yi) cost += .5;
+        if (abs(Li) > 1.02 || yi > SR[i] - 30. * CS){ cost += OUTW * (1. - SE[i]); nOut += 1.; }
+        pts[i] = vec3(xi, yi, zi); }
+      for (int i = 5; i <= 12; i++){ vec3 A = pts[i - 1] - pts[i - 2], B = pts[i] - pts[i - 1]; float la = length(A), lb = length(B), ang = length(A / la - B / lb); kmax = max(kmax, ang / ((la + lb) / 2.)); }
+      cost += KW * min(2.5, kmax * 500. * SC);
+      if (cost < bestC){ bestC = cost; bLc = Lc; bac = ac; bCmin = Cmin; bwmin = wmin; bk = kmax; bOut = nOut; } } }
+  pl1 = vec4(bLc, bac, L0, a0);
+  float vcap = VMAX * (.8 + .2 * sk), outF = bOut / 14.;
+  float vt = vcap * (1. - (1. - max(NF, min(1., sqrt(bwmin / (NW * SC))))) * (1. - E) * (1. - outF));
+  if (bk > 1e-9) vt = min(vt, sqrt(AMAX * AU * sk / bk));
+  vt *= max(CF, min(1., CF + (1. - CF) * bCmin / (CWD * CS)));
+  pl2 = vec4(x0, Lsx, max(vt, vcap * VF), tNow); }
+void main(){
+  ivec2 ij = ivec2(gl_FragCoord.xy); loadParams(ij);
+  vec4 s0 = texelFetch(uS0, ij, 0), s1 = texelFetch(uS1, ij, 0), pl1 = texelFetch(uS2, ij, 0), pl2 = texelFetch(uS3, ij, 0);
+  vec3 P = s0.xyz, f = s1.xyz; float v = s0.w, t = s1.w + uDt;
+  if (t - pl2.w > .05) plan(P, v, pl1, pl2, t);
+  /* преследование точки плана */
+  vec3 UP = vec3(0., 1., 0.); vec3 r0 = cross(f, UP); r0 = dot(r0, r0) < 1e-8 ? vec3(1., 0., 0.) : normalize(r0); vec3 u0 = normalize(cross(r0, f));
+  float vv = max(v, VMAX * .2), Ld = max(LD * vv, 80. * CS), xT = P.x + Ld * LDX;
+  float s = max(0., (xT - pl2.x) / pl2.y), bl = ss(0., BLE, min(1., s)), L = pl1.z + (pl1.x - pl1.z) * bl, a = pl1.w + (pl1.y - pl1.w) * bl;
+  vec3 tp = vec3(xT, FL(xT) + a * DD(xT), ZC(xT) + L * WW(xT));
+  vec3 d = tp - P; d -= f * dot(d, f); vec3 diff = tp - P;
+  float L2 = max(Ld * Ld * .5, dot(diff, diff)); vec3 aw = d * (2. / L2 * vv * vv);
+  float ar = dot(aw, r0), au = dot(aw, u0), vt = pl2.z;
+  /* физика (Plane.step) */
+  float mg = length(vec2(ar, au)); if (mg > AMAX){ ar *= AMAX / mg; au *= AMAX / mg; }
+  float vq = max(v, VMAX * .1); f += r0 * (ar * uDt / vq) + u0 * (au * uDt / vq);
+  if (abs(f.y) > .96){ float k = sqrt((1. - .96 * .96) / (f.x * f.x + f.z * f.z + 1e-12)); f.x *= k; f.z *= k; f.y = sign(f.y) * .96; }
+  f = normalize(f); v += max(-BRK * uDt, min(ACC * uDt, vt - v)); P += f * (v * uDt);
+  /* падение → возврат назад в каньон */
+  if (P.y < GND(P.x, P.z) + 2. * CS || archHit(P, 2. * CS)){
+    float x = P.x - 150. * CS - VMAX * .8, ap = altPref(x); P = vec3(x, FL(x) + ap * DD(x), ZC(x)); f = normalize(vec3(1., 0., czd(x / SC))); v = VMAX * .5; pl2.w = -1e9; }
+  o0 = vec4(P, v); o1 = vec4(f, t); o2 = pl1; o3 = pl2; }`;
+/* статистика: скорость, падения, время над кромкой, пролёты под арками, высота над дном */
+const FS_STAT = COMMON + `
+uniform highp sampler2D uN0, uT0, uT1;
+layout(location = 0) out vec4 o0; layout(location = 1) out vec4 o1;
+void main(){
+  ivec2 ij = ivec2(gl_FragCoord.xy); loadParams(ij);
+  vec3 Po = texelFetch(uS0, ij, 0).xyz; vec4 n0 = texelFetch(uN0, ij, 0); vec3 P = n0.xyz; float v = n0.w;
+  vec4 t0 = texelFetch(uT0, ij, 0), t1 = texelFetch(uT1, ij, 0);
+  bool crashed = P.x < Po.x - 1.;
+  if (crashed){ t0.x += 1.; t1.x = nextArchK(P.x); }
+  else { float k = t1.x; for (int i = 0; i < 3; i++){ if (P.x > AX(k)) k += 1.; }
+    if (k != t1.x){ Arch a = AP_(t1.x); t1.y += 1.; if (P.y < a.fl + a.yc) t1.z += 1.; t1.x = k; } }
+  t0.y += v; t0.z += 1.;
+  float x = P.x, sl = czd(x / SC), isl = inversesqrt(1. + sl * sl), rx = WW(x) * 1.3, zc = ZC(x);
+  float rim = min(GND(x - sl * isl * rx, zc + isl * rx), GND(x + sl * isl * rx, zc - isl * rx)); if (P.y > rim) t0.w += uDt;
+  t1.w += min(1., max(0., (P.y - GND(P.x, P.z)) / DD(x)));
+  o0 = t0; o1 = t1; }`;
+
+function prog(fs) { const p = gl.createProgram();
+  for (const [t, src] of [[gl.VERTEX_SHADER, VS], [gl.FRAGMENT_SHADER, fs]]) { const s = gl.createShader(t); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); gl.attachShader(p, s); }
+  gl.bindAttribLocation(p, 0, "p"); gl.linkProgram(p); if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p; }
+let PS, PT;
+try { PS = prog(FS_STEP); PT = prog(FS_STAT); } catch (e) { $("gpu").innerHTML += '<br><span class="bad">Ошибка шейдера: ' + e.message.slice(0, 300) + '</span>'; throw e; }
+const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+const W = 64;
+const tex = (w, h, data) => { const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, data); return t; };
+const fbo = texs => { const f = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, f); texs.forEach((t, i) => gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, t, 0)); return f; };
+
+/* ---------- JS-копии для стартовых состояний ---------- */
+function startState(seg, SC) {
+  const zc = x => CW.czc(x / SC) * SC, D = x => CW.cD(x / SC) * SC, fl = x => (30 + CW.cfl(x / SC)) * SC;
+  const r = [[.08, .3], [.1, .62], [.26, .8]][seg.alt], u = x => x / SC, alt = x => r[0] + (r[1] - r[0]) * (.5 + .5 * Math.sin(u(x) * 1.5e-3 + .8 + 1.3 * Math.sin(u(x) * 4e-4)));
+  const x0 = seg.x0 * SC, a = alt(x0), sl = CW.czd(x0 / SC), n = Math.hypot(1, sl);
+  const SP = 4300 * SC; let k = Math.floor(x0 / SP) - 1; while (SP * (k + .5 + .22 * Math.sin(k * 2.3 + .6)) <= x0) k++;
+  return { p: [x0, fl(x0) + a * D(x0), zc(x0)], f: [1 / n, 0, sl / n], a, k };
+}
+
+/* ---------- одна оценка поколения на GPU ---------- */
+async function evaluate(pop, segs, simSec, onProgress) {
+  const S = segs.length, N = pop.length * S, H = Math.ceil(N / W), n4 = W * H * 4;
+  const P = Array.from({ length: 6 }, () => new Float32Array(n4)), S0 = new Float32Array(n4), S1 = new Float32Array(n4), S2 = new Float32Array(n4), S3 = new Float32Array(n4);
+  for (let i = 0; i < pop.length; i++) for (let j = 0; j < S; j++) {
+    const q = (i * S + j) * 4, g = pop[i], seg = segs[j], pr = PRESETS.find(x => x.id === seg.preset), T = paramsFor(pr.vmax), AMAX = Math.max(T.AMAX, pr.vmax / 2);
+    const vals = [g.LS, g.BLE, g.LCW, g.AW, g.HY, g.HYA, g.M, g.COLW, g.ARW, g.OUT, g.KW, g.NF, g.NW, g.CF, g.CWD, g.AU, g.LD, g.LDX, g.VF, seg.alt, pr.vmax, T.SC, AMAX, 0];
+    for (let t = 0; t < 6; t++) for (let c = 0; c < 4; c++) P[t][q + c] = vals[t * 4 + c];
+    const st = startState(seg, T.SC); const v0 = pr.vmax * .55;
+    S0.set([...st.p, v0], q); S1.set([...st.f, 0], q); S2.set([0, st.a, 0, st.a], q); S3.set([st.p[0], 1000, v0, -1e9], q);
+    seg._k = st.k; P[5][q + 3] = st.k;
+  }
+  const T0 = new Float32Array(n4), T1 = new Float32Array(n4);
+  for (let q = 0; q < n4; q += 4) T1[q] = P[5][q + 3];
+  const pt = P.map(d => tex(W, H, d));
+  const st = [[S0, S1, S2, S3].map(d => tex(W, H, d)), [0, 0, 0, 0].map(() => tex(W, H, null))];
+  const stt = [[T0, T1].map(d => tex(W, H, d)), [0, 0].map(() => tex(W, H, null))];
+  const fS = [fbo(st[0]), fbo(st[1])], fT = [fbo(stt[0]), fbo(stt[1])];
+  gl.viewport(0, 0, W, H);
+  const bind = (p, name, unit, t) => { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(gl.getUniformLocation(p, name), unit); };
+  const steps = Math.round(simSec * 60); let cur = 0, done = 0, batch = 8;
+  while (done < steps && !stopFlag) {
+    const t0 = performance.now();
+    for (let b = 0; b < batch && done < steps; b++, done++) {
+      const nx = 1 - cur;
+      gl.useProgram(PS); gl.bindFramebuffer(gl.FRAMEBUFFER, fS[nx]); gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2, gl.COLOR_ATTACHMENT3]);
+      ["uS0", "uS1", "uS2", "uS3"].forEach((n, i) => bind(PS, n, i, st[cur][i])); ["uP0", "uP1", "uP2", "uP3", "uP4", "uP5"].forEach((n, i) => bind(PS, n, 4 + i, pt[i]));
+      gl.uniform1f(gl.getUniformLocation(PS, "uDt"), 1 / 60); gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.useProgram(PT); gl.bindFramebuffer(gl.FRAMEBUFFER, fT[nx]); gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+      bind(PT, "uS0", 0, st[cur][0]); bind(PT, "uN0", 1, st[nx][0]); bind(PT, "uT0", 2, stt[cur][0]); bind(PT, "uT1", 3, stt[cur][1]);
+      ["uP0", "uP1", "uP2", "uP3", "uP4", "uP5"].forEach((n, i) => bind(PT, n, 4 + i, pt[i]));
+      gl.uniform1f(gl.getUniformLocation(PT, "uDt"), 1 / 60); gl.drawArrays(gl.TRIANGLES, 0, 3);
+      cur = nx;
+    }
+    gl.finish(); const ms = performance.now() - t0;
+    batch = Math.max(1, Math.min(240, Math.round(batch * (40 / Math.max(ms, 1)))));
+    onProgress && onProgress(done / steps);
+    await new Promise(r => setTimeout(r, 0));
+  }
+  const out0 = new Float32Array(n4), out1 = new Float32Array(n4);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fT[cur]); gl.readBuffer(gl.COLOR_ATTACHMENT0); gl.readPixels(0, 0, W, H, gl.RGBA, gl.FLOAT, out0);
+  gl.readBuffer(gl.COLOR_ATTACHMENT1); gl.readPixels(0, 0, W, H, gl.RGBA, gl.FLOAT, out1);
+  [...pt, ...st[0], ...st[1], ...stt[0], ...stt[1]].forEach(t => gl.deleteTexture(t)); [...fS, ...fT].forEach(f => gl.deleteFramebuffer(f));
+  const res = [];
+  for (let i = 0; i < pop.length; i++) { const runs = [];
+    for (let j = 0; j < S; j++) { const q = (i * S + j) * 4, pr = PRESETS.find(x => x.id === segs[j].preset), steps_ = out0[q + 2] || 1;
+      runs.push({ v: out0[q + 1] / steps_ / pr.vmax, c: out0[q], o: out0[q + 3] / simSec, a: out1[q + 1], u: out1[q + 2], g: out1[q + 3] / steps_ }); }
+    res.push(runs); }
+  return res;
+}
+
+/* ---------- эволюция ---------- */
+function fitness(rs, boldW) {
+  const c = rs.reduce((s, r) => s + r.c, 0), v = rs.reduce((s, r) => s + r.v, 0) / rs.length, o = rs.reduce((s, r) => s + r.o, 0) / rs.length;
+  const a = rs.reduce((s, r) => s + r.a, 0), u = rs.reduce((s, r) => s + r.u, 0), g = rs.reduce((s, r) => s + r.g, 0) / rs.length;
+  const bold = .5 * (a ? u / a : 0) + .3 * Math.max(0, 1 - g / .6) + .2 * (1 - o);
+  return { f: v - .5 * c - Math.max(0, o - .4) + boldW * bold, v, c, o, u, a, bold };
+}
+const clampG = (k, x) => Math.max(GENES[k][0], Math.min(GENES[k][1], x));
+const gauss = () => { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+const mutate = (g, rate = .3, sig = .12) => Object.fromEntries(GK.map(k => [k, Math.random() < rate ? clampG(k, g[k] + gauss() * sig * (GENES[k][1] - GENES[k][0])) : g[k]]));
+const cross = (a, b) => Object.fromEntries(GK.map(k => [k, clampG(k, a[k] + (b[k] - a[k]) * (Math.random() * 1.5 - .25))]));
+const round3 = g => Object.fromEntries(GK.map(k => [k, Math.round(g[k] * 1000) / 1000]));
+
+let stopFlag = false, hist = [], champ = null;
+const H = new Map(); // ключ пилота → оценки по поколениям
+function seeds(n) {
+  const base = [AP_STD, ...Object.values(PILOTS).map(p => p.ap)];
+  try { const c = JSON.parse(localStorage.getItem("race-train-best") || "null"); if (c) base.unshift(c.ap); } catch {}
+  const pop = base.map(g => ({ ...AP_STD, ...g }));
+  while (pop.length < n) pop.push(Math.random() < .7 ? mutate(base[Math.floor(Math.random() * base.length)], .5, .12) : mutate(base[0], .8, .3));
+  return pop.slice(0, n);
+}
+async function run() {
+  stopFlag = false; $("go").disabled = true; $("stop").disabled = false;
+  const N = +$("pop").value, simSec = +$("sim").value, boldW = +$("bold").value, elite = Math.max(2, Math.round(N / 16));
+  let pop = seeds(N), gen = 0;
+  log(`Старт: ${N} пилотов × 6 участков = ${N * 6} самолётов одновременно, ${simSec} с полёта`);
+  while (!stopFlag) {
+    const segs = SEG_PRESETS.map(p => ({ preset: p, alt: Math.floor(Math.random() * 3), x0: 20000 + Math.random() * 380000 }));
+    const t0 = performance.now();
+    const res = await evaluate(pop, segs, simSec, f => { $("kGen").textContent = gen + " · " + Math.round(f * 100) + "%"; });
+    if (stopFlag) break;
+    const fits = res.map(r => fitness(r, boldW)), dt = (performance.now() - t0) / 1000;
+    pop.forEach((g, i) => { const k = JSON.stringify(round3(g)); const h = H.get(k) || { g: round3(g), fs: [], last: null }; h.fs.push(fits[i].f); h.last = fits[i]; H.set(k, h); });
+    const score = h => h.fs.reduce((a, b) => a + b, 0) / h.fs.length - .06 / h.fs.length;
+    let best = null; for (const h of H.values()) if (!best || score(h) > score(best)) best = h;
+    champ = { ap: best.g, score: score(best), seen: best.fs.length, last: best.last };
+    const order = fits.map((f, i) => i).sort((a, b) => fits[b].f - fits[a].f);
+    hist.push({ best: fits[order[0]].f, med: fits[order[order.length >> 1]].f, champ: champ.score });
+    try { localStorage.setItem("race-train-best", JSON.stringify(champ)); } catch {}
+    showChamp(); drawChart();
+    $("kGen").textContent = gen; $("kBest").textContent = champ.score.toFixed(3); $("kSpeed").textContent = Math.round(champ.last.v * 100) + "%"; $("kRate").textContent = dt.toFixed(1);
+    const b = fits[order[0]];
+    log(`поколение ${gen}: лучший ${b.f.toFixed(3)} (скорость ${(b.v * 100).toFixed(1)}%, падений ${b.c}, под арками ${b.u}/${b.a}), чемпион ${champ.score.toFixed(3)} (оценён ${champ.seen}×), ${dt.toFixed(1)} с`);
+    const ranked = order.map(i => pop[i]); const top = ranked.slice(0, Math.max(4, N >> 1));
+    const pick = () => { const a = Math.floor(Math.random() * top.length), b = Math.floor(Math.random() * top.length); return top[Math.min(a, b)]; };
+    pop = [champ.ap, ...ranked.slice(0, elite - 1)];
+    while (pop.length < N) pop.push(mutate(cross(pick(), pick())));
+    gen++;
+  }
+  $("go").disabled = false; $("stop").disabled = true; log("Остановлено.");
+}
+function showChamp() {
+  const c = champ, l = c.last, enc = btoa(JSON.stringify(c.ap));
+  $("fly").href = "./?ap=" + encodeURIComponent(enc); $("fly").style.pointerEvents = "auto"; $("fly").style.opacity = 1; $("copy").disabled = false;
+  const rows = [["Оценка (средняя)", c.score.toFixed(3) + ` за ${c.seen} поколен.`], ["Скорость", (l.v * 100).toFixed(1) + "% от максимума"], ["Падения (посл. поколение)", `<span class="${l.c ? "bad" : "ok"}">${l.c}</span>`],
+    ["Под арками", `${l.u} из ${l.a}`], ["Время над кромкой", Math.round(l.o * 100) + "%"]];
+  for (const k of Object.keys(NAMES)) rows.push([NAMES[k], c.ap[k] + ` <span class="sub">(станд. ${AP_STD[k]})</span>`]);
+  $("champ").innerHTML = rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("");
+}
+function drawChart() {
+  const c = $("chart"), x = c.getContext("2d"), w = c.width, h = c.height; x.clearRect(0, 0, w, h);
+  const vals = hist.flatMap(p => [p.best, p.med, p.champ]).filter(v => v > -1), lo = Math.min(...vals, .7), hi = Math.max(...vals, 1);
+  x.strokeStyle = "#2a303b"; x.lineWidth = 1; for (let i = 0; i <= 4; i++) { const y = h - 10 - (h - 20) * i / 4; x.beginPath(); x.moveTo(0, y); x.lineTo(w, y); x.stroke(); x.fillStyle = "#8b94a3"; x.font = "11px system-ui"; x.fillText((lo + (hi - lo) * i / 4).toFixed(2), 2, y - 2); }
+  for (const [key, col] of [["med", "#4ea1ff"], ["best", "#ff8a3d"], ["champ", "#4cc38a"]]) {
+    x.strokeStyle = col; x.lineWidth = 2; x.beginPath();
+    hist.forEach((p, i) => { const X = 30 + (w - 40) * (hist.length < 2 ? 1 : i / (hist.length - 1)), Y = h - 10 - (h - 20) * (Math.max(lo, p[key]) - lo) / (hi - lo); i ? x.lineTo(X, Y) : x.moveTo(X, Y); }); x.stroke(); }
+}
+$("go").onclick = () => run().catch(e => { log("Ошибка: " + e.message); $("go").disabled = false; });
+$("stop").onclick = () => { stopFlag = true; };
+$("copy").onclick = () => navigator.clipboard && navigator.clipboard.writeText(JSON.stringify(champ.ap));
+try { const c = JSON.parse(localStorage.getItem("race-train-best") || "null"); if (c) { champ = c; showChamp(); log("Загружен прошлый чемпион, оценка " + c.score.toFixed(3)); } } catch {}
+window.__train = { evaluate, fitness, AP_STD, PILOTS, gl };
+</script>
+</body>
+</html>
