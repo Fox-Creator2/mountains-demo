@@ -74,6 +74,7 @@
   <label>Высота полёта <select id="sAlt"><option value="0">низко</option><option value="1">средне</option><option value="2">высоко</option><option value="3">над каньоном / очень высоко</option></select></label>
   <label>Выныривания над каньоном <select id="sPop"><option value="0">нет</option><option value="1">иногда (где каньон мелкий)</option><option value="2">часто</option></select></label>
   <label>Пилот <select id="sPilot"></select></label>
+  <div class="row"><button id="bPilotFile">⬆ Загрузить пилотов из JSON</button><input type="file" id="fPilot" accept=".json,application/json" style="display:none"></div>
   <div class="row"><a href="train.html" style="color:#9cf">🧬 Тренировка пилотов на вашей видеокарте</a></div>
   <label>Облака <select id="sCloud"><option value="0">нет</option><option value="1">немного</option><option value="2">много</option></select></label>
   <label>Трасса и скорость <select id="sPreset"></select></label>
@@ -87,7 +88,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 12.10, 05:40</small>
+  <small id="ver">версия 12.10, 05:45</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -387,6 +388,21 @@ try { const hof = JSON.parse(localStorage.getItem("race-train-hof") || "[]"), t 
   list.forEach((h, i) => { const e = h.exam; PILOTS["hof" + i] = { name: `#${i + 1} ${h.name || "Тренировка"}` + (e ? ` · экзамен ${e.f.toFixed(3)}, падений ${e.c}` : ""), ap: h.ap }; });
   if (S.pilot === "trained") S.pilot = "hof0";
   if (list[0]) { const key = JSON.stringify(list[0].ap); if (localStorage.getItem("race-train-seen") !== key) { localStorage.setItem("race-train-seen", key); S.pilot = "hof0"; saveS(); } } } catch {}
+/* пилоты из JSON-файлов: загруженные вручную (хранятся в браузере) и champions.json с сайта — без обновления кода игры.
+   Понимает файл зала славы тренера ({pilots:[…]}), массив пилотов, одного пилота {name, ap} или просто набор генов {LS:…, M:…}. */
+const pilotKey = ap => JSON.stringify(Object.keys(AP_STD).map(k => Math.round((+ap[k] || 0) * 1000)));
+function parsePilots(j) {
+  const list = Array.isArray(j) ? j : Array.isArray(j.pilots) ? j.pilots : [j];
+  return list.map(h => h && (h.ap ? h : typeof h.LS === "number" ? { ap: h } : null)).filter(h => h && Object.keys(AP_STD).some(k => typeof h.ap[k] === "number"))
+    .map(h => ({ name: h.name || h.call || "без имени", ap: { ...AP_STD, ...h.ap }, exam: h.exam && typeof h.exam.f === "number" ? { f: h.exam.f, c: h.exam.c } : null, bio: h.bio || "" }));
+}
+const pilotLabel = (h, mark) => `${mark} ${h.name}` + (h.exam ? ` · экзамен ${h.exam.f.toFixed(3)}, падений ${h.exam.c}` : "");
+function registerFilePilots() {
+  for (const k in PILOTS) if (k.startsWith("file")) delete PILOTS[k];
+  let list = []; try { list = JSON.parse(localStorage.getItem("race-game-pilots") || "[]"); } catch {}
+  list.forEach((h, i) => { PILOTS["file" + i] = { name: pilotLabel(h, "📄"), ap: h.ap }; });
+}
+registerFilePilots();
 function applyPilot() { Object.assign(AP, (PILOTS[S.pilot] || {}).ap || (S.pilot === "std" ? AP_STD : PILOTS.c2.ap)); }
 applyPilot();
 const PTS = new Float64Array(64);
@@ -929,7 +945,22 @@ $("sSkill").onchange = e => { S.skill = +e.target.value; saveS(); computeProfile
 $("sRival").onchange = e => { S.rival = e.target.checked; saveS(); planeMesh.r.visible = S.rival; trail.r.forEach(t => t.visible = false); };
 $("sResume").onchange = e => { S.resume = +e.target.value; saveS(); };
 $("sAssist").onchange = e => { S.assist = e.target.checked; saveS(); };
-{ const sp = $("sPilot"); for (const k in PILOTS) sp.add(new Option(PILOTS[k].name, k)); sp.add(new Option("Стандартный (ручная настройка)", "std")); }
+function fillPilots() { const sp = $("sPilot"); sp.innerHTML = ""; for (const k in PILOTS) sp.add(new Option(PILOTS[k].name, k)); sp.add(new Option("Стандартный (ручная настройка)", "std")); sp.value = PILOTS[S.pilot] || S.pilot === "std" ? S.pilot : "c2"; }
+fillPilots();
+$("bPilotFile").onclick = () => $("fPilot").click();
+$("fPilot").onchange = async e => { const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  try { const add = parsePilots(JSON.parse(await f.text())); if (!add.length) return toast("В файле нет пилотов", 3000);
+    let list = []; try { list = JSON.parse(localStorage.getItem("race-game-pilots") || "[]"); } catch {}
+    const have = new Set(list.map(h => pilotKey(h.ap))); let n = 0, first = null;
+    for (const h of add) { const k = pilotKey(h.ap); if (have.has(k)) { first = first ?? list.findIndex(x => pilotKey(x.ap) === k); continue; } list.push(h); have.add(k); first = first ?? list.length - 1; n++; }
+    localStorage.setItem("race-game-pilots", JSON.stringify(list)); registerFilePilots();
+    S.pilot = "file" + first; saveS(); applyPilot(); fillPilots();
+    toast(n ? `Загружено пилотов: ${n}. Выбран ${list[first].name}` : `Эти пилоты уже есть. Выбран ${list[first].name}`, 3500);
+  } catch (err) { toast("Не удалось прочитать файл: " + err.message, 4000); } };
+/* champions.json на сайте: положить файл в репозиторий — и пилоты появятся у всех */
+fetch("champions.json", { cache: "no-cache" }).then(r => r.ok ? r.json() : null).then(j => { if (!j) return;
+  parsePilots(j).forEach((h, i) => { PILOTS["site" + i] = { name: pilotLabel(h, "🌐"), ap: h.ap }; });
+  fillPilots(); if (S.pilot.startsWith("site")) applyPilot(); }).catch(() => {});
 $("sPilot").onchange = e => { S.pilot = e.target.value; saveS(); applyPilot(); };
 $("sCloud").onchange = e => { S.cloud = +e.target.value; saveS(); applyClouds(); };
 $("sPop").onchange = e => { S.pop = +e.target.value; saveS(); };
