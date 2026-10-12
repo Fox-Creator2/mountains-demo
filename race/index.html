@@ -88,7 +88,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 12.10, 05:50</small>
+  <small id="ver">версия 12.10, 05:55</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -948,15 +948,22 @@ $("sAssist").onchange = e => { S.assist = e.target.checked; saveS(); };
 function fillPilots() { const sp = $("sPilot"); sp.innerHTML = ""; for (const k in PILOTS) sp.add(new Option(PILOTS[k].name, k)); sp.add(new Option("Стандартный (ручная настройка)", "std")); sp.value = PILOTS[S.pilot] || S.pilot === "std" ? S.pilot : "c2"; }
 fillPilots();
 $("bPilotFile").onclick = () => $("fPilot").click();
-$("fPilot").onchange = async e => { const f = e.target.files[0]; e.target.value = ""; if (!f) return;
-  try { const add = parsePilots(JSON.parse(await f.text())); if (!add.length) return toast("В файле нет пилотов", 3000);
+function importPilots(add) {
     let list = []; try { list = JSON.parse(localStorage.getItem("race-game-pilots") || "[]"); } catch {}
     const have = new Set(list.map(h => pilotKey(h.ap))); let n = 0, first = null;
     for (const h of add) { const k = pilotKey(h.ap); if (have.has(k)) { first = first ?? list.findIndex(x => pilotKey(x.ap) === k); continue; } list.push(h); have.add(k); first = first ?? list.length - 1; n++; }
     localStorage.setItem("race-game-pilots", JSON.stringify(list)); registerFilePilots();
     S.pilot = "file" + first; saveS(); applyPilot(); fillPilots();
-    toast(n ? `Загружено пилотов: ${n}. Выбран ${list[first].name}` : `Эти пилоты уже есть. Выбран ${list[first].name}`, 3500);
-  } catch (err) { toast("Не удалось прочитать файл: " + err.message, 4000); } };
+    toast(n ? `Загружено пилотов: ${n}. Выбран ${list[first].name}` : `Эти пилоты уже есть. Выбран ${list[first].name}`, 4000);
+}
+$("fPilot").onchange = async e => { const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  try { const add = parsePilots(JSON.parse(await f.text())); if (!add.length) return toast("В файле нет пилотов", 3000); importPilots(add); }
+  catch (err) { toast("Не удалось прочитать файл: " + err.message, 4000); } };
+/* ссылка с пилотами (?pilots=…) — перенос с телефона на другой компьютер/браузер */
+try { const q = new URLSearchParams(location.search).get("pilots");
+  if (q) { const b = q.replace(/-/g, "+").replace(/_/g, "/"), txt = decodeURIComponent(escape(atob(b + "===".slice((b.length + 3) % 4))));
+    const add = parsePilots(JSON.parse(txt)); if (add.length) importPilots(add);
+    history.replaceState(null, "", location.pathname); } } catch (err) { toast("Ссылка с пилотами повреждена: " + err.message, 4000); }
 /* champions.json на сайте: положить файл в репозиторий — и пилоты появятся у всех */
 /* champions.json из личного хранилища сайта (его пишет тренер): если зал славы в localStorage стёрт — берём из файла */
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}

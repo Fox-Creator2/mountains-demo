@@ -71,7 +71,7 @@ a { color:var(--blue); }
     <table id="champ"><tr><td class="sub">Появится после первого поколения.</td></tr></table>
   </div>
 
-  <div class="card"><div class="row" style="justify-content:space-between"><span><b>Зал славы</b> <span class="sub">топ-5 за все запуски, все доступны в игре</span></span><span class="row"><button id="dl">⬇ Скачать JSON</button><button id="ul">⬆ Загрузить JSON</button><input type="file" id="ulf" accept=".json,application/json" style="display:none"></span></div><table id="hof"><tr><td class="sub">Пусто — появится после первого поколения.</td></tr></table></div>
+  <div class="card"><div class="row" style="justify-content:space-between"><span><b>Зал славы</b> <span class="sub">топ-5 за все запуски, все доступны в игре</span></span><span class="row"><button id="share">🔗 Поделиться ссылкой</button><button id="dl">⬇ Скачать JSON</button><button id="ul">⬆ Загрузить JSON</button><input type="file" id="ulf" accept=".json,application/json" style="display:none"></span></div><table id="hof"><tr><td class="sub">Пусто — появится после первого поколения.</td></tr></table></div>
 
   <div class="card"><b>Проверка видеокарты</b> <button id="selfBtn">Проверить</button><div id="self" class="sub" style="margin-top:6px">Запускается автоматически перед тренировкой.</div></div>
   <div class="card"><div class="log" id="log" style="max-height:260px"></div></div>
@@ -504,6 +504,14 @@ $("dl").onclick = () => { if (!HOF.length) return log("Зал славы пус�
   const blob = new Blob([JSON.stringify({ format: "race-champions", version: 1, saved: d.toISOString(), exam: { sim: EXAM_SIM, dt: "1/60", bold: EXAM_BOLD, ev: EV }, pilots: HOF }, null, 1)], { type: "application/json" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   log(`Зал славы сохранён в файл ${name} (${HOF.length} пилотов)`); };
+/* ссылка на игру с зашитыми пилотами: открыть на другом устройстве — пилоты загрузятся в игру */
+$("share").onclick = async () => { if (!HOF.length) return log("Зал славы пуст — делиться нечем");
+  const data = { pilots: HOF.map(h => ({ name: h.name, exam: h.exam ? { f: +h.exam.f.toFixed(3), c: h.exam.c } : undefined, ap: round3(h.ap) })) };
+  const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(data)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const url = new URL("./?pilots=" + b64, location.href).href;
+  try { if (navigator.share) { await navigator.share({ title: "Пилоты для каньона", text: `Зал славы: ${HOF.length} пилотов, рекорд ${HOF[0].exam.f.toFixed(3)}`, url }); log("Ссылка отправлена"); return; } } catch (e) { if (e.name === "AbortError") return; }
+  try { await navigator.clipboard.writeText(url); log("Ссылка скопирована (" + url.length + " символов) — отправьте её себе и откройте на другом устройстве"); }
+  catch { prompt("Скопируйте ссылку:", url); } };
 $("ul").onclick = () => $("ulf").click();
 $("ulf").onchange = async e => { const f = e.target.files[0]; if (!f) return;
   try { const j = JSON.parse(await f.text()), list = Array.isArray(j) ? j : j.pilots || [];
