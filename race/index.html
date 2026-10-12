@@ -98,7 +98,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 13.10, 01:10</small>
+  <small id="ver">версия 13.10, 01:15</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -247,7 +247,9 @@ class Plane {
     this.f.normalize();
     this.vt = vt; this.v += Math.max(-T.BRK * dt, Math.min(T.ACC * dt, vt - this.v));
     this.prev.copy(this.pos); this.pos.addScaledVector(this.f, this.v * dt);
-    const G0 = Math.max(9.81, T.AMAX * 0.15), rt = Math.max(-1.4, Math.min(1.4, Math.atan2(ar, G0)));
+    const G0 = Math.max(9.81, T.AMAX * 0.15); let rt = Math.max(-1.4, Math.min(1.4, Math.atan2(ar, G0)));
+    /* резкий нырок: пилот переворачивает машину и «тянет» к земле (как в реальном пилотаже), а не просто отдаёт ручку от себя */
+    if (T.canyon && au < -.3 * T.AMAX) { const k = Math.min(1, (-au / T.AMAX - .3) / .35), sg = Math.sign(rt || this.rollSg || 1); this.rollSg = sg; rt = sg * (Math.abs(rt) + (2.6 - Math.abs(rt)) * k); }
     const w = 7, z = 0.85; this.rollV += (w * w * (rt - this.roll) - 2 * z * w * this.rollV) * dt; this.rollV = Math.max(-3.4, Math.min(3.4, this.rollV)); this.roll += this.rollV * dt;
     this.basis();
   }
@@ -603,7 +605,7 @@ function attackTarget(p, x0, shOn) {
   return best;
 }
 /* энергощит: 5 с, перезарядка 20 с; поглощает разрывы и таран. Автопилот включает, когда видит плотный огонь на своём пути */
-function shieldOn() { if (!cyMode || tNow < (cy.shReady || 0)) return; cy.shOn = tNow + 5; cy.shReady = tNow + 25; cy.shN = (cy.shN || 0) + 1; toast("Энергощит включён · 5 с", 1100); }
+function shieldOn() { if (!cyMode || tNow < (cy.shReady || 0)) return; cy.shOn = tNow + 5; cy.shReady = tNow + 35; cy.shN = (cy.shN || 0) + 1; toast("Энергощит включён · 5 с", 1100); }
 function rocketsStep(dt) {
   const vs = T.vmax * 2.6;
   for (const r of RK.list) { if (r.done) continue;
@@ -625,8 +627,8 @@ function rocketsStep(dt) {
 function shieldDraw(dt) {
   if (!cy.shMesh) { cy.shMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), new THREE.MeshBasicMaterial({ color: 0x60c8ff, transparent: true, opacity: .22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })); cy.shMesh.frustumCulled = false; SCN.add(cy.shMesh); }
   const on = cyMode && tNow < (cy.shOn || 0), m = cy.shMesh; m.visible = on; if (!on) return;
-  const left = cy.shOn - tNow, hit = tNow - (cy.shHit || -9) < .15; m.position.copy(player.pos); m.scale.setScalar(T.cs * 13 * (1 + .04 * Math.sin(tNow * 12)));
-  m.material.opacity = (hit ? .55 : .2) * (left < 1 ? (Math.sin(tNow * 30) > 0 ? 1 : .3) : 1);
+  const left = cy.shOn - tNow, hit = tNow - (cy.shHit || -9) < .15; m.position.copy(player.pos); m.scale.setScalar(T.cs * 8 * (1 + .04 * Math.sin(tNow * 12)));
+  m.material.opacity = (hit ? .4 : .11) * (left < 1 ? (Math.sin(tNow * 30) > 0 ? 1 : .3) : 1);
 }
 function rocketsDraw(dt) {
   for (const r of RK.list) {
@@ -776,6 +778,7 @@ function cyPlan(p) {
   if (+S.low && E < .1) { const u = xm / sc, lf = sstep(.55, .85, Math.sin(u * 2.3e-4 + 2.1)) * (1 - sstep(.5, .58, zoneF(u))); if (lf > 0) pref = pref + (.07 - pref) * lf; }
   /* заход в атаку: корабль/катер — вниз к реке и вдоль неё (цель перед носом); зенитка — к её кромке и выше, только под щитом */
   const ATK = +S.autoFire !== 0 && !window.__noAtk ? attackTarget(p, x0, shOn) : null;
+  const dive = !window.__noDive && tNow - (cy.thrT || -9) < 1.5 && !shOn; // под огнём — охотно нырять вниз
   const Lcs = [-1.5, -1.05, -.6, -.35, -.15, 0, .15, .35, .6, 1.05, 1.5], acs = [...new Set([pref * .6, pref * .8, pref, pref * 1.25, pref * 1.6].map(a => Math.max(.1, Math.min(1.9, a))))], acHi = [1.12, 1.5, 1.9];
   const SR = [], SA = [], SHf = [], SX = [], SE = [], SW = [], SD = [], SZ = [], SF = [], SNX = [], SNZ = [], SB = [];
   for (let i = 1; i <= N; i++) { const s = i / N, xi = x0 + Lsx * s, sl = CW.czd(xi / sc), il = 1 / Math.sqrt(1 + sl * sl);
@@ -791,10 +794,11 @@ function cyPlan(p) {
   /* установки, которые сейчас ведут огонь (зенитки, корабль): зона страха вокруг них */
   const GUNS = []; if (!window.__noFear && !window.__noDodge && tNow >= (cy.shOn || 0)) { for (const t of TUR.list.values()) if (t && !t.dead && tNow - (t.last || -9) < 2 && t.x > x0 - Lsx * .2 && t.x < x0 + Lsx) GUNS.push({ x: t.x, y: t.y, z: t.z, r: .95 * cyW(t.x) });
     for (const b of EN.boats.values()) if (b && b.ship && !b.dead && tNow - (b.last || -9) < 2 && b.pos.x > x0 - Lsx * .2 && b.pos.x < x0 + Lsx) GUNS.push({ x: b.pos.x, y: b.pos.y, z: b.pos.z, r: .6 * cyW(b.pos.x) }); }
+  if (dive) acs.push(.07, .14);
   let best = null; if (window.__dbg) pl.dbg = [];
   for (const Lc of Lcs) for (const ac of (Math.abs(Lc) > .8 ? acHi : acs)) {
     let qx = p.pos.x, qy = p.pos.y, qz = p.pos.z, qt = 0, hzc = 0, fire = 0; // fire — штраф за огонь и перехватчиков, ограничен сверху: скала всегда хуже обстрела
-    let cost = (Math.abs(Lc) > .8 ? 0 : AP.LCW * Lc * Lc + AP.AW * (ac - pref) * (ac - pref) + (ATK ? 4 * ((Lc - ATK.L) ** 2 + (ac - ATK.a) ** 2) : 0)) + AP.HY * (Math.abs(Lc - pl.Lc) + AP.HYA * Math.abs(ac - pl.ac)), Cmin = 1e9, wmin = 1e9, kmax = 0, nOut = 0; const pts = PTS; let np = 0;
+    let cost = (Math.abs(Lc) > .8 ? 0 : AP.LCW * Lc * Lc + AP.AW * (dive ? .3 : 1) * (ac - pref) * (ac - pref) + (ATK ? 4 * ((Lc - ATK.L) ** 2 + (ac - ATK.a) ** 2) : 0)) + AP.HY * (Math.abs(Lc - pl.Lc) + AP.HYA * Math.abs(ac - pl.ac)), Cmin = 1e9, wmin = 1e9, kmax = 0, nOut = 0; const pts = PTS; let np = 0;
     for (let i = 1; i <= N; i++) {
       const s = i / N, bl = SB[i], xi = SX[i], Ei = SE[i], Li = L0 + (Lc - L0) * bl, ai = a0 + (ac - a0) * bl, wi = SW[i], Di = SD[i], zi = SZ[i] + Li * wi, yi = SF[i] + ai * Di, nx = SNX[i], nzz = SNZ[i];
       const ri = Math.min(r, .42 * wi), g0 = gf(xi, zi), gl = gf(xi + nx * ri, zi + nzz * ri), gr = gf(xi - nx * ri, zi - nzz * ri), C = Math.min(yi - g0, yi - gl, yi - gr);
@@ -843,7 +847,7 @@ function maneuver(p, pl) {
   if (threatNow(p)) cy.thrT = tNow; cy.man = null;
   if (!ctl.steerMan && +S.shield !== 0 && tNow >= (cy.shReady || 0) && !window.__noShield) { let n = 0; const R = T.vmax * 2.2;
     for (const h of flakHazards()) if (h[1] < 1.6 && h[0].distanceTo(p.pos) < R && h[0].x > p.pos.x - T.vmax * .2) n++;
-    if (n >= 6 || (pl.hz || 0) >= 3) shieldOn(); }
+    if (n >= 10 || (pl.hz || 0) >= 5) shieldOn(); }
   return null;
 } // фигуры высшего пилотажа убраны: от огня уходит планировщик
 function cyAI(p) {
