@@ -209,7 +209,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     f = normalize(f); v += max(-BRK * dt, min(ACC * dt, vt - v)); P += f * (v * dt);
     /* падение → возврат назад в каньон */
     if (P.y < GND(P.x, P.z) + 2. * CS || archHit(P, 2. * CS) || shelfHit(P, 2. * CS)) {
-      let x = P.x - 150. * CS - VMAX * .8; let ap = altPref(x); P = vec3f(x, FL(x) + ap * DD(x), ZC(x) + .5 * fkz(x / SC) * WW(x));
+      let x = P.x - 150. * CS - VMAX * .8; let ap = altPref(x); P = vec3f(x, FL(x) + ap * DD(x), ZC(x) + .32 * fkz(x / SC) * WW(x)); P.y = max(P.y, GND(x, P.z) + 60. * CS);
       if (shd(x / SC) * SC < 300. * CS + 120. * SC) { let ys = shy(x / SC) * SC; let th = sht(x / SC) * SC; if (P.y > ys - 1.2 * th - 60. * CS && P.y < ys + th + 60. * CS) { P.y = (FL(x) + ys - 1.2 * th) / 2.; } } f = normalize(vec3f(1., 0., czd(x / SC))); v = VMAX * .5; pl2.w = -1e9;
     }
     /* статистика */
