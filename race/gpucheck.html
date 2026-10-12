@@ -1,0 +1,18 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Проверка WebGPU</title>
+<body style="font:16px system-ui;background:#111;color:#eee;padding:16px">
+<h3>Проверка видеокарты в браузере</h3><pre id="o" style="white-space:pre-wrap">проверяю…</pre>
+<script>
+(async()=>{const o=document.getElementById('o');let s='';const add=t=>{s+=t+'\n';o.textContent=s};
+add('Браузер: '+navigator.userAgent);
+if(!navigator.gpu){add('WebGPU: НЕТ (navigator.gpu отсутствует)')}else{
+ try{const a=await navigator.gpu.requestAdapter();if(!a)add('WebGPU: адаптер не выдан');else{
+  const i=a.info||{};add('WebGPU: ЕСТЬ. '+[i.vendor,i.architecture,i.device,i.description].filter(Boolean).join(' / '));
+  add('maxStorageBufferBindingSize: '+a.limits.maxStorageBufferBindingSize);add('maxComputeInvocationsPerWorkgroup: '+a.limits.maxComputeInvocationsPerWorkgroup);
+  const d=await a.requestDevice();const sh=d.createShaderModule({code:'@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) g:vec3u){}'});
+  const inf=await sh.getCompilationInfo();add('Compute-шейдер скомпилирован, сообщений: '+inf.messages.length);add('ИТОГ: WebGPU рабочий');}
+ }catch(e){add('Ошибка WebGPU: '+e)}}
+const c=document.createElement('canvas').getContext('webgl2');add('WebGL2: '+(c?'ЕСТЬ':'НЕТ'));
+if(c){add('float-рендер (EXT_color_buffer_float): '+(c.getExtension('EXT_color_buffer_float')?'ЕСТЬ':'НЕТ'));const g=c.getExtension('WEBGL_debug_renderer_info');if(g)add('GPU: '+c.getParameter(g.UNMASKED_RENDERER_WEBGL))}
+})();
+</script>
