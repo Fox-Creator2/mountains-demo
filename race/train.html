@@ -39,13 +39,16 @@ a { color:var(--blue); }
 
   <div class="card">
     <div class="row">
-      <label>Пилотов <select id="pop"><option>64</option><option selected>256</option><option>1024</option><option>4096</option></select></label>
+      <label>Пилотов <select id="pop"><option>64</option><option selected>256</option><option>1024</option><option value="4096">4096 (очень тяжело)</option></select></label>
       <label>Полёт, с <select id="sim"><option>30</option><option selected>60</option><option>120</option></select></label>
       <label>Смелость <select id="bold"><option value="0">не важна</option><option value="0.08" selected>немного</option><option value="0.25">важна</option></select></label>
+      <label>Нагрузка <select id="duty"><option value="0.35" selected>щадящая (меньше греется)</option><option value="0.65">средняя</option><option value="1">максимум</option></select></label>
       <button class="main" id="go">▶ Старт</button>
       <button id="stop" disabled>■ Стоп</button>
     </div>
     <div class="sub" id="gpu" style="margin:8px 0 0"></div>
+    <div style="margin-top:10px;background:#11151b;border-radius:6px;height:10px;overflow:hidden"><div id="bar" style="height:100%;width:0;background:var(--acc);transition:width .3s"></div></div>
+    <div id="stage" style="margin-top:6px;font-size:14px">Ожидание старта</div>
   </div>
 
   <div class="card">
@@ -268,14 +271,15 @@ async function evaluate(pop, segs, simSec, onProgress, opt = {}) {
       cur = nx;
     }
     gl.finish(); if (gl.isContextLost()) throw new Error("видеокарта сброшена системой (перегрузка) — уменьшите число пилотов или время полёта"); const ms = performance.now() - t0;
-    batch = Math.max(1, Math.min(240, Math.round(batch * (40 / Math.max(ms, 1)))));
+    batch = Math.max(1, Math.min(60, Math.round(batch * (25 / Math.max(ms, 1)))));
     onProgress && onProgress(done / steps);
-    await new Promise(r => setTimeout(r, 0));
+    const duty = +$("duty").value; await new Promise(r => setTimeout(r, duty >= 1 ? 0 : ms * (1 - duty) / duty)); // пауза = телефон остывает, кнопки отвечают
   }
   const out0 = new Float32Array(n4), out1 = new Float32Array(n4);
   gl.bindFramebuffer(gl.FRAMEBUFFER, fT[cur]); gl.readBuffer(gl.COLOR_ATTACHMENT0); gl.readPixels(0, 0, W, H, gl.RGBA, gl.FLOAT, out0);
   gl.readBuffer(gl.COLOR_ATTACHMENT1); gl.readPixels(0, 0, W, H, gl.RGBA, gl.FLOAT, out1);
   [...pt, ...st[0], ...st[1], ...stt[0], ...stt[1]].forEach(t => gl.deleteTexture(t)); [...fS, ...fT].forEach(f => gl.deleteFramebuffer(f));
+  if (stopFlag) { [...pt, ...st[0], ...st[1], ...stt[0], ...stt[1]].forEach(t => gl.deleteTexture(t)); [...fS, ...fT].forEach(f => gl.deleteFramebuffer(f)); return null; }
   if (gl.isContextLost()) throw new Error("видеокарта сброшена системой (перегрузка) — уменьшите число пилотов");
   let bad = 0; for (let k = 0; k < N; k++) { const st_ = out0[k * 4 + 2], vv_ = out0[k * 4 + 1]; if (!(st_ > 0) || !isFinite(vv_)) bad++; }
   if (bad) throw new Error(`видеокарта вернула пустые/битые данные у ${bad} из ${N} самолётов`);
@@ -301,6 +305,10 @@ const cross = (a, b) => Object.fromEntries(GK.map(k => [k, clampG(k, a[k] + (b[k
 const round3 = g => Object.fromEntries(GK.map(k => [k, Math.round(g[k] * 1000) / 1000]));
 
 let stopFlag = false, hist = [], champ = null;
+const fmt = s => s >= 90 ? Math.round(s / 60) + " мин" : Math.round(s) + " с";
+function stage(text, frac) { $("stage").textContent = text; if (frac != null) $("bar").style.width = Math.round(frac * 100) + "%"; }
+function progressor(label, simSec) { const t0 = performance.now(); return f => { const el = (performance.now() - t0) / 1000, eta = f > .02 ? el * (1 - f) / f : null;
+  stage(`${label}: пролетели ${Math.round(f * simSec)} из ${simSec} с полёта · прошло ${fmt(el)}${eta != null ? " · осталось ~" + fmt(eta) : ""}`, f); }; }
 const H = new Map(); // ключ пилота → оценки по поколениям
 function seeds(n) {
   const base = [AP_STD, ...Object.values(PILOTS).map(p => p.ap)];
@@ -315,7 +323,8 @@ const REF = { std: [.544, .916, .943, .924, .812, .860], c2: [.788, .929, .960, 
 let selfOk = false;
 async function selfTest() {
   log("Самотест видеокарты: 2 пилота × 6 эталонных участков…");
-  const t0 = performance.now(), r = await evaluate([AP_STD, PILOTS.c2.ap], REF_SEGS, 20, null, { exact: true });
+  const t0 = performance.now(), r = await evaluate([AP_STD, PILOTS.c2.ap], REF_SEGS, 20, progressor("Проверка видеокарты", 20), { exact: true });
+  if (!r) return false;
   let worst = 0; const lines = [];
   ["std", "c2"].forEach((name, k) => r[k].forEach((x, j) => { const d = Math.abs(x.v - REF[name][j]); worst = Math.max(worst, d); lines.push(`${name}/${REF_SEGS[j].preset}: ${(x.v * 100).toFixed(1)}% (игра ${(REF[name][j] * 100).toFixed(1)}%)`); }));
   selfOk = worst < .03;
@@ -328,22 +337,24 @@ async function selfTest() {
 const EXAM_SEGS = [["warm", 1, 300000], ["fast", 0, 330000], ["hyper", 2, 360000], ["orbit", 1, 390000], ["ultra", 0, 420000], ["max", 2, 450000]].map(([preset, alt, x0]) => ({ preset, alt, x0 }));
 async function run() {
   stopFlag = false; $("go").disabled = true; $("stop").disabled = false;
-  if (!selfOk && !(await selfTest())) { $("go").disabled = false; $("stop").disabled = true; return; }
+  if (!selfOk && !(await selfTest())) { $("go").disabled = false; $("stop").disabled = true; stage(stopFlag ? "Остановлено" : "Проверка видеокарты не прошла", 0); return; }
   const N = +$("pop").value, simSec = +$("sim").value, boldW = +$("bold").value, elite = Math.max(2, Math.round(N / 16));
   let pop = seeds(N), gen = 0, prevKey = null, stdExam = null; hist = [];
   log(`Старт: ${N} пилотов × 6 участков = ${N * 6} самолётов одновременно, ${simSec} с полёта`);
   while (!stopFlag) {
     const segs = SEG_PRESETS.map(p => ({ preset: p, alt: Math.floor(Math.random() * 3), x0: 20000 + Math.random() * 260000 }));
     const t0 = performance.now();
-    const res = await evaluate(pop, segs, simSec, f => { $("kGen").textContent = gen + " · " + Math.round(f * 100) + "%"; });
-    if (stopFlag) break;
+    $("kGen").textContent = gen;
+    const res = await evaluate(pop, segs, simSec, progressor(`Поколение ${gen} (${N} пилотов × 6 участков)`, simSec));
+    if (!res || stopFlag) break;
     const fits = res.map(r => fitness(r, boldW));
     pop.forEach((g, i) => { const k = JSON.stringify(round3(g)); const h = H.get(k) || { g: round3(g), fs: [], last: null }; h.fs.push(fits[i].f); h.last = fits[i]; H.set(k, h); });
     const score = h => h.fs.reduce((a, b) => a + b, 0) / h.fs.length - .06 / h.fs.length;
     let best = null; for (const h of H.values()) if (!best || score(h) > score(best)) best = h;
     const key = JSON.stringify(best.g), changed = key !== prevKey; prevKey = key;
     /* экзамен */
-    const ex = await evaluate(stdExam ? [best.g] : [best.g, AP_STD], EXAM_SEGS, simSec);
+    const ex = await evaluate(stdExam ? [best.g] : [best.g, AP_STD], EXAM_SEGS, simSec, progressor(`Поколение ${gen}: экзамен чемпиона`, simSec));
+    if (!ex) break;
     const exC = fitness(ex[0], boldW); if (!stdExam) stdExam = fitness(ex[1], boldW);
     champ = { ap: best.g, score: score(best), seen: best.fs.length, last: best.last, exam: exC, examStd: stdExam };
     const dt = (performance.now() - t0) / 1000;
@@ -362,7 +373,7 @@ async function run() {
     while (pop.length < N) pop.push(mutate(cross(pick(), pick())));
     gen++;
   }
-  $("go").disabled = false; $("stop").disabled = true; log("Остановлено.");
+  $("go").disabled = false; $("stop").disabled = true; stage("Остановлено", 0); log("Остановлено.");
 }
 function showChamp() {
   const c = champ, l = c.last, enc = btoa(JSON.stringify(c.ap));
@@ -383,8 +394,8 @@ function drawChart() {
   x.setLineDash([]);
 }
 $("go").onclick = () => run().catch(e => { log("Ошибка: " + e.message); $("go").disabled = false; });
-$("stop").onclick = () => { stopFlag = true; };
-$("selfBtn").onclick = () => selfTest().catch(e => log("Ошибка: " + e.message));
+$("stop").onclick = () => { stopFlag = true; stage("Останавливаю…"); };
+$("selfBtn").onclick = () => { stopFlag = false; selfTest().catch(e => log("Ошибка: " + e.message)); };
 $("copy").onclick = () => navigator.clipboard && navigator.clipboard.writeText(JSON.stringify(champ.ap));
 try { const c = JSON.parse(localStorage.getItem("race-train-best") || "null"); if (c) { champ = c; showChamp(); log("Загружен прошлый чемпион, оценка " + c.score.toFixed(3)); } } catch {}
 window.__train = { evaluate, fitness, AP_STD, PILOTS, gl };
