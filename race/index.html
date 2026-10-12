@@ -73,6 +73,7 @@
   <label>Режим <select id="sMode"><option value="canyon">Каньон: лавировать среди скал и арок</option><option value="race">Гонка по воротам</option></select></label>
   <label>Высота полёта <select id="sAlt"><option value="0">низко</option><option value="1">средне</option><option value="2">высоко</option><option value="3">над каньоном / очень высоко</option></select></label>
   <label>Выныривания над каньоном <select id="sPop"><option value="0">нет</option><option value="1">иногда (где каньон мелкий)</option><option value="2">часто</option></select></label>
+  <label>Пилот <select id="sPilot"><option value="ga">эволюционный (быстрее, может ошибаться)</option><option value="std">стандартный (надёжный)</option></select></label>
   <label>Облака <select id="sCloud"><option value="0">нет</option><option value="1">немного</option><option value="2">много</option></select></label>
   <label>Трасса и скорость <select id="sPreset"></select></label>
   <div class="row"><button id="bNew">🎲 Новая трасса</button><button id="bRestart">⟲ Заново</button><button id="bClose">Закрыть</button></div>
@@ -85,7 +86,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 12.10, 02:48</small>
+  <small id="ver">версия 12.10, 03:12</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -104,7 +105,7 @@ const PRESETS = [
   { id:"ultra", name:"Космос · 47000 км/ч",        vmax:13000 },
   { id:"max",   name:"Предел · 94000 км/ч",        vmax:26000 },
 ];
-const S = Object.assign({ mode:"canyon", alt:1, style:"easy", preset:"fast", seed:7, skill:92, fx:1, cam:0, rival:true, resume:4, inv:false, assist:true, q:1.5, pop:1, cloud:1 }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
+const S = Object.assign({ mode:"canyon", alt:1, style:"easy", preset:"fast", seed:7, skill:92, fx:1, cam:0, rival:true, resume:4, inv:false, assist:true, q:1.5, pop:1, cloud:1, pilot:"ga" }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
 const saveS = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
 
 /* ================= рельеф: одна формула для JS и шейдера ================= */
@@ -427,44 +428,50 @@ function popE(x) {
 function popAc(x) { const sc = T.SC, u = x / sc, y = (1350 + 350 * Math.sin(u * 1.3e-3 + .5)) * sc; return Math.max(1.05, Math.min(1.9, (y - cyFl(x)) / cyD(x))); }
 /* планировщик: выбирает смещение и высоту относительно оси каньона на ближайшие ~3 с полёта */
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+/* параметры «характера» автопилота */
+const AP_STD = { LS: 3.2, BLE: .65, LCW: 1.05, AW: 2.4, HY: .5, HYA: 1.2, M: 50, COLW: 40, ARW: 70, OUT: 1.1, KW: 4, NF: .8, NW: 130, CF: .75, CWD: 60, AU: .95, LD: .8, LDX: .85, VF: .38 };
+const AP_GA = { LS: 4.691, BLE: 0.82, LCW: 2.644, AW: 1.668, HY: 0.611, HYA: 1.909, M: 72.0, COLW: 26.656, ARW: 51.56, OUT: 1.186, KW: 1.576, NF: 0.719, NW: 80, CF: 0.939, CWD: 101.171, AU: 0.976, LD: 0.524, LDX: 0.886, VF: 0.56 }; // чемпион эволюции (поколение 4)
+const AP = Object.assign({}, AP_STD);
+function applyPilot() { Object.assign(AP, S.pilot === "std" ? AP_STD : AP_GA); }
+applyPilot();
 function cyPlan(p) {
-  const sc = T.SC, cs = T.cs, v = Math.max(p.v, T.vmax * .2), Ls = v * 3.2, Lsx = Ls * .85, N = 14, x0 = p.pos.x, fl = cyFl(x0), pl = cy.plan;
-  const w0 = cyW(x0), D0 = cyD(x0), L0 = Math.max(-1.4, Math.min(1.4, (p.pos.z - cyZc(x0)) / w0)), a0 = (p.pos.y - fl) / D0, r = 80 * cs, m = 50 * cs, OUT = 1.1;
+  const sc = T.SC, cs = T.cs, v = Math.max(p.v, T.vmax * .2), Ls = v * AP.LS, Lsx = Ls * .85, N = 14, x0 = p.pos.x, fl = cyFl(x0), pl = cy.plan;
+  const w0 = cyW(x0), D0 = cyD(x0), L0 = Math.max(-1.4, Math.min(1.4, (p.pos.z - cyZc(x0)) / w0)), a0 = (p.pos.y - fl) / D0, r = 80 * cs, m = AP.M * cs, OUT = AP.OUT;
   const xm = x0 + Lsx * .6, pref0 = altPref(xm), E = popE(xm), pref = pref0 + (popAc(xm) - pref0) * E;
   const Lcs = [-1.5, -1.05, -.6, -.35, -.15, 0, .15, .35, .6, 1.05, 1.5], acs = [...new Set([pref * .6, pref * .8, pref, pref * 1.25, pref * 1.6].map(a => Math.max(.1, Math.min(1.9, a))))], acHi = [1.12, 1.5, 1.9];
   let best = null; if (window.__dbg) pl.dbg = [];
   for (const Lc of Lcs) for (const ac of (Math.abs(Lc) > .8 ? acHi : acs)) {
-    let cost = (Math.abs(Lc) > .8 ? 0 : .35 * Lc * Lc * 3 + .6 * (ac - pref) * (ac - pref) * 4) + .5 * (Math.abs(Lc - pl.Lc) + 1.2 * Math.abs(ac - pl.ac)), Cmin = 1e9, wmin = 1e9, kmax = 0, nOut = 0; const pts = [];
+    let cost = (Math.abs(Lc) > .8 ? 0 : AP.LCW * Lc * Lc + AP.AW * (ac - pref) * (ac - pref)) + AP.HY * (Math.abs(Lc - pl.Lc) + AP.HYA * Math.abs(ac - pl.ac)), Cmin = 1e9, wmin = 1e9, kmax = 0, nOut = 0; const pts = [];
     for (let i = 1; i <= N; i++) {
-      const s = i / N, bl = sstep(0, .65, s), xi = x0 + Lsx * s, Ei = popE(xi), Li = L0 + (Lc - L0) * bl, ai = a0 + (ac - a0) * bl, wi = cyW(xi), Di = cyD(xi), zi = cyZc(xi) + Li * wi, yi = cyFl(xi) + ai * Di;
+      const s = i / N, bl = sstep(0, AP.BLE, s), xi = x0 + Lsx * s, Ei = popE(xi), Li = L0 + (Lc - L0) * bl, ai = a0 + (ac - a0) * bl, wi = cyW(xi), Di = cyD(xi), zi = cyZc(xi) + Li * wi, yi = cyFl(xi) + ai * Di;
       const sl = CW.czd(xi / sc), il = 1 / Math.sqrt(1 + sl * sl), nx = -sl * il, nzz = il;
       const ri = Math.min(r, .42 * wi), g0 = gnd(xi, zi), gl = gnd(xi + nx * ri, zi + nzz * ri), gr = gnd(xi - nx * ri, zi - nzz * ri), C = Math.min(yi - g0, yi - gl, yi - gr);
       Cmin = Math.min(Cmin, C); wmin = Math.min(wmin, wi);
-      if (C < m) cost += Math.pow((m - C) / m, 2) * 40 * (1.25 - s * .7);
-      if (archHit(xi, yi, zi, 35 * cs)) cost += 70;
+      if (C < m) cost += Math.pow((m - C) / m, 2) * AP.COLW * (1.25 - s * .7);
+      if (archHit(xi, yi, zi, 35 * cs)) cost += AP.ARW;
       if (false) { const rx = wi * 1.3, rim = Math.min(gnd(xi + nx * rx, zi + nzz * rx), gnd(xi - nx * rx, zi - nzz * rx)), lim = rim - 90 * cs; if (yi > lim) cost += Math.pow((yi - lim) / (90 * cs), 2) * 30; }
       const r2 = Math.min(r * 2.4, .9 * wi), gl2 = gnd(xi + nx * r2, zi + nzz * r2), gr2 = gnd(xi - nx * r2, zi - nzz * r2); if (Math.max(gl2, gr2) > yi) cost += .5;
       { const rx = wi * 1.3, rim = Math.min(gnd(xi + nx * rx, zi + nzz * rx), gnd(xi - nx * rx, zi - nzz * rx)); if (Math.abs(Li) > 1.02 || yi > rim - 30 * cs) { const q = OUT * (1 - Ei); cost += q; nOut++; } }
       pts.push(xi, yi, zi);
     }
     for (let i = 4; i <= 11; i++) { const j = i * 3; const ax = pts[j - 3] - pts[j - 6], ay = pts[j - 2] - pts[j - 5], az = pts[j - 1] - pts[j - 4], bx = pts[j] - pts[j - 3], by = pts[j + 1] - pts[j - 2], bz = pts[j + 2] - pts[j - 1], la = Math.hypot(ax, ay, az), lb = Math.hypot(bx, by, bz), ang = Math.hypot(ax / la - bx / lb, ay / la - by / lb, az / la - bz / lb); kmax = Math.max(kmax, ang / ((la + lb) / 2)); }
-    cost += 4 * Math.min(2.5, kmax * 500 * sc); // гоночная линия: срезать дугу
+    cost += AP.KW * Math.min(2.5, kmax * 500 * sc); // гоночная линия: срезать дугу
     if (window.__dbg) (pl.dbg = pl.dbg || []).push([Lc, +ac.toFixed(2), +cost.toFixed(1), Math.round(Cmin), +(kmax * 500 * sc).toFixed(2)]);
     if (!best || cost < best.cost) best = { cost, Lc, ac, Cmin, wmin, kmax, nOut };
   }
   pl.Lc = best.Lc; pl.ac = best.ac; pl.L0 = L0; pl.a0 = a0; pl.x0 = x0; pl.Lsx = Lsx; pl.t = tNow;
   const sk = S.skill / 100, vcap = T.vmax * (.8 + .2 * sk);
-  const outF = best.nOut / N; let vt = vcap * (1 - (1 - Math.max(.8, Math.min(1, Math.sqrt(best.wmin / (130 * sc))))) * (1 - E) * (1 - outF));
-  if (best.kmax > 1e-9) vt = Math.min(vt, Math.sqrt(T.AMAX * .95 * sk / best.kmax));
-  vt *= Math.max(.75, Math.min(1, .75 + .25 * best.Cmin / (60 * cs)));
+  const outF = best.nOut / N; let vt = vcap * (1 - (1 - Math.max(AP.NF, Math.min(1, Math.sqrt(best.wmin / (AP.NW * sc))))) * (1 - E) * (1 - outF));
+  if (best.kmax > 1e-9) vt = Math.min(vt, Math.sqrt(T.AMAX * AP.AU * sk / best.kmax));
+  vt *= Math.max(AP.CF, Math.min(1, AP.CF + (1 - AP.CF) * best.Cmin / (AP.CWD * cs)));
   pl.fk = best.kmax > 1e-9 ? Math.min(1, Math.sqrt(T.AMAX * .95 * sk / best.kmax) / vcap) : 1; pl.fn = Math.max(.8, Math.min(1, Math.sqrt(best.wmin / (130 * sc)))); pl.fc = Math.max(.75, Math.min(1, .75 + .25 * best.Cmin / (60 * cs))); pl.fo = outF;
-  pl.vt = Math.max(vt, vcap * .38);
+  pl.vt = Math.max(vt, vcap * AP.VF);
 }
 const _tp = new THREE.Vector3();
 function cyAI(p) {
   const pl = cy.plan; if (tNow - pl.t > .05) cyPlan(p);
-  const sc = T.SC, cs = T.cs, v = Math.max(p.v, T.vmax * .2), Ld = Math.max(.8 * v, 80 * cs), xT = p.pos.x + Ld * .85;
-  const s = Math.max(0, (xT - pl.x0) / pl.Lsx), bl = sstep(0, .65, Math.min(1, s)), L = pl.L0 + (pl.Lc - pl.L0) * bl, a = pl.a0 + (pl.ac - pl.a0) * bl;
+  const sc = T.SC, cs = T.cs, v = Math.max(p.v, T.vmax * .2), Ld = Math.max(AP.LD * v, 80 * cs), xT = p.pos.x + Ld * AP.LDX;
+  const s = Math.max(0, (xT - pl.x0) / pl.Lsx), bl = sstep(0, AP.BLE, Math.min(1, s)), L = pl.L0 + (pl.Lc - pl.L0) * bl, a = pl.a0 + (pl.ac - pl.a0) * bl;
   _tp.set(xT, cyFl(xT) + a * cyD(xT), cyZc(xT) + L * cyW(xT));
   _d.subVectors(_tp, p.pos); const dd = _d.dot(p.f); _d.addScaledVector(p.f, -dd);
   const L2 = Math.max(Ld * Ld * .5, _tp.distanceToSquared(p.pos)), aw = _d.multiplyScalar(2 / L2 * v * v);
@@ -727,7 +734,7 @@ function startCanyon() {
   if (gates) gates.visible = false;
   cy.arches.clear(); for (const m of cy.pool) m.visible = false;
   player = new Plane(T); rival = player;
-  const x0 = 0, D = cyD(x0), a = altPref(x0), z0 = cyZc(x0), y0 = cyFl(x0) + a * D;
+  const x0 = (window.__x0 || 0) * T.SC, D = cyD(x0), a = altPref(x0), z0 = cyZc(x0), y0 = cyFl(x0) + a * D;
   player.pos.set(x0, y0, z0); player.prev.copy(player.pos); player.f.set(1, 0, CW.czd(x0 / T.SC)).normalize(); player.v = T.vmax * .55; player.roll = 0; player.rollV = 0; player.basis();
   Object.assign(cy, { x0, segX: x0, segT: 0, segManual: 0, passed: 0, crashes: 0, nextK: nextArch(x0).k });
   cy.plan = { Lc: 0, ac: a, L0: 0, a0: a, x0, Lsx: 1000, vt: player.v, t: -1e9 };
@@ -950,7 +957,7 @@ addEventListener("keyup", e => { ctl.keys[e.key.length === 1 ? e.key.toLowerCase
 
 /* ================= панель ================= */
 const sP = $("sPreset"); PRESETS.forEach(p => sP.add(new Option(p.name, p.id)));
-function syncPanel() { sP.value = S.preset; $("sMode").value = S.mode === "race" ? "race" : "canyon"; $("sAlt").value = S.alt; $("sStyle").value = S.style === "wild" ? "wild" : "easy"; $("sSkill").value = S.skill; $("sRival").checked = !!S.rival; $("sResume").value = S.resume; $("sAssist").checked = !!S.assist; $("sInv").checked = !!S.inv; $("sFx").value = S.fx; $("sLife").value = S.life === 0 ? 0 : 1; $("sQ").value = S.q; $("sPop").value = S.pop; $("sCloud").value = S.cloud; }
+function syncPanel() { sP.value = S.preset; $("sMode").value = S.mode === "race" ? "race" : "canyon"; $("sAlt").value = S.alt; $("sStyle").value = S.style === "wild" ? "wild" : "easy"; $("sSkill").value = S.skill; $("sRival").checked = !!S.rival; $("sResume").value = S.resume; $("sAssist").checked = !!S.assist; $("sInv").checked = !!S.inv; $("sFx").value = S.fx; $("sLife").value = S.life === 0 ? 0 : 1; $("sQ").value = S.q; $("sPop").value = S.pop; $("sCloud").value = S.cloud; $("sPilot").value = S.pilot === "std" ? "std" : "ga"; }
 $("bSet").onclick = () => { syncPanel(); $("panel").style.display = "block"; };
 $("bClose").onclick = $("bX").onclick = () => $("panel").style.display = "none";
 addEventListener("keydown", e => { if (e.key === "Escape") $("panel").style.display = "none"; });
@@ -962,6 +969,7 @@ $("sSkill").onchange = e => { S.skill = +e.target.value; saveS(); computeProfile
 $("sRival").onchange = e => { S.rival = e.target.checked; saveS(); planeMesh.r.visible = S.rival; trail.r.forEach(t => t.visible = false); };
 $("sResume").onchange = e => { S.resume = +e.target.value; saveS(); };
 $("sAssist").onchange = e => { S.assist = e.target.checked; saveS(); };
+$("sPilot").onchange = e => { S.pilot = e.target.value; saveS(); applyPilot(); };
 $("sCloud").onchange = e => { S.cloud = +e.target.value; saveS(); applyClouds(); };
 $("sPop").onchange = e => { S.pop = +e.target.value; saveS(); };
 $("sInv").onchange = e => { S.inv = e.target.checked; saveS(); };
@@ -976,7 +984,7 @@ initScene(); startGame(); renderer.setAnimationLoop(frame);
 
 /* отладка и тесты */
 window.__race = {
-  get life() { return life; }, get terrain() { return terrain; }, frame: t => frame(t), bio: (x, z) => { const h = hgtRaw(x, z, 1); return [h, bioRaw[0](x, z, 1, h), bioRaw[1](x, z, 1)]; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, ctl, S, ground: (x, z) => gnd(x, z), cy, CW, archHit, get cyMode() { return cyMode; }, popE, CHK, altPref,
+  get life() { return life; }, get terrain() { return terrain; }, frame: t => frame(t), bio: (x, z) => { const h = hgtRaw(x, z, 1); return [h, bioRaw[0](x, z, 1, h), bioRaw[1](x, z, 1)]; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, ctl, S, ground: (x, z) => gnd(x, z), cy, CW, archHit, get cyMode() { return cyMode; }, popE, CHK, altPref, AP,
   /* симуляция без рендера: автопилот, статистика */
   sim(seconds, dt = 1 / 60) {
     const st = { t: 0, maxErr: 0, sumErr: 0, n: 0, minAgl: 1e18, crashes0: crashes, misses0: misses, passed0: gatesPassed, laps0: lapCount, maxV: 0, minV: 1e18, rollMax: 0 };
