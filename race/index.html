@@ -93,7 +93,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 13.10, 00:28</small>
+  <small id="ver">версия 13.10, 00:31</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -698,8 +698,11 @@ function cyPlan(p) {
   for (let i = 1; i <= N; i++) if (SHf[i]) { const u = SX[i] / sc, ys = CW.shy(u) * sc, th = CW.sht(u) * sc;
     acs.push(Math.max(.1, Math.min(1.9, (ys - 1.2 * th - SF[i]) / SD[i] - .1)), Math.max(.1, Math.min(1.9, (ys + th - SF[i]) / SD[i] + .1))); break; }
   /* зенитные разрывы: точка и окно времени известны заранее — отрезок пути станции, проходящий рядом в это время, штрафуется */
-  const HZ = window.__noDodge ? [] : flakHazards(), vx = Math.max(p.v * Math.max(.3, p.f.x), T.vmax * .2), Rm = 25 * cs + .01 * v;
+  const HZ = window.__noDodge ? [] : flakHazards(), vx = Math.max(p.v * Math.max(.3, p.f.x), T.vmax * .2), Rm = (!window.__noFear ? 50 * cs + .025 * v : 25 * cs + .01 * v), FEAR = !window.__noFear ? 2 : 1; // «страх»: уходить от разрывов раньше и решительнее
   const MV = window.__noDodge ? [] : moverHazards(), Rmv = 45 * cs + .015 * v;
+  /* установки, которые сейчас ведут огонь (зенитки, корабль): зона страха вокруг них */
+  const GUNS = []; if (!window.__noFear && !window.__noDodge) { for (const t of TUR.list.values()) if (t && tNow - (t.last || -9) < 2 && t.x > x0 - Lsx * .2 && t.x < x0 + Lsx) GUNS.push({ x: t.x, y: t.y, z: t.z, r: .95 * cyW(t.x) });
+    for (const b of EN.boats.values()) if (b && b.ship && tNow - (b.last || -9) < 2 && b.pos.x > x0 - Lsx * .2 && b.pos.x < x0 + Lsx) GUNS.push({ x: b.pos.x, y: b.pos.y, z: b.pos.z, r: .6 * cyW(b.pos.x) }); }
   let best = null; if (window.__dbg) pl.dbg = [];
   for (const Lc of Lcs) for (const ac of (Math.abs(Lc) > .8 ? acHi : acs)) {
     let qx = p.pos.x, qy = p.pos.y, qz = p.pos.z, qt = 0, hzc = 0, fire = 0; // fire — штраф за огонь и перехватчиков, ограничен сверху: скала всегда хуже обстрела
@@ -717,13 +720,14 @@ function cyPlan(p) {
       pts[np++] = xi; pts[np++] = yi; pts[np++] = zi;
       if (HZ.length) { const ti = (xi - x0) / vx;
         for (const h of HZ) { if (h[2] < qt - .15 || h[1] > ti + .15) continue; const P = h[0], ax = xi - qx, ay = yi - qy, az = zi - qz, aa = ax * ax + ay * ay + az * az, bx = P.x - qx, by = P.y - qy, bz = P.z - qz;
-          const uu = aa > 0 ? Math.max(0, Math.min(1, (bx * ax + by * ay + bz * az) / aa)) : 0, d = Math.hypot(bx - ax * uu, by - ay * uu, bz - az * uu), Rd = h[3] + Rm; if (d < Rd * 1.6 && ti < 1) hzc++; if (d < Rd) fire += AP.ARW * 1.5 * (1 - d / Rd) + AP.ARW * .5; }
+          const uu = aa > 0 ? Math.max(0, Math.min(1, (bx * ax + by * ay + bz * az) / aa)) : 0, d = Math.hypot(bx - ax * uu, by - ay * uu, bz - az * uu), Rd = h[3] + Rm; if (d < Rd * 1.6 && ti < 1) hzc++; if (d < Rd) fire += FEAR * (AP.ARW * 1.5 * (1 - d / Rd) + AP.ARW * .5); }
         qx = xi; qy = yi; qz = zi; qt = ti; }
       if (MV.length) { const ti = (xi - x0) / vx, t0 = i === 1 ? 0 : (SX[i - 1] - x0) / vx, sx0 = i === 1 ? p.pos.x : pts[np - 6], sy0 = i === 1 ? p.pos.y : pts[np - 5], sz0 = i === 1 ? p.pos.z : pts[np - 4];
         for (const [P, V] of MV) { const ax = sx0 - P.x - V.x * t0, ay = sy0 - P.y - V.y * t0, az = sz0 - P.z - V.z * t0, dx = xi - P.x - V.x * ti - ax, dy = yi - P.y - V.y * ti - ay, dz = zi - P.z - V.z * ti - az, dd = dx * dx + dy * dy + dz * dz;
           const uu = dd > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy + az * dz) / dd)) : 0, d = Math.hypot(ax + dx * uu, ay + dy * uu, az + dz * uu); if (d < Rmv) fire += AP.ARW * 2 * (1 - d / Rmv) + AP.ARW * .5; } }
     }
     cost += fire;
+    if (GUNS.length) for (let i = 2; i <= N; i += 2) { const j = (i - 1) * 3, gx = pts[j], gy = pts[j + 1], gz = pts[j + 2]; for (const G of GUNS) { const d = Math.hypot(gx - G.x, (gy - G.y) * .5, gz - G.z); if (d < G.r) cost += AP.ARW * .35 * (1 - d / G.r); } }
     for (let i = 4; i <= 11; i++) { const j = i * 3; const ax = pts[j - 3] - pts[j - 6], ay = pts[j - 2] - pts[j - 5], az = pts[j - 1] - pts[j - 4], bx = pts[j] - pts[j - 3], by = pts[j + 1] - pts[j - 2], bz = pts[j + 2] - pts[j - 1], la = Math.hypot(ax, ay, az), lb = Math.hypot(bx, by, bz), ang = Math.hypot(ax / la - bx / lb, ay / la - by / lb, az / la - bz / lb); kmax = Math.max(kmax, ang / ((la + lb) / 2)); }
     cost += AP.KW * Math.min(2.5, kmax * 500 * sc); // гоночная линия: срезать дугу
     if (window.__dbg) (pl.dbg = pl.dbg || []).push([Lc, +ac.toFixed(2), +cost.toFixed(1), Math.round(Cmin), +(kmax * 500 * sc).toFixed(2)]);
@@ -752,7 +756,7 @@ function maneuver(p, pl) {
      сначала тянет вверх, затем через бок, вниз и обратно: путь — спираль вокруг прямой, упреждение зениток сбивается.
      Начинается, только если есть запас от скал и на ближайшем пути нет известного разрыва */
   const thr = threatNow(p); if (thr) cy.thrT = tNow;
-  if (cy.man && tNow - cy.man.t0 > cy.man.dur) { cy.man = null; cy.manCool = tNow + .8; }
+  if (cy.man && tNow - cy.man.t0 > cy.man.dur) { cy.man = null; cy.manCool = tNow + 7; } // бочка изредка — для зрелища
   const roomy = (pl.Cmin || 0) > 160 * T.cs, busy = (pl.hz || 0) > 0;
   if (!cy.man && thr && roomy && !busy && tNow > (cy.manCool || 0)) { cy.man = { type: "roll", t0: tNow, dur: 2, dir: rnd() < .5 ? -1 : 1, r0: p.roll }; cy.manN = (cy.manN || 0) + 1; }
   const M = cy.man; if (!M) return null;
