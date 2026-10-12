@@ -92,7 +92,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 12.10, 19:35</small>
+  <small id="ver">версия 12.10, 19:56</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -306,7 +306,7 @@ function shelfGeo(kk) {
 }
 function updateShelves() {
   const SP = 4300, ku = Math.floor(player.pos.x / T.SC / SP - .5), want = new Set();
-  for (let kk = ku - 1; kk <= ku + 7; kk++) if (Math.sin(kk * 2.17 + .4) >= .3) { const a = SP * (kk + .5 + .22 * Math.sin(2.3 * kk + .6)), b = SP * (kk + 1.5 + .22 * Math.sin(2.3 * kk + 2.9)); if (Math.min(950, (b - a) * .5 - 800) >= 250) want.add(kk); }
+  for (let kk = ku - 1; kk <= ku + 7; kk++) if (Math.sin(kk * 2.17 + .4) >= .3 && Math.sin(kk * 3.71 + 2.2) < .1) { const a = SP * (kk + .5 + .22 * Math.sin(2.3 * kk + .6)), b = SP * (kk + 1.5 + .22 * Math.sin(2.3 * kk + 2.9)); if (Math.min(950, (b - a) * .5 - 800) >= 250) want.add(kk); }
   for (const [kk, m] of shelves) if (!want.has(kk) || m.userData.sc !== T.SC) { SCN.remove(m); m.geometry.dispose(); shelves.delete(kk); }
   for (const kk of want) if (!shelves.has(kk)) { const m = new THREE.Mesh(shelfGeo(kk), cy.rockMat); m.frustumCulled = false; m.userData.sc = T.SC; SCN.add(m); shelves.set(kk, m); }
 }
@@ -320,6 +320,8 @@ function safeSpot(x, a) {
    Установка бьёт очередями трассирующих снарядов. Каждый снаряд летит в точку упреждения (куда самолёт прилетит,
    если продолжит лететь вдоль каньона) с разбросом и взрывается там по дистанционному взрывателю. Опасен сам разрыв
    (~0.45 с), дальше остаётся безвредное облачко дыма. Снаряды не наводятся. Автопилот знает, где и когда будет разрыв. */
+/* случайность врагов: обычная, но воспроизводимая для проверок (window.__seed) */
+let rnd = Math.random; function seedRnd(n) { let a = n >>> 0; rnd = () => { a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 const TUR = { SP: 3100, list: new Map(), shells: [], bursts: [], hits: 0, fired: 0, geo: null, mats: null };
 const FLAK = { act: .45, life: 2.6, rate: .16, vs: 1.6 };
 function turretAt(kt) {
@@ -340,7 +342,7 @@ function flakShot(from, spK, rk, vk = FLAK.vs) {
   const L = (p.pos.z - cyZc(x0)) / cyW(x0), ah = (p.pos.y - cyFl(x0)) / cyD(x0), vx = Math.max(p.v * Math.max(.3, p.f.x), T.vmax * .2);
   let tt = p.pos.distanceTo(from) / vs;
   for (let k = 0; k < 6; k++) { const x = x0 + vx * tt; _A.set(x, cyFl(x) + ah * cyD(x), cyZc(x) + L * cyW(x)); tt = _A.distanceTo(from) / vs; }
-  const track = _A.clone(), sp = spK * cyW(_A.x), r = Math.cbrt(Math.random()) * sp, th = Math.random() * 6.283, ph = Math.acos(2 * Math.random() - 1);
+  const track = _A.clone(), sp = spK * cyW(_A.x), r = Math.cbrt(rnd()) * sp, th = rnd() * 6.283, ph = Math.acos(2 * rnd() - 1);
   _A.x += r * Math.sin(ph) * Math.cos(th) * 2.5; _A.y += r * Math.cos(ph) * .7; _A.z += r * Math.sin(ph) * Math.sin(th);
   TUR.shells.push({ from: from.clone(), to: _A.clone(), t0: tNow, tb: tNow + tt, r: flakR() * rk, mesh: null }); TUR.fired++; return track;
 }
@@ -371,7 +373,7 @@ function turretsStep(dt, px, py, pz) {
       const dx = t.x - p.pos.x; if (dx < -T.vmax * .5 || dx > T.vmax * 3.8) continue;
       const sk = T.cs * 3, piv = _o.set(t.x, t.y + (GUN_PED - 1.5 + 36) * sk, t.z), lead = leadPoint(piv), ok = aimGun(t, piv, lead, dt, -1.05, 1.48);
       /* стреляет, только когда стволы довернулись до точки упреждения: снаряд уходит по оси ствола */
-      if (ok && dx > T.vmax * .3 && dx < T.vmax * 3.4 && tNow >= t.next) { t.next = tNow + FLAK.rate * (.7 + .6 * Math.random()); t.side = -(t.side || 1);
+      if (ok && dx > T.vmax * .3 && dx < T.vmax * 3.4 && tNow >= t.next) { t.next = tNow + FLAK.rate * (.7 + .6 * rnd()); t.side = -(t.side || 1);
         const dir = gunDir(t), m = _V.copy(piv).addScaledVector(dir, 104 * sk); m.x += Math.cos(t.yaw) * 5.5 * sk * t.side; m.z -= Math.sin(t.yaw) * 5.5 * sk * t.side;
         t.track.copy(flakShot(m, .12, 1)); t.last = tNow; t.recoil = 1; } } }
   /* снаряд долетел — разрыв */
@@ -450,7 +452,7 @@ function turretsDraw(dt) {
     const dc = sh.mesh.position.distanceTo(camera.position), wd = Math.max(5 * cs, dc * .003); sh.mesh.scale.set(wd, wd, Math.max(150 * cs, T.vmax * .07, dc * .04)); }
   /* разрыв: яркая вспышка (опасная фаза) и тёмное облачко, которое расползается и тает */
   TUR.bursts = TUR.bursts.filter(b => { if (tNow - b.t0 < FLAK.life) return true; if (b.mesh) SCN.remove(b.mesh); return false; });
-  for (const b of TUR.bursts) { const R = b.r; if (!b.mesh) { const g = new THREE.Group(), f = new THREE.Mesh(G.ball, M.flash.clone()), sm = new THREE.Mesh(G.puff, M.smoke.clone()); f.frustumCulled = sm.frustumCulled = false; sm.rotation.set(Math.random() * 3, Math.random() * 3, 0); g.add(sm, f); g.userData = { f, sm }; b.mesh = g; SCN.add(g); }
+  for (const b of TUR.bursts) { const R = b.r; if (!b.mesh) { const g = new THREE.Group(), f = new THREE.Mesh(G.ball, M.flash.clone()), sm = new THREE.Mesh(G.puff, M.smoke.clone()); f.frustumCulled = sm.frustumCulled = false; sm.rotation.set(rnd() * 3, rnd() * 3, 0); g.add(sm, f); g.userData = { f, sm }; b.mesh = g; SCN.add(g); }
     const a = tNow - b.t0, k = a / FLAK.life, g = b.mesh; g.position.copy(b.pos);
     g.userData.f.visible = a < FLAK.act; g.userData.f.scale.setScalar(R * (.5 + 1.2 * a / FLAK.act)); g.userData.f.material.opacity = 1 - a / FLAK.act;
     g.userData.sm.scale.setScalar(R * (.6 + 1.1 * Math.sqrt(k))); g.userData.sm.material.opacity = .85 * (1 - k); }
@@ -476,8 +478,8 @@ function boatPos(b) { // положение и курс катера сейча�
   b.pos.set(u * sc, 0, riverAt(u) * sc); b.dir = du > 0 ? 1 : -1; const dr = riverAt(u + 1) - riverAt(u); b.hd = b.dir > 0 ? Math.atan2(1, dr) : Math.atan2(-1, -dr); return b.pos;
 }
 function spawnPlane() {
-  const p = player, L0 = (Math.random() < .5 ? -1 : 1) * (.15 + .35 * Math.random());
-  EN.planes.push({ x: p.pos.x + T.vmax * (3.6 + Math.random()), L0, a: .16 + .16 * Math.random(), ph: Math.random() * 6.28, ve: T.vmax * (.45 + .2 * Math.random()), pos: new THREE.Vector3(), vel: new THREE.Vector3(), prev: null, next: 0, t0: tNow, mesh: null, dead: false });
+  const p = player, L0 = (rnd() < .5 ? -1 : 1) * (.15 + .35 * rnd());
+  EN.planes.push({ x: p.pos.x + T.vmax * (3.6 + rnd()), L0, a: .16 + .16 * rnd(), ph: rnd() * 6.28, ve: T.vmax * (.45 + .2 * rnd()), pos: new THREE.Vector3(), vel: new THREE.Vector3(), prev: null, next: 0, t0: tNow, mesh: null, dead: false });
 }
 function planePos(e, t) { // где перехватчик будет в момент t (детерминированно — так его видит и автопилот)
   const sc = T.SC, x = e.x - e.ve * (t - e.t0), u = x / sc, fk = CW.fkz(u);
@@ -494,13 +496,13 @@ function enemiesStep(dt, px, py, pz) {
       boatPos(b); const dx = b.pos.x - p.pos.x;
       if (b.ship) { /* зенитка корабля: та же логика — стреляет, только когда стволы довернулись */
         const Sb = sc * 1.1, piv = _o.set(b.pos.x + Math.sin(b.hd) * 18 * Sb, b.pos.y + (7 + 36 * .22) * Sb, b.pos.z + Math.cos(b.hd) * 18 * Sb), ok = aimGun(b, piv, leadPoint(piv), dt, -.15, 1.45);
-        if (ok && dx > T.vmax * .25 && dx < T.vmax * 3.2 && tNow >= b.next) { b.next = tNow + FLAK.rate * 1.2 * (.7 + .6 * Math.random()); b.side = -b.side;
+        if (ok && dx > T.vmax * .25 && dx < T.vmax * 3.2 && tNow >= b.next) { b.next = tNow + FLAK.rate * 1.2 * (.7 + .6 * rnd()); b.side = -b.side;
           b.track.copy(flakShot(_V.copy(piv).addScaledVector(gunDir(b), 104 * .22 * Sb), .1, .9)); b.last = tNow; b.recoil = 1; }
         continue; }
       if (dx > T.vmax * .25 && dx < T.vmax * 2.4 && tNow >= b.next) {
-        b.next = tNow + (b.ship ? FLAK.rate * 1.2 : .09) * (.7 + .6 * Math.random()); const o = _o.set(b.pos.x, b.pos.y + (b.ship ? 40 : 14) * sc, b.pos.z);
+        b.next = tNow + (b.ship ? FLAK.rate * 1.2 : .09) * (.7 + .6 * rnd()); const o = _o.set(b.pos.x, b.pos.y + (b.ship ? 40 : 14) * sc, b.pos.z);
         b.track.copy(flakShot(b.muzzle || o, b.ship ? .1 : .06, b.ship ? .9 : .5, b.ship ? FLAK.vs : 1.3)); b.last = tNow; b.recoil = 1; b.side = -b.side; } } }
-  if (+S.ints) { if (tNow >= EN.nextPlane) { spawnPlane(); EN.nextPlane = tNow + (+S.ints >= 2 ? 1.6 : 3.5) * (.6 + .8 * Math.random()); }
+  if (+S.ints) { if (tNow >= EN.nextPlane) { spawnPlane(); EN.nextPlane = tNow + (+S.ints >= 2 ? 1.6 : 3.5) * (.6 + .8 * rnd()); }
     const R = 30 * cs, ax = p.pos.x - px, ay = p.pos.y - py, az = p.pos.z - pz;
     for (const e of EN.planes) { if (e.dead) continue; const q = planePos(e, tNow); if (!e.prev) { e.pos.copy(q); e.prev = q.clone(); e.vel.set(-e.ve, 0, 0); continue; } e.vel.copy(q).sub(e.pos).divideScalar(Math.max(dt, 1e-4)); e.prev.copy(e.pos); e.pos.copy(q);
       /* столкновение: сближение отрезков (относительное движение за шаг) */
@@ -698,31 +700,32 @@ function cyPlan(p) {
   const MV = window.__noDodge ? [] : moverHazards(), Rmv = 45 * cs + .015 * v;
   let best = null; if (window.__dbg) pl.dbg = [];
   for (const Lc of Lcs) for (const ac of (Math.abs(Lc) > .8 ? acHi : acs)) {
-    let qx = p.pos.x, qy = p.pos.y, qz = p.pos.z, qt = 0;
+    let qx = p.pos.x, qy = p.pos.y, qz = p.pos.z, qt = 0, hzc = 0, fire = 0; // fire — штраф за огонь и перехватчиков, ограничен сверху: скала всегда хуже обстрела
     let cost = (Math.abs(Lc) > .8 ? 0 : AP.LCW * Lc * Lc + AP.AW * (ac - pref) * (ac - pref)) + AP.HY * (Math.abs(Lc - pl.Lc) + AP.HYA * Math.abs(ac - pl.ac)), Cmin = 1e9, wmin = 1e9, kmax = 0, nOut = 0; const pts = PTS; let np = 0;
     for (let i = 1; i <= N; i++) {
       const s = i / N, bl = SB[i], xi = SX[i], Ei = SE[i], Li = L0 + (Lc - L0) * bl, ai = a0 + (ac - a0) * bl, wi = SW[i], Di = SD[i], zi = SZ[i] + Li * wi, yi = SF[i] + ai * Di, nx = SNX[i], nzz = SNZ[i];
       const ri = Math.min(r, .42 * wi), g0 = gf(xi, zi), gl = gf(xi + nx * ri, zi + nzz * ri), gr = gf(xi - nx * ri, zi - nzz * ri), C = Math.min(yi - g0, yi - gl, yi - gr);
       Cmin = Math.min(Cmin, C); wmin = Math.min(wmin, wi);
-      if (C < m) cost += Math.pow((m - C) / m, 2) * AP.COLW * (1.25 - s * .7);
-      if (SA[i] && archHit(xi, yi, zi, 35 * cs)) cost += AP.ARW;
-      if (SHf[i] && shelfHit(xi, yi, zi, 35 * cs + .04 * v)) cost += AP.ARW; // запас растёт со скоростью: на 94 000 км/ч ошибка следования больше
+      if (C < m) cost += Math.pow((m - C) / m, 2) * AP.COLW * (1.25 - s * .7) + (C < 0 ? 1000 : 0);
+      if (SA[i] && archHit(xi, yi, zi, 35 * cs)) cost += AP.ARW + (archHit(xi, yi, zi, 8 * cs) ? 1000 : 0); // сквозь камень — жёсткий запрет
+      if (SHf[i] && shelfHit(xi, yi, zi, 35 * cs + .04 * v)) cost += AP.ARW + (shelfHit(xi, yi, zi, 8 * cs) ? 1000 : 0); // запас растёт со скоростью: на 94 000 км/ч ошибка следования больше
       if (false) { const rx = wi * 1.3, rim = Math.min(gf(xi + nx * rx, zi + nzz * rx), gf(xi - nx * rx, zi - nzz * rx)), lim = rim - 90 * cs; if (yi > lim) cost += Math.pow((yi - lim) / (90 * cs), 2) * 30; }
       const r2 = Math.min(r * 2.4, .9 * wi), gl2 = gf(xi + nx * r2, zi + nzz * r2), gr2 = gf(xi - nx * r2, zi - nzz * r2); if (Math.max(gl2, gr2) > yi) cost += .5;
       { if (Math.abs(Li) > 1.02 || yi > SR[i] - 30 * cs) { const q = OUT * (1 - Ei); cost += q; nOut++; } }
       pts[np++] = xi; pts[np++] = yi; pts[np++] = zi;
       if (HZ.length) { const ti = (xi - x0) / vx;
         for (const h of HZ) { if (h[2] < qt - .15 || h[1] > ti + .15) continue; const P = h[0], ax = xi - qx, ay = yi - qy, az = zi - qz, aa = ax * ax + ay * ay + az * az, bx = P.x - qx, by = P.y - qy, bz = P.z - qz;
-          const uu = aa > 0 ? Math.max(0, Math.min(1, (bx * ax + by * ay + bz * az) / aa)) : 0, d = Math.hypot(bx - ax * uu, by - ay * uu, bz - az * uu), Rd = h[3] + Rm; if (d < Rd) cost += AP.ARW * 1.5 * (1 - d / Rd) + AP.ARW * .5; }
+          const uu = aa > 0 ? Math.max(0, Math.min(1, (bx * ax + by * ay + bz * az) / aa)) : 0, d = Math.hypot(bx - ax * uu, by - ay * uu, bz - az * uu), Rd = h[3] + Rm; if (d < Rd * 1.6 && ti < 1) hzc++; if (d < Rd) fire += AP.ARW * 1.5 * (1 - d / Rd) + AP.ARW * .5; }
         qx = xi; qy = yi; qz = zi; qt = ti; }
       if (MV.length) { const ti = (xi - x0) / vx, t0 = i === 1 ? 0 : (SX[i - 1] - x0) / vx, sx0 = i === 1 ? p.pos.x : pts[np - 6], sy0 = i === 1 ? p.pos.y : pts[np - 5], sz0 = i === 1 ? p.pos.z : pts[np - 4];
         for (const [P, V] of MV) { const ax = sx0 - P.x - V.x * t0, ay = sy0 - P.y - V.y * t0, az = sz0 - P.z - V.z * t0, dx = xi - P.x - V.x * ti - ax, dy = yi - P.y - V.y * ti - ay, dz = zi - P.z - V.z * ti - az, dd = dx * dx + dy * dy + dz * dz;
-          const uu = dd > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy + az * dz) / dd)) : 0, d = Math.hypot(ax + dx * uu, ay + dy * uu, az + dz * uu); if (d < Rmv) cost += AP.ARW * 2 * (1 - d / Rmv) + AP.ARW * .5; } }
+          const uu = dd > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy + az * dz) / dd)) : 0, d = Math.hypot(ax + dx * uu, ay + dy * uu, az + dz * uu); if (d < Rmv) fire += AP.ARW * 2 * (1 - d / Rmv) + AP.ARW * .5; } }
     }
+    cost += fire;
     for (let i = 4; i <= 11; i++) { const j = i * 3; const ax = pts[j - 3] - pts[j - 6], ay = pts[j - 2] - pts[j - 5], az = pts[j - 1] - pts[j - 4], bx = pts[j] - pts[j - 3], by = pts[j + 1] - pts[j - 2], bz = pts[j + 2] - pts[j - 1], la = Math.hypot(ax, ay, az), lb = Math.hypot(bx, by, bz), ang = Math.hypot(ax / la - bx / lb, ay / la - by / lb, az / la - bz / lb); kmax = Math.max(kmax, ang / ((la + lb) / 2)); }
     cost += AP.KW * Math.min(2.5, kmax * 500 * sc); // гоночная линия: срезать дугу
     if (window.__dbg) (pl.dbg = pl.dbg || []).push([Lc, +ac.toFixed(2), +cost.toFixed(1), Math.round(Cmin), +(kmax * 500 * sc).toFixed(2)]);
-    if (!best || cost < best.cost) best = { cost, Lc, ac, Cmin, wmin, kmax, nOut };
+    if (!best || cost < best.cost) best = { cost, Lc, ac, Cmin, wmin, kmax, nOut, hz: hzc };
   }
   pl.Lc = best.Lc; pl.ac = best.ac; pl.L0 = L0; pl.a0 = a0; pl.x0 = x0; pl.Lsx = Lsx; pl.t = tNow;
   const sk = S.skill / 100, vcap = T.vmax * (.8 + .2 * sk);
@@ -731,8 +734,24 @@ function cyPlan(p) {
   vt *= Math.max(AP.CF, Math.min(1, AP.CF + (1 - AP.CF) * best.Cmin / (AP.CWD * cs)));
   pl.fk = best.kmax > 1e-9 ? Math.min(1, Math.sqrt(T.AMAX * .95 * sk / best.kmax) / vcap) : 1; pl.fn = Math.max(.8, Math.min(1, Math.sqrt(best.wmin / (130 * sc)))); pl.fc = Math.max(.75, Math.min(1, .75 + .25 * best.Cmin / (60 * cs))); pl.fo = outF;
   pl.vt = Math.max(vt, vcap * AP.VF);
+  pl.hz = best.hz; pl.vk = best.kmax > 1e-9 ? Math.sqrt(T.AMAX * AP.AU * sk / best.kmax) : 1e9; pl.Cmin = best.Cmin; // для боевого режима: предел скорости по перегрузке и запас до скал
 }
 const _tp = new THREE.Vector3();
+/* боевой режим под обстрелом: газ 100% и манёвры, сбивающие упреждение зениток.
+   «Бочка» — полный оборот вокруг продольной оси с винтовым смещением; «змейка» — резкие перекладки вбок/вверх каждые ~0.45 с. */
+function threatNow(p) {
+  if (window.__noMan) return false; const R = T.vmax * 2.5;
+  for (const h of flakHazards()) if (h[1] < 2 && h[0].distanceTo(p.pos) < R) return true;
+  for (const e of EN.planes) if (!e.dead && e.pos.x > p.pos.x && e.pos.x - p.pos.x < T.vmax * 1.6) return true;
+  return false;
+}
+function maneuver(p, pl) {
+  /* управляемая бочка: полный оборот вокруг продольной оси без схода с траектории — обход разрывов не нарушается */
+  const thr = threatNow(p); if (thr) cy.thrT = tNow;
+  if (cy.man && tNow - cy.man.t0 > cy.man.dur) { cy.man = null; cy.manCool = tNow + .8; }
+  if (!cy.man && thr && tNow > (cy.manCool || 0)) { cy.man = { type: "roll", t0: tNow, dur: 1.1, dir: rnd() < .5 ? -1 : 1, r0: p.roll }; cy.manN = (cy.manN || 0) + 1; }
+  return null;
+}
 function cyAI(p) {
   const pl = cy.plan; if (tNow - pl.t > .05) cyPlan(p);
   const sc = T.SC, cs = T.cs, v = Math.max(p.v, T.vmax * .2), Ld = Math.max(AP.LD * v, 80 * cs), xT = p.pos.x + Ld * AP.LDX;
@@ -740,7 +759,11 @@ function cyAI(p) {
   _tp.set(xT, cyFl(xT) + a * cyD(xT), cyZc(xT) + L * cyW(xT));
   _d.subVectors(_tp, p.pos); const dd = _d.dot(p.f); _d.addScaledVector(p.f, -dd);
   const L2 = Math.max(Ld * Ld * .5, _tp.distanceToSquared(p.pos)), aw = _d.multiplyScalar(2 / L2 * v * v);
-  return [aw.dot(p.r0), aw.dot(p.u0), pl.vt];
+  let ar = aw.dot(p.r0), au = aw.dot(p.u0), vt = pl.vt;
+  const mv = maneuver(p, pl);
+  if (tNow - (cy.thrT || -9) < 1) vt = Math.max(vt, Math.min(T.vmax, pl.vk || T.vmax)); // газ 100%, но не быстрее, чем позволяет перегрузка в повороте
+  if (mv) { ar += mv[0]; au += mv[1]; }
+  return [ar, au, vt];
 }
 
 /* ================= сцена ================= */
@@ -977,7 +1000,7 @@ function updateStreaks(dt) {
   const len = Math.min(player.v * 0.025, 60 * cs * 3), rx = new THREE.Vector3().crossVectors(f, UP).normalize(), ry = new THREE.Vector3().crossVectors(rx, f);
   for (let i = 0; i < P.length; i++) {
     const p = P[i]; _a.subVectors(p, c); const ahead = _a.dot(f);
-    if (ahead < -20 * cs || ahead > D * 1.05 || p.x > 1e8) { const a = Math.random() * 6.283, r = Rr * (0.25 + 0.75 * Math.sqrt(Math.random())), z = D * Math.random(); p.copy(c).addScaledVector(f, z).addScaledVector(rx, Math.cos(a) * r).addScaledVector(ry, Math.sin(a) * r); }
+    if (ahead < -20 * cs || ahead > D * 1.05 || p.x > 1e8) { const a = rnd() * 6.283, r = Rr * (0.25 + 0.75 * Math.sqrt(rnd())), z = D * rnd(); p.copy(c).addScaledVector(f, z).addScaledVector(rx, Math.cos(a) * r).addScaledVector(ry, Math.sin(a) * r); }
     arr[6 * i] = p.x; arr[6 * i + 1] = p.y; arr[6 * i + 2] = p.z; arr[6 * i + 3] = p.x - player.f.x * len; arr[6 * i + 4] = p.y - player.f.y * len; arr[6 * i + 5] = p.z - player.f.z * len;
   }
   streaks.geometry.attributes.position.needsUpdate = true;
@@ -1001,7 +1024,7 @@ function startCanyon() {
   player = new Plane(T); rival = player;
   const x0 = (window.__x0 || 0) * T.SC, a = altPref(x0), [y0, z0] = safeSpot(x0, a);
   player.pos.set(x0, y0, z0); player.prev.copy(player.pos); player.f.set(1, 0, CW.czd(x0 / T.SC)).normalize(); player.v = T.vmax * .55; player.roll = 0; player.rollV = 0; player.basis();
-  Object.assign(cy, { x0, segX: x0, segT: 0, segManual: 0, passed: 0, crashes: 0, nextK: nextArch(x0).k });
+  Object.assign(cy, { man: null, manCool: 0, thrT: -9, manN: 0, x0, segX: x0, segT: 0, segManual: 0, passed: 0, crashes: 0, nextK: nextArch(x0).k });
   cy.plan = { Lc: 0, ac: a, L0: 0, a0: a, x0, Lsx: 1000, vt: player.v, t: -1e9 };
   cy.best = (() => { try { return +localStorage.getItem("race-canyon-best-" + S.preset) || 0; } catch { return 0; } })();
   tNow = 0; ctl.steerMan = false; ctl.spdMan = false; ctl.thr = 0.75; camState.f.copy(player.f); camState.pos.copy(player.pos);
@@ -1120,6 +1143,8 @@ function cyCrash(msg) {
 }
 function simStepCanyon(dt) {
   tNow += dt; const c = playerControl(), p = player, px = p.pos.x, py = p.pos.y, pz = p.pos.z; p.step(dt, c[0], c[1], c[2]);
+  if (cy.man && cy.man.type === "roll" && !ctl.steerMan) { const M = cy.man, k = Math.min(1, (tNow - M.t0) / M.dur); p.roll = M.r0 + M.dir * 6.2832 * k * k * (3 - 2 * k); p.rollV = 0; p.basis(); }
+  else if (cy.man && ctl.steerMan) cy.man = null;
   { const em = (+S.boats || +S.ints) ? enemiesStep(dt, px, py, pz) : null; if (em) { cyCrash(em + " — возврат в каньон"); return; } }
   if ((+S.tur || TUR.shells.length || TUR.bursts.length) && turretsStep(dt, px, py, pz)) { cyCrash("Сбит огнём — возврат в каньон"); return; }
   cy.segT += dt; if (ctl.steerMan) cy.segManual += dt;
@@ -1159,7 +1184,7 @@ function frame(ms) {
   camState.pos.copy(pl.pos).addScaledVector(camState.f, -m[0] * cs).addScaledVector(upv, m[1] * cs);
   camera.position.copy(camState.pos); camera.up.copy(upv);
   const sh = (cyMode ? 0.0004 : 0.0015) * (pl.v / T.vmax) * (+S.fx ? 1 : 0); camera.lookAt(_a.copy(pl.pos).addScaledVector(camState.f, 80 * cs));
-  if (sh) { camera.rotateX((Math.random() - 0.5) * sh); camera.rotateY((Math.random() - 0.5) * sh); }
+  if (sh) { camera.rotateX((rnd() - 0.5) * sh); camera.rotateY((rnd() - 0.5) * sh); }
   const fov = fovBase + 14 * Math.min(1, pl.v / T.vmax); if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = fov; camera.updateProjectionMatrix(); }
   camera.updateMatrixWorld();
   planeMesh.p.visible = camMode !== 2;
@@ -1185,7 +1210,8 @@ function hud(t) {
   mk.style.display = "block"; mk.style.transform = `translate(${x.toFixed(0)}px,${y.toFixed(0)}px)`; $("markArrow").parentNode.style.transform = inside ? "scale(.55) rotate(180deg)" : `rotate(${rot}rad)`;
   if (t - hudT < 0.1) return; hudT = t;
   { let near = false; if (cyMode) for (const h of flakHazards()) if (h[1] < 1.2 && h[0].distanceTo(pl.pos) < T.vmax * 1.5) { near = true; break; } let ram = false; if (cyMode) for (const e of EN.planes) if (!e.dead && e.pos.x > pl.pos.x && e.pos.x - pl.pos.x < T.vmax * 1.8) { ram = true; break; }
-    $("warn").textContent = ram ? "⚠ ПЕРЕХВАТЧИК" : "⚠ ОБСТРЕЛ"; $("warn").style.display = near || ram ? "block" : "none"; }
+    const mn = cy.man ? " · БОЧКА" : "", fs = cyMode && tNow - (cy.thrT || -9) < 1 && !ctl.steerMan ? " · ФОРСАЖ" : "";
+    $("warn").textContent = (ram ? "⚠ ПЕРЕХВАТЧИК" : "⚠ ОБСТРЕЛ") + fs + mn; $("warn").style.display = near || ram ? "block" : "none"; }
   const dist = pl.pos.distanceTo(g.p); $("markT").textContent = dist > 1000 ? (dist / 1000).toFixed(1) + " км" : dist.toFixed(0) + " м";
   $("vS").textContent = Math.round(pl.v * 3.6).toLocaleString("ru"); $("mach").textContent = "M " + (pl.v / 340).toFixed(1) + " · крен " + Math.abs(Math.round(pl.roll * 57.3)) + "°";
   if (cyMode) {
@@ -1280,7 +1306,7 @@ $("sInv").onchange = e => { S.inv = e.target.checked; saveS(); };
 $("sLife").onchange = e => { S.life = +e.target.value; saveS(); const on = S.life !== 0; life.A.visible = life.B.visible = life.C.visible = on; };
 $("sFx").onchange = e => { S.fx = +e.target.value; saveS(); buildStreaks(); };
 $("sQ").onchange = e => { S.q = +e.target.value; saveS(); resize(); };
-$("bNew").onclick = () => { S.seed = 1 + Math.floor(Math.random() * 9999); saveS(); startGame(); $("panel").style.display = "none"; };
+$("bNew").onclick = () => { S.seed = 1 + Math.floor(rnd() * 9999); saveS(); startGame(); $("panel").style.display = "none"; };
 $("bRestart").onclick = () => { startGame(); $("panel").style.display = "none"; };
 
 /* ================= запуск ================= */
@@ -1288,7 +1314,7 @@ initScene(); startGame(); renderer.setAnimationLoop(frame);
 
 /* отладка и тесты */
 window.__race = {
-  get life() { return life; }, get terrain() { return terrain; }, frame: t => frame(t), bio: (x, z) => { const h = hgtRaw(x, z, 1); return [h, bioRaw[0](x, z, 1, h), bioRaw[1](x, z, 1)]; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, get scene() { return SCN; }, get camera() { return camera; }, ctl, S, ground: (x, z) => gnd(x, z), cy, CW, archHit, shelfHit, shelves, TUR, clearTurrets, EN, clearEnemies, get cyMode() { return cyMode; }, popE, CHK, altPref, AP, applyPilot, HC,
+  get life() { return life; }, get terrain() { return terrain; }, frame: t => frame(t), bio: (x, z) => { const h = hgtRaw(x, z, 1); return [h, bioRaw[0](x, z, 1, h), bioRaw[1](x, z, 1)]; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, get scene() { return SCN; }, get camera() { return camera; }, ctl, S, ground: (x, z) => gnd(x, z), cy, CW, archHit, shelfHit, shelves, TUR, clearTurrets, EN, clearEnemies, seedRnd, get cyMode() { return cyMode; }, popE, CHK, altPref, AP, applyPilot, HC,
   /* симуляция без рендера: автопилот, статистика */
   sim(seconds, dt = 1 / 60) {
     const st = { t: 0, maxErr: 0, sumErr: 0, n: 0, minAgl: 1e18, crashes0: crashes, misses0: misses, passed0: gatesPassed, laps0: lapCount, maxV: 0, minV: 1e18, rollMax: 0 };

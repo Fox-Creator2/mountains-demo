@@ -175,9 +175,9 @@ void plan(vec3 P, float v_, inout vec4 pl1, inout vec4 pl2, float tNow){
       for (int i = 1; i <= 14; i++){ float s = float(i) / 14., bl = SB[i], xi = SX[i], Li = L0 + (Lc - L0) * bl, ai_ = a0 + (ac - a0) * bl, wi = SW[i], zi = SZ[i] + Li * wi, yi = SF[i] + ai_ * SD[i], nx = SNX[i], nzz = SNZ[i];
         float ri = min(r, .42 * wi), g0 = GND(xi, zi), gl = GND(xi + nx * ri, zi + nzz * ri), gr = GND(xi - nx * ri, zi - nzz * ri), C = min(yi - g0, min(yi - gl, yi - gr));
         Cmin = min(Cmin, C); wmin = min(wmin, wi);
-        if (C < m) cost += pow((m - C) / m, 2.) * COLW * (1.25 - s * .7);
-        if (SA[i] && archHit(vec3(xi, yi, zi), 35. * CS)) cost += ARW;
-        if (SH[i] && shelfHit(vec3(xi, yi, zi), 35. * CS + .04 * v)) cost += ARW;
+        if (C < m) cost += pow((m - C) / m, 2.) * COLW * (1.25 - s * .7) + (C < 0. ? 1000. : 0.);
+        if (SA[i] && archHit(vec3(xi, yi, zi), 35. * CS)) cost += ARW + (archHit(vec3(xi, yi, zi), 8. * CS) ? 1000. : 0.);
+        if (SH[i] && shelfHit(vec3(xi, yi, zi), 35. * CS + .04 * v)) cost += ARW + (shelfHit(vec3(xi, yi, zi), 8. * CS) ? 1000. : 0.);
         float r2 = min(r * 2.4, .9 * wi), gl2 = GND(xi + nx * r2, zi + nzz * r2), gr2 = GND(xi - nx * r2, zi - nzz * r2); if (max(gl2, gr2) > yi) cost += .5;
         if (abs(Li) > 1.02 || yi > SR[i] - 30. * CS){ cost += OUTW * (1. - SE[i]); nOut += 1.; }
         pts[i] = vec3(xi, yi, zi); }
@@ -376,7 +376,7 @@ function seeds(n) {
 }
 /* самотест: 2 пилота на 6 эталонных участках по 20 с — сверка с теми же полётами в игре (процессор) */
 const REF_SEGS = [["warm", 1, 23000], ["fast", 0, 61000], ["hyper", 2, 97000], ["orbit", 1, 140000], ["ultra", 0, 45000], ["max", 2, 183000]].map(([preset, alt, x0]) => ({ preset, alt, x0 }));
-const REF = { std: [.544, .687, .886, .848, .804, .857], c2: [.796, .883, .964, .896, .849, .875] }; // эталоны игры после развилок и полок (12.10)
+const REF = { std: [.556, .687, .886, .720, .804, .857], c2: [.784, .883, .962, .869, .849, .875] }; // эталоны игры после развилок и полок (12.10)
 let selfOk = false;
 async function selfTest() {
   log("Самотест видеокарты: 2 пилота × 6 эталонных участков…");
@@ -398,7 +398,7 @@ const EXAM_MAX = [["max", 0, 300000], ["max", 1, 330000], ["max", 2, 360000], ["
 const examSegs = () => TGT() === "max" ? EXAM_MAX : EXAM_SEGS;
 const EXAM_SEGS = [["warm", 1, 300000], ["fast", 0, 330000], ["hyper", 2, 360000], ["orbit", 1, 390000], ["ultra", 0, 420000], ["max", 2, 450000]].map(([preset, alt, x0]) => ({ preset, alt, x0 }));
 /* единый экзамен: всегда 60 с, точный шаг 1/60, смелость «немного» — оценки разных запусков сравнимы */
-const EXAM_SIM = 60, EXAM_BOLD = .08, EXAM_OPT = { dt: 1 / 60 }, EV = 6; // EV 4: развилки и полки в рельефе — старые оценки пересдаются // dt задан → без разнесения планирования: оценка не зависит от соседей по пачке; старт безопасный (не перед аркой)
+const EXAM_SIM = 60, EXAM_BOLD = .08, EXAM_OPT = { dt: 1 / 60 }, EV = 7; // EV 4: развилки и полки в рельефе — старые оценки пересдаются // dt задан → без разнесения планирования: оценка не зависит от соседей по пачке; старт безопасный (не перед аркой)
 const loadHof = sfx => { try { return JSON.parse(localStorage.getItem("race-train-hof" + sfx) || "[]"); } catch { return []; } };
 let HOF = loadHof(SFX());
 const keyOf = g => JSON.stringify(round3({ ...AP_STD, ...g }));

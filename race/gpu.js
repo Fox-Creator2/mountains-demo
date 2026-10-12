@@ -26,7 +26,7 @@ fn cw0(x: f32) -> f32 { return (260. + 90. * sin(x * 3.1e-4 + 1.1) + 50. * sin(x
 fn cD(x: f32) -> f32 { return 650. + 220. * sin(x * 2.3e-4 + 2.2) + 90. * sin(x * 5.1e-4 + .3); }
 fn axk(x: f32, k: f32) -> f32 { return abs(x - 4300. * (k + .5 + .22 * sin(2.3 * k + .6))); }
 fn archd(x: f32) -> f32 { let k = floor(x / 4300.); return min(axk(x, k - 1.), min(axk(x, k), axk(x, k + 1.))); }
-fn shk(x: f32, kk: f32) -> f32 { if (sin(kk * 2.17 + .4) < .3) { return 1e9; } let a = 4300. * (kk + .5 + .22 * sin(2.3 * kk + .6)); let b = 4300. * (kk + 1.5 + .22 * sin(2.3 * kk + 2.9)); let hl = min(950., (b - a) * .5 - 800.); if (hl < 250.) { return 1e9; } return abs(x - (a + b) * .5) - hl; }
+fn shk(x: f32, kk: f32) -> f32 { if (sin(kk * 2.17 + .4) < .3 || sin(kk * 3.71 + 2.2) >= .1) { return 1e9; } let a = 4300. * (kk + .5 + .22 * sin(2.3 * kk + .6)); let b = 4300. * (kk + 1.5 + .22 * sin(2.3 * kk + 2.9)); let hl = min(950., (b - a) * .5 - 800.); if (hl < 250.) { return 1e9; } return abs(x - (a + b) * .5) - hl; }
 fn shd(x: f32) -> f32 { let k = floor(x / 4300. - .5); return min(shk(x, k - 1.), min(shk(x, k), shk(x, k + 1.))); }
 fn shy(x: f32) -> f32 { return 30. + cfl(x) + cD(x) * (.52 + .06 * sin(x * 7e-4)); }
 fn sht(x: f32) -> f32 { return cD(x) * .07; }
@@ -160,9 +160,9 @@ fn plan(P: vec3f, v_: f32, pl1: ptr<function, vec4f>, pl2: ptr<function, vec4f>,
         let ri = min(r, .42 * wi); let g0 = GND(xi, zi); let gl = GND(xi + nx * ri, zi + nzz * ri); let gr = GND(xi - nx * ri, zi - nzz * ri);
         let C = min(yi - g0, min(yi - gl, yi - gr));
         Cmin = min(Cmin, C); wmin = min(wmin, wi);
-        if (C < m) { let q = (m - C) / m; cost += q * q * COLW * (1.25 - s * .7); }
-        if (SA[i] && archHit(vec3f(xi, yi, zi), 35. * CS)) { cost += ARW; }
-        if (SH[i] && shelfHit(vec3f(xi, yi, zi), 35. * CS + .04 * v)) { cost += ARW; }
+        if (C < m) { let q = (m - C) / m; cost += q * q * COLW * (1.25 - s * .7); if (C < 0.) { cost += 1000.; } }
+        if (SA[i] && archHit(vec3f(xi, yi, zi), 35. * CS)) { cost += ARW; if (archHit(vec3f(xi, yi, zi), 8. * CS)) { cost += 1000.; } }
+        if (SH[i] && shelfHit(vec3f(xi, yi, zi), 35. * CS + .04 * v)) { cost += ARW; if (shelfHit(vec3f(xi, yi, zi), 8. * CS)) { cost += 1000.; } }
         let r2 = min(r * 2.4, .9 * wi); let gl2 = GND(xi + nx * r2, zi + nzz * r2); let gr2 = GND(xi - nx * r2, zi - nzz * r2);
         if (max(gl2, gr2) > yi) { cost += .5; }
         if (abs(Li) > 1.02 || yi > SR[i] - 30. * CS) { cost += OUTW * (1. - SE[i]); nOut += 1.; }

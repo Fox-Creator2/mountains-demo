@@ -43,7 +43,7 @@ float cD(float x){ return 650.+220.*sin(x*2.3e-4+2.2)+90.*sin(x*5.1e-4+.3); }
 float axk(float x,float k){ return abs(x-4300.*(k+.5+.22*sin(2.3*k+.6))); }
 float archd(float x){ float k=floor(x/4300.); return min(axk(x,k-1.),min(axk(x,k),axk(x,k+1.))); }
 /* полка: каменная плита поперёк каньона (проход над ней и под ней); shd<0 — внутри полки по длине */
-float shk(float x,float kk){ if(sin(kk*2.17+.4)<.3) return 1e9; float a=4300.*(kk+.5+.22*sin(2.3*kk+.6)); float b=4300.*(kk+1.5+.22*sin(2.3*kk+2.9)); float hl=min(950.,(b-a)*.5-800.); if(hl<250.) return 1e9; return abs(x-(a+b)*.5)-hl; }
+float shk(float x,float kk){ if(sin(kk*2.17+.4)<.3||sin(kk*3.71+2.2)>=.1) return 1e9; /* не в том же промежутке, что развилка: вместе они образуют западню */ float a=4300.*(kk+.5+.22*sin(2.3*kk+.6)); float b=4300.*(kk+1.5+.22*sin(2.3*kk+2.9)); float hl=min(950.,(b-a)*.5-800.); if(hl<250.) return 1e9; return abs(x-(a+b)*.5)-hl; }
 float shd(float x){ float k=floor(x/4300.-.5); return min(shk(x,k-1.),min(shk(x,k),shk(x,k+1.))); }
 float shy(float x){ return 30.+cfl(x)+cD(x)*(.52+.06*sin(x*7e-4)); }
 float sht(float x){ return cD(x)*.07; }
