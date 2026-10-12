@@ -98,7 +98,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 13.10, 01:22</small>
+  <small id="ver">версия 13.10, 01:26</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -599,6 +599,25 @@ function rkKill(q, pos) {
   if (q.kind === "gun" && o.mesh) { o.mesh.userData.yawG.rotation.z = .5; o.mesh.userData.yawG.position.y -= 6; } // обломки: башню сорвало набок
   toast({ gun: "Зенитка уничтожена", ship: "Корабль потоплен", boat: "Катер уничтожен", plane: "Перехватчик сбит" }[q.kind] + " · всего " + RK.kills, 1300);
 }
+/* фигуры пилотажа по ситуации: горка вверх, пикирование, змейка. Это не слепой манёвр, а цель для планировщика:
+   путь строится с обходом скал и известных разрывов, просто «куда» задаёт фигура */
+const FIGN = { up: "ГОРКА ↑", down: "ПИКИРОВАНИЕ ↓", weave: "ЗМЕЙКА" };
+function figureNow(p) {
+  const x = p.pos.x, ah = (p.pos.y - cyFl(x)) / cyD(x), Lh = (p.pos.z - cyZc(x)) / cyW(x); let F = cy.fig;
+  if (F && tNow - F.t0 > F.dur) { cy.fig = F = null; cy.figCool = tNow + 1; }
+  if (!F && tNow > (cy.figCool || 0)) {
+    let pick = null;
+    for (const e of EN.planes) { if (e.dead) continue; const dx = e.pos.x - x; if (dx < T.vmax * .4 || dx > T.vmax * 2.2) continue; const ea = (e.pos.y - cyFl(e.pos.x)) / cyD(e.pos.x), eL = (e.pos.z - cyZc(e.pos.x)) / cyW(e.pos.x);
+      if (Math.abs(eL - Lh) < .45) { pick = ea <= ah + .05 ? { k: "up", a: Math.min(.95, ah + .45) } : { k: "down", a: Math.max(.07, ah - .45) }; break; } }
+    if (!pick) { let n = 0, dy = 0; for (const h of flakHazards()) if (h[1] < 1.6 && h[0].distanceTo(p.pos) < T.vmax * 2 && h[0].x > x) { n++; dy += h[0].y - p.pos.y; }
+      if (n >= 2) pick = dy >= 0 ? { k: "down", a: Math.max(.07, ah - .4) } : { k: "up", a: Math.min(.95, ah + .4) };
+      else for (const t of TUR.list.values()) if (t && !t.dead && tNow - (t.last || -9) < .8 && t.x - x > 0 && t.x - x < T.vmax * 3) { pick = { k: "weave" }; break; } }
+    if (pick) { cy.fig = F = { ...pick, t0: tNow, dur: pick.k === "weave" ? 2.8 : pick.k === "up" ? 1.6 : 1.4, sg: rnd() < .5 ? -1 : 1 }; cy.figN = (cy.figN || 0) + 1; }
+  }
+  if (!F) return null;
+  if (F.k === "weave") return { L: F.sg * .45 * (Math.floor((tNow - F.t0) / .7) % 2 ? 1 : -1) };
+  return { a: F.a };
+}
 function attackTarget(p, x0, shOn) {
   let best = null, bd = 1e30; const vm = T.vmax;
   for (const q of rkTargets()) { if (q.kind === "plane" || (q.kind === "gun" && !shOn)) continue; const dx = q.p.x - x0; if (dx < vm * 1.1 || dx > vm * 3.4) continue;
@@ -781,6 +800,7 @@ function cyPlan(p) {
   /* заход в атаку: корабль/катер — вниз к реке и вдоль неё (цель перед носом); зенитка — к её кромке и выше, только под щитом */
   const ATK = +S.autoFire !== 0 && !window.__noAtk ? attackTarget(p, x0, shOn) : null;
   const dive = !window.__noDive && tNow - (cy.thrT || -9) < 1.5 && !shOn; // под огнём — охотно нырять вниз
+  const FIG = !window.__noFig && !shOn ? figureNow(p) : null; if (FIG && FIG.a != null) pref = FIG.a; // фигура пилотажа — задание для планировщика
   const Lcs = [-1.5, -1.05, -.6, -.35, -.15, 0, .15, .35, .6, 1.05, 1.5], acs = [...new Set([pref * .6, pref * .8, pref, pref * 1.25, pref * 1.6].map(a => Math.max(.1, Math.min(1.9, a))))], acHi = [1.12, 1.5, 1.9];
   const SR = [], SA = [], SHf = [], SX = [], SE = [], SW = [], SD = [], SZ = [], SF = [], SNX = [], SNZ = [], SB = [];
   for (let i = 1; i <= N; i++) { const s = i / N, xi = x0 + Lsx * s, sl = CW.czd(xi / sc), il = 1 / Math.sqrt(1 + sl * sl);
@@ -800,7 +820,7 @@ function cyPlan(p) {
   let best = null; if (window.__dbg) pl.dbg = [];
   for (const Lc of Lcs) for (const ac of (Math.abs(Lc) > .8 ? acHi : acs)) {
     let qx = p.pos.x, qy = p.pos.y, qz = p.pos.z, qt = 0, hzc = 0, fire = 0; // fire — штраф за огонь и перехватчиков, ограничен сверху: скала всегда хуже обстрела
-    let cost = (Math.abs(Lc) > .8 ? 0 : AP.LCW * Lc * Lc + AP.AW * (dive ? .3 : 1) * (ac - pref) * (ac - pref) + (ATK ? 4 * ((Lc - ATK.L) ** 2 + (ac - ATK.a) ** 2) : 0)) + AP.HY * (Math.abs(Lc - pl.Lc) + AP.HYA * Math.abs(ac - pl.ac)), Cmin = 1e9, wmin = 1e9, kmax = 0, nOut = 0; const pts = PTS; let np = 0;
+    let cost = (Math.abs(Lc) > .8 ? 0 : AP.LCW * Lc * Lc + AP.AW * (FIG && FIG.a != null ? 2.5 : dive ? .3 : 1) * (ac - pref) * (ac - pref) + (ATK ? 4 * ((Lc - ATK.L) ** 2 + (ac - ATK.a) ** 2) : 0) + (FIG && FIG.L != null ? 4 * (Lc - FIG.L) ** 2 : 0)) + AP.HY * (Math.abs(Lc - pl.Lc) + AP.HYA * Math.abs(ac - pl.ac)), Cmin = 1e9, wmin = 1e9, kmax = 0, nOut = 0; const pts = PTS; let np = 0;
     for (let i = 1; i <= N; i++) {
       const s = i / N, bl = SB[i], xi = SX[i], Ei = SE[i], Li = L0 + (Lc - L0) * bl, ai = a0 + (ac - a0) * bl, wi = SW[i], Di = SD[i], zi = SZ[i] + Li * wi, yi = SF[i] + ai * Di, nx = SNX[i], nzz = SNZ[i];
       const ri = Math.min(r, .42 * wi), g0 = gf(xi, zi), gl = gf(xi + nx * ri, zi + nzz * ri), gr = gf(xi - nx * ri, zi - nzz * ri), C = Math.min(yi - g0, yi - gl, yi - gr);
@@ -1138,7 +1158,7 @@ function startCanyon() {
   player = new Plane(T); rival = player;
   const x0 = (window.__x0 || 0) * T.SC, a = altPref(x0), [y0, z0] = safeSpot(x0, a);
   player.pos.set(x0, y0, z0); player.prev.copy(player.pos); player.f.set(1, 0, CW.czd(x0 / T.SC)).normalize(); player.v = T.vmax * .55; player.roll = 0; player.rollV = 0; player.basis();
-  Object.assign(cy, { man: null, manCool: 0, thrT: -9, manN: 0, hp: armorMax(), inv: 0, blink: 0, dmg: 0, shOn: 0, shReady: 0, shN: 0, absorbed: 0, x0, segX: x0, segT: 0, segManual: 0, passed: 0, crashes: 0, nextK: nextArch(x0).k });
+  Object.assign(cy, { fig: null, figCool: 0, figN: 0, man: null, manCool: 0, thrT: -9, manN: 0, hp: armorMax(), inv: 0, blink: 0, dmg: 0, shOn: 0, shReady: 0, shN: 0, absorbed: 0, x0, segX: x0, segT: 0, segManual: 0, passed: 0, crashes: 0, nextK: nextArch(x0).k });
   cy.plan = { Lc: 0, ac: a, L0: 0, a0: a, x0, Lsx: 1000, vt: player.v, t: -1e9 };
   cy.best = (() => { try { return +localStorage.getItem("race-canyon-best-" + S.preset) || 0; } catch { return 0; } })();
   tNow = 0; ctl.steerMan = false; ctl.spdMan = false; ctl.thr = 0.75; camState.f.copy(player.f); camState.pos.copy(player.pos);
@@ -1350,7 +1370,7 @@ function hud(t) {
   $("armor").textContent = cyMode && (+S.tur || +S.boats || +S.ints) ? " · броня " + "■".repeat(Math.max(0, cy.hp ?? armorMax())) + "□".repeat(Math.max(0, armorMax() - (cy.hp ?? armorMax()))) + (tNow < (cy.blink || 0) ? " неуязвим" : "") + (RK.kills ? " · уничтожено " + RK.kills : "") + (tNow < (cy.shOn || 0) ? " · ЩИТ " + Math.ceil(cy.shOn - tNow) + " с" : tNow < (cy.shReady || 0) ? " · щит через " + Math.ceil(cy.shReady - tNow) + " с" : " · щит готов") : "";
   { const r = Math.max(0, (cy.shReady || 0) - tNow); $("bShield").style.opacity = cyMode && r <= 0 ? 1 : .45; }
   { let near = false; if (cyMode) for (const h of flakHazards()) if (h[1] < 1.2 && h[0].distanceTo(pl.pos) < T.vmax * 1.5) { near = true; break; } let ram = false; if (cyMode) for (const e of EN.planes) if (!e.dead && e.pos.x > pl.pos.x && e.pos.x - pl.pos.x < T.vmax * 1.8) { ram = true; break; }
-    const mn = cy.man ? " · БОЧКА" : "", fs = cyMode && tNow - (cy.thrT || -9) < 1 && !ctl.steerMan ? " · ФОРСАЖ" : "";
+    const mn = cy.fig ? " · " + FIGN[cy.fig.k] : "", fs = cyMode && tNow - (cy.thrT || -9) < 1 && !ctl.steerMan ? " · ФОРСАЖ" : "";
     const brk = cyMode && (pl.ab || 0) > .5 ? " · ТОРМОЗ" : "";
     $("warn").textContent = near || ram ? (ram ? "⚠ ПЕРЕХВАТЧИК" : "⚠ ОБСТРЕЛ") + fs + mn + brk : "ТОРМОЗ"; $("warn").style.display = near || ram || brk ? "block" : "none"; }
   const dist = pl.pos.distanceTo(g.p); $("markT").textContent = dist > 1000 ? (dist / 1000).toFixed(1) + " км" : dist.toFixed(0) + " м";
