@@ -207,7 +207,7 @@ void main(){
   float mg = length(vec2(ar, au)); if (mg > AMAX){ ar *= AMAX / mg; au *= AMAX / mg; }
   float vq = max(v, VMAX * .1); f += r0 * (ar * uDt / vq) + u0 * (au * uDt / vq);
   if (abs(f.y) > .96){ float k = sqrt((1. - .96 * .96) / (f.x * f.x + f.z * f.z + 1e-12)); f.x *= k; f.z *= k; f.y = sign(f.y) * .96; }
-  f = normalize(f); v += max(-BRK * uDt, min(ACC * uDt, vt - v)); P += f * (v * uDt);
+  f = normalize(f); float brk = vt < v - .12 * VMAX ? BRK * 3. : BRK; v += max(-brk * uDt, min(ACC * uDt, vt - v)); P += f * (v * uDt);
   /* падение → возврат назад в каньон */
   if (P.y < GND(P.x, P.z) + 2. * CS || archHit(P, 2. * CS) || shelfHit(P, 2. * CS)){
     float x = P.x - 150. * CS - VMAX * .8, ap = altPref(x); P = vec3(x, FL(x) + ap * DD(x), ZC(x) + .32 * fkz(x / SC) * WW(x)); P.y = max(P.y, GND(x, P.z) + 60. * CS);
@@ -376,7 +376,7 @@ function seeds(n) {
 }
 /* самотест: 2 пилота на 6 эталонных участках по 20 с — сверка с теми же полётами в игре (процессор) */
 const REF_SEGS = [["warm", 1, 23000], ["fast", 0, 61000], ["hyper", 2, 97000], ["orbit", 1, 140000], ["ultra", 0, 45000], ["max", 2, 183000]].map(([preset, alt, x0]) => ({ preset, alt, x0 }));
-const REF = { std: [.556, .687, .886, .720, .804, .857], c2: [.784, .883, .962, .869, .849, .875] }; // эталоны игры после развилок и полок (12.10)
+const REF = { std: [.552, .684, .883, .714, .818, .857], c2: [.784, .883, .961, .869, .847, .874] }; // эталоны игры после развилок и полок (12.10)
 let selfOk = false;
 async function selfTest() {
   log("Самотест видеокарты: 2 пилота × 6 эталонных участков…");
@@ -398,7 +398,7 @@ const EXAM_MAX = [["max", 0, 300000], ["max", 1, 330000], ["max", 2, 360000], ["
 const examSegs = () => TGT() === "max" ? EXAM_MAX : EXAM_SEGS;
 const EXAM_SEGS = [["warm", 1, 300000], ["fast", 0, 330000], ["hyper", 2, 360000], ["orbit", 1, 390000], ["ultra", 0, 420000], ["max", 2, 450000]].map(([preset, alt, x0]) => ({ preset, alt, x0 }));
 /* единый экзамен: всегда 60 с, точный шаг 1/60, смелость «немного» — оценки разных запусков сравнимы */
-const EXAM_SIM = 60, EXAM_BOLD = .08, EXAM_OPT = { dt: 1 / 60 }, EV = 7; // EV 4: развилки и полки в рельефе — старые оценки пересдаются // dt задан → без разнесения планирования: оценка не зависит от соседей по пачке; старт безопасный (не перед аркой)
+const EXAM_SIM = 60, EXAM_BOLD = .08, EXAM_OPT = { dt: 1 / 60 }, EV = 8; // EV 4: развилки и полки в рельефе — старые оценки пересдаются // dt задан → без разнесения планирования: оценка не зависит от соседей по пачке; старт безопасный (не перед аркой)
 const loadHof = sfx => { try { return JSON.parse(localStorage.getItem("race-train-hof" + sfx) || "[]"); } catch { return []; } };
 let HOF = loadHof(SFX());
 const keyOf = g => JSON.stringify(round3({ ...AP_STD, ...g }));

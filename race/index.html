@@ -98,7 +98,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 13.10, 01:15</small>
+  <small id="ver">версия 13.10, 01:22</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -245,7 +245,9 @@ class Plane {
     this.f.addScaledVector(this.r0, ar * dt / vv).addScaledVector(this.u0, au * dt / vv);
     if (Math.abs(this.f.y) > 0.96) { const k = Math.sqrt((1 - 0.96 * 0.96) / (this.f.x * this.f.x + this.f.z * this.f.z + 1e-12)); this.f.x *= k; this.f.z *= k; this.f.y = Math.sign(this.f.y) * 0.96; }
     this.f.normalize();
-    this.vt = vt; this.v += Math.max(-T.BRK * dt, Math.min(T.ACC * dt, vt - this.v));
+    /* воздушный тормоз: при резком сбросе скорости (желаемая ниже текущей на 12%+) — торможение втрое сильнее; щиток раскрывается */
+    const ab = T.canyon && vt < this.v - .12 * T.vmax, brk = ab ? T.BRK * 3 : T.BRK; this.ab = (this.ab || 0) + ((ab ? 1 : 0) - (this.ab || 0)) * Math.min(1, dt * 6);
+    this.vt = vt; this.v += Math.max(-brk * dt, Math.min(T.ACC * dt, vt - this.v));
     this.prev.copy(this.pos); this.pos.addScaledVector(this.f, this.v * dt);
     const G0 = Math.max(9.81, T.AMAX * 0.15); let rt = Math.max(-1.4, Math.min(1.4, Math.atan2(ar, G0)));
     /* резкий нырок: пилот переворачивает машину и «тянет» к земле (как в реальном пилотаже), а не просто отдаёт ручку от себя */
@@ -887,6 +889,8 @@ function makePlane(color, accent) {
     const fin = ext([[0, 2.4], [0, 4.6], [2, 4.5], [2, 3.8]], .1, body); fin.geometry.rotateX(Math.PI / 2).rotateZ(Math.PI / 2); fin.rotation.z = -sx * .3; fin.position.set(sx * .5, .3, 0); g.add(fin); // киль: высота вверх, длина вдоль фюзеляжа, развал наружу
     const intake = new THREE.Mesh(new THREE.BoxGeometry(.5, .6, 2.4), dark); intake.position.set(sx * .95, -.1, -.4); g.add(intake);
   }
+  /* воздушный тормоз: щиток на спине за кабиной, петля по передней кромке */
+  const brake = new THREE.Group(), bp = new THREE.Mesh(new THREE.BoxGeometry(1.1, .06, 1.6), trim); bp.position.z = .8; brake.add(bp); brake.position.set(0, .82, -.2); g.add(brake); g.userData.brake = brake;
   const noz = new THREE.Mesh(new THREE.CylinderGeometry(.55, .62, 1, 12, 1, true), dark); noz.rotation.x = Math.PI / 2; noz.position.z = 4.4; g.add(noz);
   const flame = new THREE.Mesh(new THREE.ConeGeometry(.5, 4, 10), new THREE.MeshBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false })); flame.rotation.x = Math.PI / 2; flame.position.z = 6.6; g.add(flame);
   g.userData.flame = flame; return g;
@@ -1243,6 +1247,7 @@ function playerControlCanyon() {
     }
   }
   if (ctl.spdMan || ctl.steerMan) vt = T.vmax * (0.1 + 1.0 * ctl.thr);
+  if (key.b || key["и"] || (ctl.spdMan && ctl.thr < .03)) vt = 0; // воздушный тормоз вручную: B или газ в самый низ
   return [ar, au, vt];
 }
 /* броня: попадание разрыва −1, таран −2; после попадания 0.4 с передышки, после возврата 2.5 с неуязвимости (самолёт мигает) */
@@ -1297,7 +1302,7 @@ let camMode = +S.cam || 0, lastT = 0, hudT = 0;
 const _p = new THREE.Vector3(), _m = new THREE.Matrix4(), _q = new THREE.Quaternion();
 function applyPlane(mesh, p, tr, dt) {
   mesh.position.copy(p.pos); _m.makeBasis(p.r, p.u, _p.copy(p.f).negate()); mesh.quaternion.setFromRotationMatrix(_m);
-  mesh.userData.flame.scale.set(1, 1, 0.5 + 1.2 * (p.v / T.vmax)); mesh.userData.flame.visible = true;
+  mesh.userData.flame.scale.set(1, 1, 0.5 + 1.2 * (p.v / T.vmax)); mesh.userData.flame.visible = true; if (mesh.userData.brake) mesh.userData.brake.rotation.x = -1.05 * (p.ab || 0);
   const h = mesh.scale.x, wing = 4.2 * h;
   [-1, 1].forEach((s, k) => { const l = tr[k], d = l.userData; d.t += dt; if (d.t > 0.035) { d.t = 0; d.hist.unshift(p.pos.clone().addScaledVector(p.r, s * wing).addScaledVector(p.f, 2.4 * h)); if (d.hist.length > d.n) d.hist.pop(); }
     const arr = l.geometry.attributes.position.array; for (let i = 0; i < d.n; i++) { const q = d.hist[Math.min(i, d.hist.length - 1)] || p.pos; arr[3 * i] = q.x; arr[3 * i + 1] = q.y; arr[3 * i + 2] = q.z; } l.geometry.attributes.position.needsUpdate = true; l.visible = d.hist.length > 2; });
@@ -1346,7 +1351,8 @@ function hud(t) {
   { const r = Math.max(0, (cy.shReady || 0) - tNow); $("bShield").style.opacity = cyMode && r <= 0 ? 1 : .45; }
   { let near = false; if (cyMode) for (const h of flakHazards()) if (h[1] < 1.2 && h[0].distanceTo(pl.pos) < T.vmax * 1.5) { near = true; break; } let ram = false; if (cyMode) for (const e of EN.planes) if (!e.dead && e.pos.x > pl.pos.x && e.pos.x - pl.pos.x < T.vmax * 1.8) { ram = true; break; }
     const mn = cy.man ? " · БОЧКА" : "", fs = cyMode && tNow - (cy.thrT || -9) < 1 && !ctl.steerMan ? " · ФОРСАЖ" : "";
-    $("warn").textContent = (ram ? "⚠ ПЕРЕХВАТЧИК" : "⚠ ОБСТРЕЛ") + fs + mn; $("warn").style.display = near || ram ? "block" : "none"; }
+    const brk = cyMode && (pl.ab || 0) > .5 ? " · ТОРМОЗ" : "";
+    $("warn").textContent = near || ram ? (ram ? "⚠ ПЕРЕХВАТЧИК" : "⚠ ОБСТРЕЛ") + fs + mn + brk : "ТОРМОЗ"; $("warn").style.display = near || ram || brk ? "block" : "none"; }
   const dist = pl.pos.distanceTo(g.p); $("markT").textContent = dist > 1000 ? (dist / 1000).toFixed(1) + " км" : dist.toFixed(0) + " м";
   $("vS").textContent = Math.round(pl.v * 3.6).toLocaleString("ru"); $("mach").textContent = "M " + (pl.v / 340).toFixed(1) + " · крен " + Math.abs(Math.round(pl.roll * 57.3)) + "°";
   if (cyMode) {

@@ -206,7 +206,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let mg = length(vec2f(ar, au)); if (mg > AMAX) { ar *= AMAX / mg; au *= AMAX / mg; }
     let vq = max(v, VMAX * .1); f += r0 * (ar * dt / vq) + u0 * (au * dt / vq);
     if (abs(f.y) > .96) { let k = sqrt((1. - .96 * .96) / (f.x * f.x + f.z * f.z + 1e-12)); f.x *= k; f.z *= k; f.y = sign(f.y) * .96; }
-    f = normalize(f); v += max(-BRK * dt, min(ACC * dt, vt - v)); P += f * (v * dt);
+    f = normalize(f); let brk = select(BRK, BRK * 3., vt < v - .12 * VMAX); v += max(-brk * dt, min(ACC * dt, vt - v)); P += f * (v * dt); // воздушный тормоз
     /* падение → возврат назад в каньон */
     if (P.y < GND(P.x, P.z) + 2. * CS || archHit(P, 2. * CS) || shelfHit(P, 2. * CS)) {
       let x = P.x - 150. * CS - VMAX * .8; let ap = altPref(x); P = vec3f(x, FL(x) + ap * DD(x), ZC(x) + .32 * fkz(x / SC) * WW(x)); P.y = max(P.y, GND(x, P.z) + 60. * CS);
