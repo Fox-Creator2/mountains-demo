@@ -98,7 +98,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 13.10, 01:26</small>
+  <small id="ver">версия 13.10, 01:31</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -601,10 +601,16 @@ function rkKill(q, pos) {
 }
 /* фигуры пилотажа по ситуации: горка вверх, пикирование, змейка. Это не слепой манёвр, а цель для планировщика:
    путь строится с обходом скал и известных разрывов, просто «куда» задаёт фигура */
-const FIGN = { up: "ГОРКА ↑", down: "ПИКИРОВАНИЕ ↓", weave: "ЗМЕЙКА" };
-function figureNow(p) {
+const FIGN = { up: "ГОРКА ↑", down: "ПИКИРОВАНИЕ ↓", weave: "ЗМЕЙКА", under: "ПОД АРКУ", over: "ГОРКА НАД АРКОЙ" };
+function figureNow(p, shOn, E) {
   const x = p.pos.x, ah = (p.pos.y - cyFl(x)) / cyD(x), Lh = (p.pos.z - cyZc(x)) / cyW(x); let F = cy.fig;
   if (F && tNow - F.t0 > F.dur) { cy.fig = F = null; cy.figCool = tNow + 1; }
+  /* арка впереди: заранее и решительно — под её середину (там просвет выше) или горкой над ней; держать до пролёта */
+  if (!window.__noArchFig && (!F || (F.k !== "under" && F.k !== "over")) && E < .2) { const na = nextArch(x), dx = na.x - x, v = Math.max(p.v, T.vmax * .3);
+    if (dx > v * .5 && dx < v * 1.6) { const top = (na.yc + na.Th) / na.D, low = ah < top + .03; // «над» — только если уже явно выше арки, иначе под неё
+      cy.fig = F = low ? { k: "under", a: Math.min(.4, na.yc / na.D - .2), L: 0 } : { k: "over", a: Math.min(1.05, top + .17), L: null }; F.t0 = tNow; F.dur = dx / v + .25; cy.afN = (cy.afN || 0) + 1; } }
+  if (F && (F.k === "under" || F.k === "over")) return { a: F.a, L: F.L };
+  if (shOn) return null;
   if (!F && tNow > (cy.figCool || 0)) {
     let pick = null;
     for (const e of EN.planes) { if (e.dead) continue; const dx = e.pos.x - x; if (dx < T.vmax * .4 || dx > T.vmax * 2.2) continue; const ea = (e.pos.y - cyFl(e.pos.x)) / cyD(e.pos.x), eL = (e.pos.z - cyZc(e.pos.x)) / cyW(e.pos.x);
@@ -800,7 +806,7 @@ function cyPlan(p) {
   /* заход в атаку: корабль/катер — вниз к реке и вдоль неё (цель перед носом); зенитка — к её кромке и выше, только под щитом */
   const ATK = +S.autoFire !== 0 && !window.__noAtk ? attackTarget(p, x0, shOn) : null;
   const dive = !window.__noDive && tNow - (cy.thrT || -9) < 1.5 && !shOn; // под огнём — охотно нырять вниз
-  const FIG = !window.__noFig && !shOn ? figureNow(p) : null; if (FIG && FIG.a != null) pref = FIG.a; // фигура пилотажа — задание для планировщика
+  const FIG = !window.__noFig ? figureNow(p, shOn, E) : null; if (FIG && FIG.a != null) pref = FIG.a; // фигура пилотажа — задание для планировщика
   const Lcs = [-1.5, -1.05, -.6, -.35, -.15, 0, .15, .35, .6, 1.05, 1.5], acs = [...new Set([pref * .6, pref * .8, pref, pref * 1.25, pref * 1.6].map(a => Math.max(.1, Math.min(1.9, a))))], acHi = [1.12, 1.5, 1.9];
   const SR = [], SA = [], SHf = [], SX = [], SE = [], SW = [], SD = [], SZ = [], SF = [], SNX = [], SNZ = [], SB = [];
   for (let i = 1; i <= N; i++) { const s = i / N, xi = x0 + Lsx * s, sl = CW.czd(xi / sc), il = 1 / Math.sqrt(1 + sl * sl);
