@@ -86,7 +86,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 12.10, 03:20</small>
+  <small id="ver">версия 12.10, 03:27</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -375,7 +375,7 @@ function updateArches() {
    привязана к миру, а не к камере. Поэтому полигоны не «плывут» и не перестраиваются на лету. */
 const CHK = { N: 40, cell: 20, ahead: 12, behind: 2, rows: 4, map: new Map(), group: null, mat: null, idx: null, built: 0 };
 /* кэш высот: та же сетка, что у кусков рельефа; планировщик берёт высоту отсюда (билинейно) вместо пересчёта формулы */
-const HC = new Map();
+let HC = new Map(); const HCS = new Map();
 let hcI = 1e9, hcJ = 1e9, hcH = null;
 function hTile(i, j) {
   if (i === hcI && j === hcJ) return hcH;
@@ -444,7 +444,7 @@ function popAc(x) { const sc = T.SC, u = x / sc, y = (1350 + 350 * Math.sin(u * 
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 /* параметры «характера» автопилота */
 const AP_STD = { LS: 3.2, BLE: .65, LCW: 1.05, AW: 2.4, HY: .5, HYA: 1.2, M: 50, COLW: 40, ARW: 70, OUT: 1.1, KW: 4, NF: .8, NW: 130, CF: .75, CWD: 60, AU: .95, LD: .8, LDX: .85, VF: .38 };
-const AP_GA = { LS: 4.691, BLE: 0.82, LCW: 2.644, AW: 1.668, HY: 0.611, HYA: 1.909, M: 72.0, COLW: 26.656, ARW: 51.56, OUT: 1.186, KW: 1.576, NF: 0.719, NW: 80, CF: 0.939, CWD: 101.171, AU: 0.976, LD: 0.524, LDX: 0.886, VF: 0.56 }; // чемпион эволюции (поколение 4)
+const AP_GA = { LS: 4.095, BLE: 0.66, LCW: 1.257, AW: 0.5, HY: 0.418, HYA: 0.982, M: 57.933, COLW: 16.256, ARW: 65.04, OUT: 0.887, KW: 5.665, NF: 0.74, NW: 171.908, CF: 0.594, CWD: 53.033, AU: 0.978, LD: 1.012, LDX: 0.922, VF: 0.579 }; // чемпион эволюции: 6 пресетов × разные высоты, 25 поколений
 const AP = Object.assign({}, AP_STD);
 function applyPilot() { Object.assign(AP, S.pilot === "std" ? AP_STD : AP_GA); }
 applyPilot();
@@ -747,7 +747,7 @@ function startCanyon() {
   T.AMAX = Math.max(T.AMAX, T.vmax / 2); T.ACC = T.vmax / 3; T.BRK = T.vmax / 2;
   terrain.visible = false; terrain.material.uniforms.uSC.value = T.SC; terrain.material.uniforms.uR.value = T.R;
   const fd = 2.1 / (9500 * T.SC); terrain.material.uniforms.uFD.value = fd; SCN.fog.density = fd;
-  chunkClear(); HC.clear(); hcI = 1e9; CHK.group.visible = true; applyClouds();
+  chunkClear(); HC = HCS.get(T.SC) || new Map(); HCS.set(T.SC, HC); hcI = 1e9; CHK.group.visible = true; applyClouds();
   camera.near = 2 * T.cs; camera.far = T.R * 1.7; camera.updateProjectionMatrix(); sky.scale.setScalar(T.R * 1.5);
   planeMesh.p.scale.setScalar(T.cs); planeMesh.r.visible = false; life.A.visible = life.B.visible = life.C.visible = false;
   if (gates) gates.visible = false;
@@ -760,7 +760,7 @@ function startCanyon() {
   cy.best = (() => { try { return +localStorage.getItem("race-canyon-best-" + S.preset) || 0; } catch { return 0; } })();
   tNow = 0; ctl.steerMan = false; ctl.spdMan = false; ctl.thr = 0.75; camState.f.copy(player.f); camState.pos.copy(player.pos);
   buildStreaks(); trail.p.forEach(t => t.userData.hist = []); trail.r.forEach(t => t.visible = false);
-  updateChunks(player.pos.x, true); updateArches(); $("loading").style.display = "none";
+  if (!window.__noChunks) updateChunks(player.pos.x, true); updateArches(); $("loading").style.display = "none";
   toast("Каньон · " + preset.name.split(" · ")[1] + " · арки каждые ~" + (archSP() / 1000).toFixed(0) + " км");
 }
 
