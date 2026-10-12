@@ -86,7 +86,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 12.10, 03:12</small>
+  <small id="ver">версия 12.10, 03:20</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -374,9 +374,23 @@ function updateArches() {
    Каждый кусок 40×40 клеток строится один раз по формуле и больше не меняется; детализация везде одинакова и
    привязана к миру, а не к камере. Поэтому полигоны не «плывут» и не перестраиваются на лету. */
 const CHK = { N: 40, cell: 20, ahead: 12, behind: 2, rows: 4, map: new Map(), group: null, mat: null, idx: null, built: 0 };
-function chunkMesh(i, j) {
-  const sc = T.SC, N = CHK.N, s = CHK.cell * sc, L = N * s, ox = i * L, oz = j * L, M = N + 3, hh = new Float32Array(M * M);
+/* кэш высот: та же сетка, что у кусков рельефа; планировщик берёт высоту отсюда (билинейно) вместо пересчёта формулы */
+const HC = new Map();
+let hcI = 1e9, hcJ = 1e9, hcH = null;
+function hTile(i, j) {
+  if (i === hcI && j === hcJ) return hcH;
+  const key = (i + 1048576) * 2097152 + (j + 1048576); let hh = HC.get(key); if (hh) { hcI = i; hcJ = j; hcH = hh; return hh; }
+  const sc = T.SC, N = CHK.N, s = CHK.cell * sc, L = N * s, ox = i * L, oz = j * L, M = N + 3; hh = new Float32Array(M * M);
   for (let b = 0; b < M; b++) for (let a = 0; a < M; a++) hh[b * M + a] = CW.chgt(ox + (a - 1) * s, oz + (b - 1) * s, sc);
+  HC.set(key, hh); if (HC.size > 900) HC.delete(HC.keys().next().value); hcI = i; hcJ = j; hcH = hh; return hh;
+}
+function gf(x, z) {
+  const s = CHK.cell * T.SC, L = CHK.N * s, i = Math.floor(x / L), j = Math.floor(z / L), hh = hTile(i, j);
+  const fx = (x - i * L) / s + 1, fz = (z - j * L) / s + 1, ix = Math.floor(fx), iz = Math.floor(fz), tx = fx - ix, tz = fz - iz, M = CHK.N + 3, c = iz * M + ix;
+  const h = (hh[c] * (1 - tx) + hh[c + 1] * tx) * (1 - tz) + (hh[c + M] * (1 - tx) + hh[c + M + 1] * tx) * tz; return h > 0 ? h : 0;
+}
+function chunkMesh(i, j) {
+  const sc = T.SC, N = CHK.N, s = CHK.cell * sc, L = N * s, ox = i * L, oz = j * L, M = N + 3, hh = hTile(i, j);
   const n1 = N + 1, pos = new Float32Array(n1 * n1 * 3), nor = new Float32Array(n1 * n1 * 3), raw = new Float32Array(n1 * n1); let ymax = 1;
   for (let b = 0; b <= N; b++) for (let a = 0; a <= N; a++) {
     const c = (b + 1) * M + a + 1, h = hh[c], k = b * n1 + a; let nx = hh[c - 1] - hh[c + 1], ny = 2 * s, nzz = hh[c - M] - hh[c + M];
@@ -434,25 +448,30 @@ const AP_GA = { LS: 4.691, BLE: 0.82, LCW: 2.644, AW: 1.668, HY: 0.611, HYA: 1.9
 const AP = Object.assign({}, AP_STD);
 function applyPilot() { Object.assign(AP, S.pilot === "std" ? AP_STD : AP_GA); }
 applyPilot();
+const PTS = new Float64Array(64);
 function cyPlan(p) {
   const sc = T.SC, cs = T.cs, v = Math.max(p.v, T.vmax * .2), Ls = v * AP.LS, Lsx = Ls * .85, N = 14, x0 = p.pos.x, fl = cyFl(x0), pl = cy.plan;
   const w0 = cyW(x0), D0 = cyD(x0), L0 = Math.max(-1.4, Math.min(1.4, (p.pos.z - cyZc(x0)) / w0)), a0 = (p.pos.y - fl) / D0, r = 80 * cs, m = AP.M * cs, OUT = AP.OUT;
   const xm = x0 + Lsx * .6, pref0 = altPref(xm), E = popE(xm), pref = pref0 + (popAc(xm) - pref0) * E;
   const Lcs = [-1.5, -1.05, -.6, -.35, -.15, 0, .15, .35, .6, 1.05, 1.5], acs = [...new Set([pref * .6, pref * .8, pref, pref * 1.25, pref * 1.6].map(a => Math.max(.1, Math.min(1.9, a))))], acHi = [1.12, 1.5, 1.9];
+  const SR = [], SA = [], SX = [], SE = [], SW = [], SD = [], SZ = [], SF = [], SNX = [], SNZ = [], SB = [];
+  for (let i = 1; i <= N; i++) { const s = i / N, xi = x0 + Lsx * s, sl = CW.czd(xi / sc), il = 1 / Math.sqrt(1 + sl * sl);
+    SX[i] = xi; SE[i] = popE(xi); SW[i] = cyW(xi); SD[i] = cyD(xi); SZ[i] = cyZc(xi); SF[i] = cyFl(xi); SNX[i] = -sl * il; SNZ[i] = il; SB[i] = sstep(0, AP.BLE, s);
+    const rx = SW[i] * 1.3; SR[i] = Math.min(gf(xi + SNX[i] * rx, SZ[i] + SNZ[i] * rx), gf(xi - SNX[i] * rx, SZ[i] - SNZ[i] * rx)); // кромка у оси
+    const na = nextArch(xi - 40 * cs - 300 * sc); SA[i] = Math.abs(na.x - xi) < na.Lt + 80 * cs; }
   let best = null; if (window.__dbg) pl.dbg = [];
   for (const Lc of Lcs) for (const ac of (Math.abs(Lc) > .8 ? acHi : acs)) {
-    let cost = (Math.abs(Lc) > .8 ? 0 : AP.LCW * Lc * Lc + AP.AW * (ac - pref) * (ac - pref)) + AP.HY * (Math.abs(Lc - pl.Lc) + AP.HYA * Math.abs(ac - pl.ac)), Cmin = 1e9, wmin = 1e9, kmax = 0, nOut = 0; const pts = [];
+    let cost = (Math.abs(Lc) > .8 ? 0 : AP.LCW * Lc * Lc + AP.AW * (ac - pref) * (ac - pref)) + AP.HY * (Math.abs(Lc - pl.Lc) + AP.HYA * Math.abs(ac - pl.ac)), Cmin = 1e9, wmin = 1e9, kmax = 0, nOut = 0; const pts = PTS; let np = 0;
     for (let i = 1; i <= N; i++) {
-      const s = i / N, bl = sstep(0, AP.BLE, s), xi = x0 + Lsx * s, Ei = popE(xi), Li = L0 + (Lc - L0) * bl, ai = a0 + (ac - a0) * bl, wi = cyW(xi), Di = cyD(xi), zi = cyZc(xi) + Li * wi, yi = cyFl(xi) + ai * Di;
-      const sl = CW.czd(xi / sc), il = 1 / Math.sqrt(1 + sl * sl), nx = -sl * il, nzz = il;
-      const ri = Math.min(r, .42 * wi), g0 = gnd(xi, zi), gl = gnd(xi + nx * ri, zi + nzz * ri), gr = gnd(xi - nx * ri, zi - nzz * ri), C = Math.min(yi - g0, yi - gl, yi - gr);
+      const s = i / N, bl = SB[i], xi = SX[i], Ei = SE[i], Li = L0 + (Lc - L0) * bl, ai = a0 + (ac - a0) * bl, wi = SW[i], Di = SD[i], zi = SZ[i] + Li * wi, yi = SF[i] + ai * Di, nx = SNX[i], nzz = SNZ[i];
+      const ri = Math.min(r, .42 * wi), g0 = gf(xi, zi), gl = gf(xi + nx * ri, zi + nzz * ri), gr = gf(xi - nx * ri, zi - nzz * ri), C = Math.min(yi - g0, yi - gl, yi - gr);
       Cmin = Math.min(Cmin, C); wmin = Math.min(wmin, wi);
       if (C < m) cost += Math.pow((m - C) / m, 2) * AP.COLW * (1.25 - s * .7);
-      if (archHit(xi, yi, zi, 35 * cs)) cost += AP.ARW;
-      if (false) { const rx = wi * 1.3, rim = Math.min(gnd(xi + nx * rx, zi + nzz * rx), gnd(xi - nx * rx, zi - nzz * rx)), lim = rim - 90 * cs; if (yi > lim) cost += Math.pow((yi - lim) / (90 * cs), 2) * 30; }
-      const r2 = Math.min(r * 2.4, .9 * wi), gl2 = gnd(xi + nx * r2, zi + nzz * r2), gr2 = gnd(xi - nx * r2, zi - nzz * r2); if (Math.max(gl2, gr2) > yi) cost += .5;
-      { const rx = wi * 1.3, rim = Math.min(gnd(xi + nx * rx, zi + nzz * rx), gnd(xi - nx * rx, zi - nzz * rx)); if (Math.abs(Li) > 1.02 || yi > rim - 30 * cs) { const q = OUT * (1 - Ei); cost += q; nOut++; } }
-      pts.push(xi, yi, zi);
+      if (SA[i] && archHit(xi, yi, zi, 35 * cs)) cost += AP.ARW;
+      if (false) { const rx = wi * 1.3, rim = Math.min(gf(xi + nx * rx, zi + nzz * rx), gf(xi - nx * rx, zi - nzz * rx)), lim = rim - 90 * cs; if (yi > lim) cost += Math.pow((yi - lim) / (90 * cs), 2) * 30; }
+      const r2 = Math.min(r * 2.4, .9 * wi), gl2 = gf(xi + nx * r2, zi + nzz * r2), gr2 = gf(xi - nx * r2, zi - nzz * r2); if (Math.max(gl2, gr2) > yi) cost += .5;
+      { if (Math.abs(Li) > 1.02 || yi > SR[i] - 30 * cs) { const q = OUT * (1 - Ei); cost += q; nOut++; } }
+      pts[np++] = xi; pts[np++] = yi; pts[np++] = zi;
     }
     for (let i = 4; i <= 11; i++) { const j = i * 3; const ax = pts[j - 3] - pts[j - 6], ay = pts[j - 2] - pts[j - 5], az = pts[j - 1] - pts[j - 4], bx = pts[j] - pts[j - 3], by = pts[j + 1] - pts[j - 2], bz = pts[j + 2] - pts[j - 1], la = Math.hypot(ax, ay, az), lb = Math.hypot(bx, by, bz), ang = Math.hypot(ax / la - bx / lb, ay / la - by / lb, az / la - bz / lb); kmax = Math.max(kmax, ang / ((la + lb) / 2)); }
     cost += AP.KW * Math.min(2.5, kmax * 500 * sc); // гоночная линия: срезать дугу
@@ -728,7 +747,7 @@ function startCanyon() {
   T.AMAX = Math.max(T.AMAX, T.vmax / 2); T.ACC = T.vmax / 3; T.BRK = T.vmax / 2;
   terrain.visible = false; terrain.material.uniforms.uSC.value = T.SC; terrain.material.uniforms.uR.value = T.R;
   const fd = 2.1 / (9500 * T.SC); terrain.material.uniforms.uFD.value = fd; SCN.fog.density = fd;
-  chunkClear(); CHK.group.visible = true; applyClouds();
+  chunkClear(); HC.clear(); hcI = 1e9; CHK.group.visible = true; applyClouds();
   camera.near = 2 * T.cs; camera.far = T.R * 1.7; camera.updateProjectionMatrix(); sky.scale.setScalar(T.R * 1.5);
   planeMesh.p.scale.setScalar(T.cs); planeMesh.r.visible = false; life.A.visible = life.B.visible = life.C.visible = false;
   if (gates) gates.visible = false;
@@ -984,7 +1003,7 @@ initScene(); startGame(); renderer.setAnimationLoop(frame);
 
 /* отладка и тесты */
 window.__race = {
-  get life() { return life; }, get terrain() { return terrain; }, frame: t => frame(t), bio: (x, z) => { const h = hgtRaw(x, z, 1); return [h, bioRaw[0](x, z, 1, h), bioRaw[1](x, z, 1)]; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, ctl, S, ground: (x, z) => gnd(x, z), cy, CW, archHit, get cyMode() { return cyMode; }, popE, CHK, altPref, AP,
+  get life() { return life; }, get terrain() { return terrain; }, frame: t => frame(t), bio: (x, z) => { const h = hgtRaw(x, z, 1); return [h, bioRaw[0](x, z, 1, h), bioRaw[1](x, z, 1)]; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, ctl, S, ground: (x, z) => gnd(x, z), cy, CW, archHit, get cyMode() { return cyMode; }, popE, CHK, altPref, AP, applyPilot, HC,
   /* симуляция без рендера: автопилот, статистика */
   sim(seconds, dt = 1 / 60) {
     const st = { t: 0, maxErr: 0, sumErr: 0, n: 0, minAgl: 1e18, crashes0: crashes, misses0: misses, passed0: gatesPassed, laps0: lapCount, maxV: 0, minV: 1e18, rollMax: 0 };
