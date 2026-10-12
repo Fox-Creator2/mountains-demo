@@ -73,7 +73,7 @@
   <label>Режим <select id="sMode"><option value="canyon">Каньон: лавировать среди скал и арок</option><option value="race">Гонка по воротам</option></select></label>
   <label>Высота полёта <select id="sAlt"><option value="0">низко</option><option value="1">средне</option><option value="2">высоко</option><option value="3">над каньоном / очень высоко</option></select></label>
   <label>Выныривания над каньоном <select id="sPop"><option value="0">нет</option><option value="1">иногда (где каньон мелкий)</option><option value="2">часто</option></select></label>
-  <label>Пилот <select id="sPilot"><option value="ga">эволюционный (быстрее, может ошибаться)</option><option value="std">стандартный (надёжный)</option></select></label>
+  <label>Пилот <select id="sPilot"></select></label>
   <label>Облака <select id="sCloud"><option value="0">нет</option><option value="1">немного</option><option value="2">много</option></select></label>
   <label>Трасса и скорость <select id="sPreset"></select></label>
   <div class="row"><button id="bNew">🎲 Новая трасса</button><button id="bRestart">⟲ Заново</button><button id="bClose">Закрыть</button></div>
@@ -105,7 +105,7 @@ const PRESETS = [
   { id:"ultra", name:"Космос · 47000 км/ч",        vmax:13000 },
   { id:"max",   name:"Предел · 94000 км/ч",        vmax:26000 },
 ];
-const S = Object.assign({ mode:"canyon", alt:1, style:"easy", preset:"fast", seed:7, skill:92, fx:1, cam:0, rival:true, resume:4, inv:false, assist:true, q:1.5, pop:1, cloud:1, pilot:"ga" }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
+const S = Object.assign({ mode:"canyon", alt:1, style:"easy", preset:"fast", seed:7, skill:92, fx:1, cam:0, rival:true, resume:4, inv:false, assist:true, q:1.5, pop:1, cloud:1, pilot:"c2" }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
 const saveS = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
 
 /* ================= рельеф: одна формула для JS и шейдера ================= */
@@ -444,9 +444,13 @@ function popAc(x) { const sc = T.SC, u = x / sc, y = (1350 + 350 * Math.sin(u * 
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 /* параметры «характера» автопилота */
 const AP_STD = { LS: 3.2, BLE: .65, LCW: 1.05, AW: 2.4, HY: .5, HYA: 1.2, M: 50, COLW: 40, ARW: 70, OUT: 1.1, KW: 4, NF: .8, NW: 130, CF: .75, CWD: 60, AU: .95, LD: .8, LDX: .85, VF: .38 };
-const AP_GA = { LS: 4.095, BLE: 0.66, LCW: 1.257, AW: 0.5, HY: 0.418, HYA: 0.982, M: 57.933, COLW: 16.256, ARW: 65.04, OUT: 0.887, KW: 5.665, NF: 0.74, NW: 171.908, CF: 0.594, CWD: 53.033, AU: 0.978, LD: 1.012, LDX: 0.922, VF: 0.579 }; // чемпион эволюции: 6 пресетов × разные высоты, 25 поколений
+const PILOTS = { // чемпионы эволюции (см. README)
+  c1: { name: "Чемпион 1 — быстрый (5 мин эволюции)", ap: { LS: 4.095, BLE: 0.66, LCW: 1.257, AW: 0.5, HY: 0.418, HYA: 0.982, M: 57.933, COLW: 16.256, ARW: 65.04, OUT: 0.887, KW: 5.665, NF: 0.74, NW: 171.908, CF: 0.594, CWD: 53.033, AU: 0.978, LD: 1.012, LDX: 0.922, VF: 0.579 } },
+  c2: { name: "Чемпион 2 — надёжный (40 поколений на случайных участках)", ap: { ARW: 61.495, AU: 1.0, AW: 1.511, BLE: 0.709, CF: 0.501, COLW: 33.086, CWD: 58.015, HY: 0.379, HYA: 0.849, KW: 7.544, LCW: 0.874, LD: 0.883, LDX: 0.821, LS: 3.685, M: 80, NF: 0.685, NW: 80, OUT: 2.05, VF: 0.574 } },
+  c3: { name: "Чемпион 3 — смелый (под арками, ниже; промежуточный)", ap: { ARW: 61.495, AU: 1.0, AW: 1.511, BLE: 0.709, CF: 0.501, COLW: 33.086, CWD: 45.856, HY: 0.379, HYA: 0.849, KW: 7.544, LCW: 0.874, LD: 0.852, LDX: 0.807, LS: 3.685, M: 80, NF: 0.685, NW: 80, OUT: 2.05, VF: 0.565 } },
+};
 const AP = Object.assign({}, AP_STD);
-function applyPilot() { Object.assign(AP, S.pilot === "std" ? AP_STD : AP_GA); }
+function applyPilot() { Object.assign(AP, (PILOTS[S.pilot] || {}).ap || (S.pilot === "std" ? AP_STD : PILOTS.c2.ap)); }
 applyPilot();
 const PTS = new Float64Array(64);
 function cyPlan(p) {
@@ -976,7 +980,7 @@ addEventListener("keyup", e => { ctl.keys[e.key.length === 1 ? e.key.toLowerCase
 
 /* ================= панель ================= */
 const sP = $("sPreset"); PRESETS.forEach(p => sP.add(new Option(p.name, p.id)));
-function syncPanel() { sP.value = S.preset; $("sMode").value = S.mode === "race" ? "race" : "canyon"; $("sAlt").value = S.alt; $("sStyle").value = S.style === "wild" ? "wild" : "easy"; $("sSkill").value = S.skill; $("sRival").checked = !!S.rival; $("sResume").value = S.resume; $("sAssist").checked = !!S.assist; $("sInv").checked = !!S.inv; $("sFx").value = S.fx; $("sLife").value = S.life === 0 ? 0 : 1; $("sQ").value = S.q; $("sPop").value = S.pop; $("sCloud").value = S.cloud; $("sPilot").value = S.pilot === "std" ? "std" : "ga"; }
+function syncPanel() { sP.value = S.preset; $("sMode").value = S.mode === "race" ? "race" : "canyon"; $("sAlt").value = S.alt; $("sStyle").value = S.style === "wild" ? "wild" : "easy"; $("sSkill").value = S.skill; $("sRival").checked = !!S.rival; $("sResume").value = S.resume; $("sAssist").checked = !!S.assist; $("sInv").checked = !!S.inv; $("sFx").value = S.fx; $("sLife").value = S.life === 0 ? 0 : 1; $("sQ").value = S.q; $("sPop").value = S.pop; $("sCloud").value = S.cloud; $("sPilot").value = PILOTS[S.pilot] || S.pilot === "std" ? S.pilot : "c2"; }
 $("bSet").onclick = () => { syncPanel(); $("panel").style.display = "block"; };
 $("bClose").onclick = $("bX").onclick = () => $("panel").style.display = "none";
 addEventListener("keydown", e => { if (e.key === "Escape") $("panel").style.display = "none"; });
@@ -988,6 +992,7 @@ $("sSkill").onchange = e => { S.skill = +e.target.value; saveS(); computeProfile
 $("sRival").onchange = e => { S.rival = e.target.checked; saveS(); planeMesh.r.visible = S.rival; trail.r.forEach(t => t.visible = false); };
 $("sResume").onchange = e => { S.resume = +e.target.value; saveS(); };
 $("sAssist").onchange = e => { S.assist = e.target.checked; saveS(); };
+{ const sp = $("sPilot"); for (const k in PILOTS) sp.add(new Option(PILOTS[k].name, k)); sp.add(new Option("Стандартный (ручная настройка)", "std")); }
 $("sPilot").onchange = e => { S.pilot = e.target.value; saveS(); applyPilot(); };
 $("sCloud").onchange = e => { S.cloud = +e.target.value; saveS(); applyClouds(); };
 $("sPop").onchange = e => { S.pop = +e.target.value; saveS(); };
