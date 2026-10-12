@@ -90,7 +90,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 12.10, 14:56</small>
+  <small id="ver">версия 12.10, 15:33</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -327,7 +327,7 @@ function turretAt(kt) {
   /* на самой кромке обрыва: от плато к оси, пока высота не начнёт падать — иначе край закрывает обстрел */
   const top = at(1.3); let n = 1.3; while (n > .6 && at(n - .05) > top - .04 * D) n -= .05;
   const d = n * w * side, x = (u - sl * il * d) * sc, z = (zc + il * d) * sc;
-  return { kt, x, y: gnd(x, z), z, next: 0, mesh: null, aim: new THREE.Vector3(x + 1, gnd(x, z) + 1, z) };
+  return { kt, x, y: gnd(x, z), z, next: 0, mesh: null, track: new THREE.Vector3(x - 1000 * sc, gnd(x, z), z), yaw: -Math.PI / 2, pitch: .3, recoil: 0, muzzle: null };
 }
 const _o = new THREE.Vector3(), _V = new THREE.Vector3(), _D = new THREE.Vector3(), _A = new THREE.Vector3();
 const flakR = () => 30 * T.cs + .012 * T.vmax; // радиус поражения разрыва
@@ -336,10 +336,11 @@ function fireShell(t) {
   const L = (p.pos.z - cyZc(x0)) / cyW(x0), ah = (p.pos.y - cyFl(x0)) / cyD(x0), vx = Math.max(p.v * Math.max(.3, p.f.x), T.vmax * .2);
   let tt = p.pos.distanceTo(_o) / vs;
   for (let k = 0; k < 6; k++) { const x = x0 + vx * tt; _A.set(x, cyFl(x) + ah * cyD(x), cyZc(x) + L * cyW(x)); tt = _A.distanceTo(_o) / vs; }
+  t.track.copy(_A); t.last = tNow; t.recoil = 1; t.side = -(t.side || 1); // слежение — за упреждением без разброса; стволы стреляют поочерёдно
   /* разброс: облако разрывов вокруг точки упреждения (заградительный огонь) */
   const sp = .12 * cyW(_A.x), r = Math.cbrt(Math.random()) * sp, th = Math.random() * 6.283, ph = Math.acos(2 * Math.random() - 1);
   _A.x += r * Math.sin(ph) * Math.cos(th) * 2.5; _A.y += r * Math.cos(ph) * .7; _A.z += r * Math.sin(ph) * Math.sin(th);
-  t.aim.copy(_A); TUR.shells.push({ from: _o.clone(), to: _A.clone(), t0: tNow, tb: tNow + tt, mesh: null }); TUR.fired++; t.flash = .06;
+  TUR.shells.push({ from: t.muzzle ? t.muzzle.clone() : _o.clone(), to: _A.clone(), t0: tNow, tb: tNow + tt, mesh: null }); TUR.fired++; t.flash = .06;
 }
 /* шаг зениток; true — самолёт поражён */
 function turretsStep(dt, px, py, pz) {
@@ -366,18 +367,30 @@ function flakHazards() {
 /* отрисовка: установки, трассеры, вспышки и облачка разрывов */
 function turretsDraw(dt) {
   if (!TUR.geo) {
-    TUR.geo = { base: new THREE.CylinderGeometry(30, 38, 14, 10), mount: new THREE.BoxGeometry(34, 18, 30), barrel: new THREE.CylinderGeometry(2.6, 3.4, 70, 6).translate(0, 35, 0).rotateX(Math.PI / 2),
-      light: new THREE.SphereGeometry(5, 8, 6), tracer: new THREE.CylinderGeometry(1, 1, 1, 5).translate(0, -.5, 0).rotateX(Math.PI / 2), ball: new THREE.SphereGeometry(1, 12, 8), puff: new THREE.IcosahedronGeometry(1, 1) };
+    TUR.geo = { base: new THREE.CylinderGeometry(30, 38, 14, 10), mount: new THREE.CylinderGeometry(20, 24, 18, 10), barrel: new THREE.CylinderGeometry(2.4, 3.2, 72, 8).translate(0, 36, 0).rotateX(Math.PI / 2),
+      light: new THREE.SphereGeometry(2.5, 8, 6), tracer: new THREE.CylinderGeometry(1, 1, 1, 5).translate(0, -.5, 0).rotateX(Math.PI / 2), ball: new THREE.SphereGeometry(1, 12, 8), puff: new THREE.IcosahedronGeometry(1, 1) };
     TUR.mats = { metal: new THREE.MeshLambertMaterial({ color: 0x4a5040 }), dark: new THREE.MeshLambertMaterial({ color: 0x23261f }), red: new THREE.MeshBasicMaterial({ color: 0xff3020 }),
       tracer: new THREE.MeshBasicMaterial({ color: 0xffd060, transparent: true, opacity: .85, blending: THREE.AdditiveBlending, depthWrite: false }),
       flash: new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
       smoke: new THREE.MeshLambertMaterial({ color: 0x4a4542, transparent: true, depthWrite: false, flatShading: true }) }; }
   const G = TUR.geo, M = TUR.mats, cs = T.cs, p = player;
   for (const t of TUR.list.values()) { if (!t) continue;
-    if (!t.mesh) { const g = new THREE.Group(), base = new THREE.Mesh(G.base, M.dark), mount = new THREE.Group(), box = new THREE.Mesh(G.mount, M.metal), b1 = new THREE.Mesh(G.barrel, M.dark), b2 = new THREE.Mesh(G.barrel, M.dark), light = new THREE.Mesh(G.light, M.red);
-      base.position.y = 7; mount.position.y = 26; b1.position.x = -8; b2.position.x = 8; mount.add(box, b1, b2); light.position.y = 40; g.add(base, mount, light); g.userData = { mount, light }; SCN.add(g); t.mesh = g; }
-    const g = t.mesh; g.visible = true; g.position.set(t.x, t.y, t.z); g.scale.setScalar(cs * 3);
-    g.updateMatrixWorld(); g.userData.mount.lookAt(t.aim); g.userData.light.visible = (t.flash = Math.max(0, (t.flash || 0) - dt)) > 0 || Math.sin(tNow * 9 + t.kt) > 0; }
+    /* модель: неподвижное основание → башня (поворот по горизонтали) → люлька со спаренными стволами (угол возвышения) */
+    if (!t.mesh) { const g = new THREE.Group(), base = new THREE.Mesh(G.base, M.dark), yawG = new THREE.Group(), cab = new THREE.Mesh(G.mount, M.metal), pitchG = new THREE.Group(), light = new THREE.Mesh(G.light, M.red);
+      const b1 = new THREE.Mesh(G.barrel, M.dark), b2 = new THREE.Mesh(G.barrel, M.dark), f1 = new THREE.Mesh(G.ball, M.flash), f2 = new THREE.Mesh(G.ball, M.flash);
+      base.position.y = 7; yawG.position.y = 14; cab.position.y = 9; pitchG.position.set(0, 14, 4); b1.position.x = -7; b2.position.x = 7;
+      f1.scale.setScalar(9); f2.scale.setScalar(9); f1.position.set(-7, 0, 72); f2.position.set(7, 0, 72); pitchG.add(b1, b2, f1, f2); yawG.add(cab, pitchG); light.position.set(0, 23, -12); yawG.add(light); g.add(base, yawG);
+      g.userData = { yawG, pitchG, b1, b2, f1, f2, light }; SCN.add(g); t.mesh = g; }
+    const g = t.mesh, U = g.userData, sk = cs * 3; g.visible = true; g.position.set(t.x, t.y, t.z); g.scale.setScalar(sk);
+    /* куда целиться: если по самолёту уже ведётся огонь — в точку упреждения, иначе просто за самолётом */
+    const tg = tNow - (t.last || -9) < 1.5 ? t.track : p.pos, dx = tg.x - t.x, dy = tg.y - (t.y + 28 * sk), dz = tg.z - t.z;
+    const wy = Math.atan2(dx, dz), wp = Math.max(-.17, Math.min(1.48, Math.atan2(dy, Math.hypot(dx, dz))));
+    let dyaw = wy - t.yaw; dyaw -= Math.round(dyaw / 6.2832) * 6.2832; t.yaw += Math.max(-3.5 * dt, Math.min(3.5 * dt, dyaw)); t.pitch += Math.max(-2 * dt, Math.min(2 * dt, wp - t.pitch));
+    U.yawG.rotation.y = t.yaw; U.pitchG.rotation.x = -t.pitch;
+    t.recoil = Math.max(0, (t.recoil || 0) - dt * 9); const r1 = t.side > 0 ? t.recoil : 0, r2 = t.side < 0 ? t.recoil : 0;
+    U.b1.position.z = -10 * r1; U.b2.position.z = -10 * r2; U.f1.visible = r1 > .55; U.f2.visible = r2 > .55;
+    U.light.visible = Math.sin(tNow * 6 + t.kt) > 0;
+    g.updateMatrixWorld(); t.muzzle = (t.muzzle || new THREE.Vector3()).set(0, 0, 72).applyMatrix4(U.pitchG.matrixWorld); }
   /* трассер: короткая светящаяся «пуля» на пути к точке разрыва */
   TUR.shells = TUR.shells.filter(sh => { if (!sh.done) return true; if (sh.mesh) SCN.remove(sh.mesh); return false; });
   for (const sh of TUR.shells) { if (!sh.mesh) { sh.mesh = new THREE.Mesh(G.tracer, M.tracer); sh.mesh.frustumCulled = false; SCN.add(sh.mesh); }
@@ -1124,7 +1137,7 @@ initScene(); startGame(); renderer.setAnimationLoop(frame);
 
 /* отладка и тесты */
 window.__race = {
-  get life() { return life; }, get terrain() { return terrain; }, frame: t => frame(t), bio: (x, z) => { const h = hgtRaw(x, z, 1); return [h, bioRaw[0](x, z, 1, h), bioRaw[1](x, z, 1)]; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, ctl, S, ground: (x, z) => gnd(x, z), cy, CW, archHit, shelfHit, shelves, TUR, clearTurrets, get cyMode() { return cyMode; }, popE, CHK, altPref, AP, applyPilot, HC,
+  get life() { return life; }, get terrain() { return terrain; }, frame: t => frame(t), bio: (x, z) => { const h = hgtRaw(x, z, 1); return [h, bioRaw[0](x, z, 1, h), bioRaw[1](x, z, 1)]; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, get scene() { return SCN; }, get camera() { return camera; }, ctl, S, ground: (x, z) => gnd(x, z), cy, CW, archHit, shelfHit, shelves, TUR, clearTurrets, get cyMode() { return cyMode; }, popE, CHK, altPref, AP, applyPilot, HC,
   /* симуляция без рендера: автопилот, статистика */
   sim(seconds, dt = 1 / 60) {
     const st = { t: 0, maxErr: 0, sumErr: 0, n: 0, minAgl: 1e18, crashes0: crashes, misses0: misses, passed0: gatesPassed, laps0: lapCount, maxV: 0, minV: 1e18, rollMax: 0 };
