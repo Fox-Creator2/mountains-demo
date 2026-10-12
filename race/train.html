@@ -42,6 +42,7 @@ a { color:var(--blue); }
       <label>Пилотов <select id="pop"><option>64</option><option selected>256</option><option>1024</option><option value="4096">4096 (очень тяжело)</option></select></label>
       <label>Полёт, с <select id="sim"><option>30</option><option selected>60</option><option>120</option></select></label>
       <label>Смелость <select id="bold"><option value="0">не важна</option><option value="0.08" selected>немного</option><option value="0.25">важна</option></select></label>
+      <label>Шаг физики <select id="hz"><option value="60">точный (как в игре)</option><option value="30" selected>быстрый (в 2 раза быстрее)</option><option value="20">очень быстрый (в 3 раза)</option></select></label>
       <label>Нагрузка <select id="duty"><option value="0.35" selected>щадящая (меньше греется)</option><option value="0.65">средняя</option><option value="1">максимум</option></select></label>
       <button class="main" id="go">▶ Старт</button>
       <button id="stop" disabled>■ Стоп</button>
@@ -255,8 +256,8 @@ async function evaluate(pop, segs, simSec, onProgress, opt = {}) {
   }
   const T0 = new Float32Array(n4), T1 = new Float32Array(n4);
   for (let q = 0; q < n4; q += 4) T1[q] = P[5][q + 3];
-  const steps = Math.round(simSec * 60);
-  const out = backend === "gpu" ? await runGPU({ N, n4, P, S0, S1, S2, S3, T0, T1 }, steps, onProgress) : await runGL({ W, H, n4, P, S0, S1, S2, S3, T0, T1 }, steps, onProgress, opt);
+  const DT = opt.exact ? 1 / 60 : 1 / (+$("hz").value || 60), steps = Math.round(simSec / DT);
+  const out = backend === "gpu" ? await runGPU({ N, n4, P, S0, S1, S2, S3, T0, T1 }, steps, onProgress, DT) : await runGL({ W, H, n4, P, S0, S1, S2, S3, T0, T1 }, steps, onProgress, opt, DT);
   if (!out) return null;
   const [out0, out1] = out;
   let bad = 0; for (let k = 0; k < N; k++) { const st_ = out0[k * 4 + 2], vv_ = out0[k * 4 + 1]; if (!(st_ > 0) || !isFinite(vv_)) bad++; }
@@ -271,7 +272,7 @@ async function evaluate(pop, segs, simSec, onProgress, opt = {}) {
 const pace = async (ms) => { const duty = +$("duty").value; await new Promise(r => setTimeout(r, duty >= 1 ? 0 : ms * (1 - duty) / duty)); }; // пауза = телефон остывает, кнопки отвечают
 
 /* WebGPU: все самолёты в storage-буфере, за запуск считается пачка шагов */
-async function runGPU(d, steps, onProgress) {
+async function runGPU(d, steps, onProgress, DT) {
   const { N, n4 } = d, params = new Float32Array(N * 24), state = new Float32Array(N * 24);
   for (let k = 0; k < N; k++) { const q = k * 4;
     for (let t = 0; t < 6; t++) for (let c = 0; c < 4; c++) { params[k * 24 + t * 4 + c] = d.P[t][q + c]; }
@@ -281,7 +282,7 @@ async function runGPU(d, steps, onProgress) {
   try {
     while (done < steps && !stopFlag) {
       const k = Math.min(batch, steps - done), t0 = performance.now();
-      await sim.step(k, 1 / 60); done += k; const ms = performance.now() - t0;
+      await sim.step(k, DT); done += k; const ms = performance.now() - t0;
       batch = Math.max(1, Math.min(120, Math.round(batch * (25 / Math.max(ms, 1))))); // ~25 мс на запуск: без сброса драйвером и с живыми кнопками
       onProgress && onProgress(done / steps);
       await pace(ms);
@@ -294,7 +295,7 @@ async function runGPU(d, steps, onProgress) {
 }
 
 /* WebGL2: текстуры + два прохода (шаг и статистика) */
-async function runGL(d, steps, onProgress, opt) {
+async function runGL(d, steps, onProgress, opt, DT) {
   const { W, H, n4, P, S0, S1, S2, S3, T0, T1 } = d;
   const pt = P.map(x => tex(W, H, x));
   const st = [[S0, S1, S2, S3].map(x => tex(W, H, x)), [0, 0, 0, 0].map(() => tex(W, H, null))];
@@ -312,11 +313,11 @@ async function runGL(d, steps, onProgress, opt) {
       const nx = 1 - cur;
       gl.useProgram(PS); gl.bindFramebuffer(gl.FRAMEBUFFER, fS[nx]); gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2, gl.COLOR_ATTACHMENT3]);
       ["uS0", "uS1", "uS2", "uS3"].forEach((n, i) => bind(PS, n, i, st[cur][i])); ["uP0", "uP1", "uP2", "uP3", "uP4", "uP5"].forEach((n, i) => bind(PS, n, 4 + i, pt[i]));
-      gl.uniform1f(gl.getUniformLocation(PS, "uDt"), 1 / 60); drawChunks(true);
+      gl.uniform1f(gl.getUniformLocation(PS, "uDt"), DT); drawChunks(true);
       gl.useProgram(PT); gl.bindFramebuffer(gl.FRAMEBUFFER, fT[nx]); gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
       bind(PT, "uS0", 0, st[cur][0]); bind(PT, "uN0", 1, st[nx][0]); bind(PT, "uT0", 2, stt[cur][0]); bind(PT, "uT1", 3, stt[cur][1]);
       ["uP0", "uP1", "uP2", "uP3", "uP4", "uP5"].forEach((n, i) => bind(PT, n, 4 + i, pt[i]));
-      gl.uniform1f(gl.getUniformLocation(PT, "uDt"), 1 / 60); drawChunks(false);
+      gl.uniform1f(gl.getUniformLocation(PT, "uDt"), DT); drawChunks(false);
       cur = nx;
     }
     gl.finish(); if (gl.isContextLost()) throw new Error("видеокарта сброшена системой (перегрузка) — уменьшите число пилотов или время полёта"); const ms = performance.now() - t0;
