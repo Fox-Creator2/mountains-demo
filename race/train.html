@@ -386,6 +386,13 @@ const EXAM_SIM = 60, EXAM_BOLD = .08, EXAM_OPT = { dt: 1 / 60 }, EV = 3; // dt �
 let HOF = []; try { HOF = JSON.parse(localStorage.getItem("race-train-hof") || "[]"); } catch {}
 const keyOf = g => JSON.stringify(round3({ ...AP_STD, ...g }));
 const examCache = new Map(); let stdExam = null;
+/* файл champions.json в личном файловом хранилище сайта (OPFS): тренер пишет, игра читает при запуске */
+async function writeOpfs(list) {
+  try { const root = await navigator.storage.getDirectory(), fh = await root.getFileHandle("champions.json", { create: true }), w = await fh.createWritable();
+    await w.write(JSON.stringify({ format: "race-champions", version: 1, saved: new Date().toISOString(), pilots: list })); await w.close(); } catch {}
+}
+async function readOpfs() { try { const root = await navigator.storage.getDirectory(), fh = await root.getFileHandle("champions.json"); return JSON.parse(await (await fh.getFile()).text()); } catch { return null; } }
+try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {} // попросить браузер не стирать данные сайта
 /* личность пилота по стилю полёта: позывной + характер + короткая биография */
 const CALLS = ["Гром", "Сокол", "Комета", "Вихрь", "Фантом", "Рысь", "Кондор", "Гюрза", "Искра", "Буран", "Скиф", "Беркут", "Мистраль", "Сапсан", "Тайфун", "Ворон", "Метеор", "Пума", "Сирокко", "Кречет"];
 function persona(h, taken) {
@@ -407,6 +414,7 @@ function saveHof() {
   HOF = [...HOF.filter(h => h.ev === EV).sort((a, b) => b.exam.f - a.exam.f).slice(0, 5), ...pend];
   const taken = new Set(); for (const h of HOF) { if (!h.call || taken.has(h.call)) Object.assign(h, persona(h, taken)); taken.add(h.call); } // имя даётся один раз, при входе в топ
   try { localStorage.setItem("race-train-hof", JSON.stringify(HOF)); if (HOF[0]) localStorage.setItem("race-train-best", JSON.stringify(HOF[0])); } catch {}
+  writeOpfs(HOF);
   showChamp();
 }
 /* добавить пилота в зал славы; true — если он стал новым рекордсменом за всё время */
@@ -503,6 +511,7 @@ $("ulf").onchange = async e => { const f = e.target.files[0]; if (!f) return;
       HOF.push({ ...h, ap: round3({ ...AP_STD, ...h.ap }), exam: h.exam || { f: -9, v: 0, c: 0, u: 0, a: 0, o: 0 }, ev: h.exam ? h.ev : 0 }); n++; }
     saveHof(); log(`Загружено из файла: ${n} новых пилотов${HOF.some(h => h.ev !== EV) ? " (часть пересдаст экзамен при старте)" : ""}`);
   } catch (err) { log("Не удалось прочитать файл: " + err.message); } e.target.value = ""; };
+if (!HOF.length) { const j = await readOpfs(); if (j && Array.isArray(j.pilots) && j.pilots.length) { HOF = j.pilots; try { localStorage.setItem("race-train-hof", JSON.stringify(HOF)); } catch {} log("Зал славы восстановлен из файла champions.json"); } }
 if (HOF.length) { showChamp(); log(`Зал славы: ${HOF.length} пилот(ов), рекорд ${HOF[0].exam.f.toFixed(3)}`); }
 else try { const c = JSON.parse(localStorage.getItem("race-train-best") || "null"); if (c && c.ap) log("Найден прошлый чемпион — при старте он сдаст единый экзамен и попадёт в зал славы"); } catch {}
 window.__train = { evaluate, fitness, AP_STD, PILOTS, gl, GPU, backend };

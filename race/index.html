@@ -88,7 +88,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 12.10, 05:45</small>
+  <small id="ver">версия 12.10, 05:50</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -958,6 +958,14 @@ $("fPilot").onchange = async e => { const f = e.target.files[0]; e.target.value 
     toast(n ? `Загружено пилотов: ${n}. Выбран ${list[first].name}` : `Эти пилоты уже есть. Выбран ${list[first].name}`, 3500);
   } catch (err) { toast("Не удалось прочитать файл: " + err.message, 4000); } };
 /* champions.json на сайте: положить файл в репозиторий — и пилоты появятся у всех */
+/* champions.json из личного хранилища сайта (его пишет тренер): если зал славы в localStorage стёрт — берём из файла */
+try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
+(async () => { try { if (localStorage.getItem("race-train-hof")) return;
+  const root = await navigator.storage.getDirectory(), j = JSON.parse(await (await (await root.getFileHandle("champions.json")).getFile()).text());
+  const list = parsePilots(j); if (!list.length) return;
+  list.forEach((h, i) => { PILOTS["hof" + i] = { name: `#${i + 1} ${h.name}` + (h.exam ? ` · экзамен ${h.exam.f.toFixed(3)}, падений ${h.exam.c}` : ""), ap: h.ap }; });
+  const key = JSON.stringify(list[0].ap); if (localStorage.getItem("race-train-seen") !== key) { localStorage.setItem("race-train-seen", key); S.pilot = "hof0"; saveS(); }
+  fillPilots(); if (S.pilot.startsWith("hof")) applyPilot(); } catch {} })();
 fetch("champions.json", { cache: "no-cache" }).then(r => r.ok ? r.json() : null).then(j => { if (!j) return;
   parsePilots(j).forEach((h, i) => { PILOTS["site" + i] = { name: pilotLabel(h, "🌐"), ap: h.ap }; });
   fillPilots(); if (S.pilot.startsWith("site")) applyPilot(); }).catch(() => {});
