@@ -62,6 +62,7 @@
 <div id="chip" class="auto">АВТОПИЛОТ</div>
 <div id="mark"><svg viewBox="0 0 40 40"><path id="markArrow" d="M20 4 L32 30 L20 24 L8 30 Z" fill="#ffd54a" stroke="#000" stroke-width="1.5"/></svg><span id="markT"></span></div>
 <div id="toast"></div>
+<div id="warn" style="position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 100px);transform:translateX(-50%);color:#ff5040;font:700 16px system-ui;text-shadow:0 0 6px #000;pointer-events:none;display:none">⚠ РАКЕТЫ</div>
 <div id="flash"></div>
 <div id="thr"><div id="thrFill"></div><span>ГАЗ</span></div>
 <div id="stick"><i></i></div>
@@ -76,6 +77,7 @@
   <label>Пилот <select id="sPilot"></select></label>
   <div class="row"><button id="bPilotFile">⬆ Загрузить пилотов из JSON</button><input type="file" id="fPilot" accept=".json,application/json" style="display:none"></div>
   <div class="row"><a href="train.html" style="color:#9cf">🧬 Тренировка пилотов на вашей видеокарте</a></div>
+  <label>Турели с ракетами <select id="sTur"><option value="0">нет</option><option value="1">редко</option><option value="2">часто</option></select></label>
   <label>Облака <select id="sCloud"><option value="0">нет</option><option value="1">немного</option><option value="2">много</option></select></label>
   <label>Трасса и скорость <select id="sPreset"></select></label>
   <div class="row"><button id="bNew">🎲 Новая трасса</button><button id="bRestart">⟲ Заново</button><button id="bClose">Закрыть</button></div>
@@ -88,7 +90,7 @@
   <label>Лес и дома на земле <select id="sLife"><option value="1">есть</option><option value="0">нет (легче)</option></select></label>
   <label>Эффекты скорости <select id="sFx"><option value="0">нет</option><option value="1">слабые</option><option value="2">сильные</option></select></label>
   <label>Чёткость <select id="sQ"><option value="1">обычная</option><option value="1.5">высокая</option><option value="2">максимум</option></select></label>
-  <small id="ver">версия 12.10, 06:10</small>
+  <small id="ver">версия 12.10, 14:15</small>
   <small>Управление: правая часть экрана — стик (тяните куда лететь), левая полоса — газ. Автопилот возвращается сам. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, Пробел — авто.</small>
 </div>
 
@@ -100,7 +102,7 @@ import { PRESETS, H_SRC, CZC, C_SRC, WRAPJS, toJs, CW, paramsFor, AP_STD, PILOTS
 /* ================= настройки ================= */
 const $ = id => document.getElementById(id);
 const KEY = "race-settings-v1";
-const S = Object.assign({ mode:"canyon", alt:1, style:"easy", preset:"fast", seed:7, skill:92, fx:1, cam:0, rival:true, resume:4, inv:false, assist:true, q:1.5, pop:1, cloud:1, pilot:"c2" }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
+const S = Object.assign({ mode:"canyon", alt:1, style:"easy", preset:"fast", seed:7, skill:92, fx:1, cam:0, rival:true, resume:4, inv:false, assist:true, q:1.5, pop:1, cloud:1, pilot:"c2", tur:1 }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
 const saveS = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
 
 /* ================= рельеф: одна формула для JS и шейдера ================= */
@@ -283,6 +285,105 @@ function archHit(x, y, z, m) {
   }
   return false;
 }
+/* полки: каменная плита поперёк каньона (над ней и под ней — проходы) */
+function shelfHit(x, y, z, m) {
+  const sc = T.SC, u = x / sc; if (CW.shd(u) * sc > m) return false;
+  const sl = CW.czd(u), n = Math.abs(z - cyZc(x)) / Math.sqrt(1 + sl * sl); if (n > cyW(x) * 1.25) return false;
+  return Math.abs(y - CW.shy(u) * sc) < CW.sht(u) * sc * .5 + m;
+}
+const shelves = new Map();
+function shelfGeo(kk) {
+  const sc = T.SC, a = 4300 * (kk + .5 + .22 * Math.sin(2.3 * kk + .6)), b = 4300 * (kk + 1.5 + .22 * Math.sin(2.3 * kk + 2.9)), mid = (a + b) / 2, hl = Math.min(950, (b - a) * .5 - 800);
+  const NS = 30, NN = 14, pos = [], idx = [], nse = (p, q) => Math.sin(p * .013 + q * 3.1) * .5 + Math.sin(p * .031 - q * 7.3 + 1) * .3 + Math.sin(p * .07 + q * 13) * .2;
+  for (const side of [1, -1]) { const base = pos.length / 3;
+    for (let i = 0; i <= NS; i++) { const su = -hl + 2 * hl * i / NS, u = mid + su, sl = CW.czd(u), il = 1 / Math.sqrt(1 + sl * sl), w = CW.cw0(u), zc = CW.czc(u), ys = CW.shy(u), th = CW.sht(u), tf = Math.pow(Math.max(0, 1 - Math.pow(Math.abs(su / hl), 4)), .35);
+      for (let j = 0; j <= NN; j++) { const n = -1.3 + 2.6 * j / NN, y = ys + side * (th * .5 * tf + th * .25 * tf * nse(u, n * 3 + side)); pos.push((u - sl * il * n * w) * sc, y * sc, (zc + il * n * w) * sc); } }
+    for (let i = 0; i < NS; i++) for (let j = 0; j < NN; j++) { const p = base + i * (NN + 1) + j, q = p + NN + 1; if (side > 0) idx.push(p, q, p + 1, p + 1, q, q + 1); else idx.push(p, p + 1, q, p + 1, q + 1, q); } }
+  const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); return g;
+}
+function updateShelves() {
+  const SP = 4300, ku = Math.floor(player.pos.x / T.SC / SP - .5), want = new Set();
+  for (let kk = ku - 1; kk <= ku + 7; kk++) if (Math.sin(kk * 2.17 + .4) >= .3) { const a = SP * (kk + .5 + .22 * Math.sin(2.3 * kk + .6)), b = SP * (kk + 1.5 + .22 * Math.sin(2.3 * kk + 2.9)); if (Math.min(950, (b - a) * .5 - 800) >= 250) want.add(kk); }
+  for (const [kk, m] of shelves) if (!want.has(kk) || m.userData.sc !== T.SC) { SCN.remove(m); m.geometry.dispose(); shelves.delete(kk); }
+  for (const kk of want) if (!shelves.has(kk)) { const m = new THREE.Mesh(shelfGeo(kk), cy.rockMat); m.frustumCulled = false; m.userData.sc = T.SC; SCN.add(m); shelves.set(kk, m); }
+}
+/* безопасная точка возврата/старта: в развилке — в правый рукав (на оси стоит остров), у полки — под неё */
+function safeSpot(x, a) {
+  const sc = T.SC, cs = T.cs, u = x / sc, fl = cyFl(x), D = cyD(x); let y = fl + a * D; const z = cyZc(x) + .5 * CW.fkz(u) * cyW(x);
+  if (CW.shd(u) * sc < 300 * cs) { const ys = CW.shy(u) * sc, th = CW.sht(u) * sc; if (y > ys - th * .5 - 60 * cs && y < ys + th * .5 + 60 * cs) y = (fl + ys - th * .5) / 2; }
+  return [y, z];
+}
+/* ===== турели на кромке и неуправляемые ракеты =====
+   Турель бьёт залпом из 3 ракет со скоростью самолёта: целится с упреждением (куда самолёт прилетит, если не свернёт)
+   и с разбросом — заградительный огонь. Ракеты летят прямо, сами не наводятся; попадание = падение. */
+const TUR = { SP: 3100, list: new Map(), missiles: [], booms: [], hits: 0, fired: 0, geo: null, mats: null };
+function turretAt(kt) {
+  if (!+S.tur || Math.sin(kt * 4.3 + 1.1) * .5 + .5 < (+S.tur >= 2 ? .35 : .65)) return null;
+  const sc = T.SC, u = TUR.SP * (kt + .5 + .3 * Math.sin(kt * 1.7)), side = Math.sin(kt * 7.7 + .3) > 0 ? 1 : -1;
+  const sl = CW.czd(u), il = 1 / Math.sqrt(1 + sl * sl), w = CW.cw0(u), D = CW.cD(u), zc = CW.czc(u), at = n => CW.chgt(u - sl * il * n * w * side, zc + il * n * w * side, 1);
+  /* на самой кромке обрыва: идём от плато к оси, пока высота не начнёт падать — иначе край обрыва закрывает выстрел */
+  const top = at(1.3); let n = 1.3; while (n > .6 && at(n - .05) > top - .04 * D) n -= .05;
+  const d = n * w * side, x = (u - sl * il * d) * sc, z = (zc + il * d) * sc;
+  return { kt, x, y: gnd(x, z), z, next: 0, mesh: null };
+}
+const _o = new THREE.Vector3(), _V = new THREE.Vector3(), _D = new THREE.Vector3(), _A = new THREE.Vector3();
+function fireSalvo(t) {
+  /* прогноз: самолёт продолжит лететь вдоль каньона с тем же смещением от оси и той же относительной высотой;
+     время встречи — итерациями (ракета летит со скоростью самолёта) */
+  const p = player, vm = T.vmax, cs = T.cs, x0 = p.pos.x; _o.set(t.x, t.y + 40 * cs, t.z);
+  const L = (p.pos.z - cyZc(x0)) / cyW(x0), ah = (p.pos.y - cyFl(x0)) / cyD(x0), vx = Math.max(p.v * Math.max(.3, p.f.x), vm * .2);
+  let tt = p.pos.distanceTo(_o) / vm;
+  for (let k = 0; k < 6; k++) { const x = x0 + vx * tt; _A.set(x, cyFl(x) + ah * cyD(x), cyZc(x) + L * cyW(x)); tt = _A.distanceTo(_o) / vm; }
+  const sp = .1 * cyW(_A.x), j = Math.random() * 6.283;
+  for (let q = 0; q < 5; q++) { const an = j + q * 1.2566, rr = q ? sp : 0, tg = _V.copy(_A).add(_D.set(0, Math.sin(an) * rr * .7, Math.cos(an) * rr)), dir = tg.sub(_o).normalize();
+    TUR.missiles.push({ pos: _o.clone(), vel: dir.multiplyScalar(vm), life: tt * 1.8 + 1, mesh: null }); }
+  TUR.fired++; t.flash = .12;
+}
+function boom(pos, big) { TUR.booms.push({ pos: pos.clone(), t: 0, big, mesh: null }); }
+/* шаг турелей и ракет; возвращает true, если самолёт сбит */
+function turretsStep(dt, px, py, pz) {
+  const p = player, sc = T.SC, cs = T.cs; let hit = false;
+  if (+S.tur) { const kc = Math.floor(p.pos.x / sc / TUR.SP), ahead = Math.ceil(T.vmax * 3.6 / sc / TUR.SP) + 1;
+    for (let k = kc - 1; k <= kc + ahead; k++) if (!TUR.list.has(k)) TUR.list.set(k, turretAt(k));
+    for (const [k, t] of TUR.list) { if (k < kc - 2) { if (t && t.mesh) t.mesh.visible = false; TUR.list.delete(k); continue; } if (!t) continue;
+      const dx = t.x - p.pos.x; if (dx > T.vmax * .35 && dx < T.vmax * 3.2 && tNow >= t.next) { t.next = tNow + 1.1; fireSalvo(t); } } }
+  const R = 28 * cs;
+  for (const m of TUR.missiles) { if (m.life <= 0) continue;
+    const ax = m.pos.x - px, ay = m.pos.y - py, az = m.pos.z - pz; m.pos.addScaledVector(m.vel, dt); m.life -= dt;
+    const bx = m.pos.x - p.pos.x, by = m.pos.y - p.pos.y, bz = m.pos.z - p.pos.z, dx = bx - ax, dy = by - ay, dz = bz - az, dd = dx * dx + dy * dy + dz * dz;
+    const u = dd > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy + az * dz) / dd)) : 0, cx = ax + dx * u, cy_ = ay + dy * u, cz = az + dz * u;
+    if (cx * cx + cy_ * cy_ + cz * cz < R * R) { hit = true; m.life = 0; boom(p.pos, true); TUR.hits++; continue; }
+    if (m.pos.y < gnd(m.pos.x, m.pos.z) || archHit(m.pos.x, m.pos.y, m.pos.z, 0) || shelfHit(m.pos.x, m.pos.y, m.pos.z, 0)) { m.life = 0; boom(m.pos, false); } }
+  return hit;
+}
+/* отрисовка турелей, ракет и взрывов (кадр) */
+function turretsDraw(dt) {
+  if (!TUR.geo) { const cs = 1;
+    TUR.geo = { base: new THREE.CylinderGeometry(26, 34, 18, 10), dome: new THREE.SphereGeometry(20, 12, 8, 0, 6.283, 0, 1.6), barrel: new THREE.CylinderGeometry(4, 5, 60, 8).translate(0, 30, 0).rotateX(Math.PI / 2), light: new THREE.SphereGeometry(6, 8, 6),
+      missile: new THREE.CylinderGeometry(1, 1, 1, 6).translate(0, -.5, 0).rotateX(Math.PI / 2), boom: new THREE.SphereGeometry(1, 14, 10) };
+    TUR.mats = { metal: new THREE.MeshLambertMaterial({ color: 0x3a4048 }), red: new THREE.MeshBasicMaterial({ color: 0xff3020 }), missile: new THREE.MeshBasicMaterial({ color: 0xff8a30, transparent: true, opacity: .8, blending: THREE.AdditiveBlending, depthWrite: false }), glow: new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, opacity: .7, blending: THREE.AdditiveBlending, depthWrite: false }),
+      boom: new THREE.MeshBasicMaterial({ color: 0xff8a30, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }) }; }
+  const G = TUR.geo, M = TUR.mats, cs = T.cs, p = player;
+  for (const t of TUR.list.values()) { if (!t) continue;
+    if (!t.mesh) { const g = new THREE.Group(), base = new THREE.Mesh(G.base, M.metal), dome = new THREE.Mesh(G.dome, M.metal), barrel = new THREE.Mesh(G.barrel, M.metal), light = new THREE.Mesh(G.light, M.red);
+      base.position.y = 9; dome.position.y = 18; barrel.position.y = 30; light.position.y = 40; g.add(base, dome, barrel, light); g.userData = { barrel, light }; SCN.add(g); t.mesh = g; }
+    const g = t.mesh; g.visible = true; g.position.set(t.x, t.y, t.z); g.scale.setScalar(cs * 3);
+    g.userData.barrel.lookAt(p.pos); g.userData.light.visible = (t.flash = Math.max(0, (t.flash || 0) - dt)) > 0 || Math.sin(tNow * 9 + t.kt) > 0; }
+  TUR.missiles = TUR.missiles.filter(m => { if (m.life > 0) return true; if (m.mesh) { SCN.remove(m.mesh); } return false; });
+  for (const m of TUR.missiles) { if (!m.mesh) { const g = new THREE.Group(), tr = new THREE.Mesh(G.missile, M.missile), hd = new THREE.Mesh(G.boom, M.glow); tr.frustumCulled = hd.frustumCulled = false; g.add(tr, hd); g.userData = { tr, hd }; m.mesh = g; SCN.add(g); }
+    /* трассер: яркий след длиной ~0.12 с полёта и светящаяся головка — видно даже на 94 000 км/ч */
+    const dc = m.pos.distanceTo(camera.position), L = Math.max(120 * cs, T.vmax * .12, dc * .05), wd = Math.max(7 * cs, dc * .004), g = m.mesh; g.position.copy(m.pos); g.lookAt(_A.copy(m.pos).add(m.vel));
+    g.userData.tr.scale.set(wd, wd, L); g.userData.hd.scale.setScalar(Math.max(22 * cs, dc * .011) * (1 + .25 * Math.sin(tNow * 40 + m.life * 7))); } // вдали крупнее: на экране не меньше нескольких пикселей
+  TUR.booms = TUR.booms.filter(b => { b.t += dt; if (b.t > .5) { if (b.mesh) SCN.remove(b.mesh); return false; } return true; });
+  for (const b of TUR.booms) { if (!b.mesh) { b.mesh = new THREE.Mesh(G.boom, M.boom.clone()); b.mesh.frustumCulled = false; SCN.add(b.mesh); }
+    const k = b.t / .5; b.mesh.position.copy(b.pos); b.mesh.scale.setScalar((b.big ? 160 : 90) * cs * (.3 + k)); b.mesh.material.opacity = 1 - k; }
+}
+function clearTurrets() {
+  for (const t of TUR.list.values()) if (t && t.mesh) SCN.remove(t.mesh);
+  for (const m of TUR.missiles) if (m.mesh) SCN.remove(m.mesh); for (const b of TUR.booms) if (b.mesh) SCN.remove(b.mesh);
+  TUR.list.clear(); TUR.missiles = []; TUR.booms = []; TUR.hits = 0; TUR.fired = 0;
+}
+function clearShelves() { for (const m of shelves.values()) { SCN.remove(m); m.geometry.dispose(); } shelves.clear(); }
 function nextArch(x) { const SP = archSP(); let k = Math.floor(x / SP) - 1; for (;; k++) { const a = archParams(k); if (a.x > x) return a; } }
 function buildArchGeo() {
   const nI = 64, nJ = 5, pos = [], idx = [], nse = (n, t, q) => Math.sin(n * 9 + t * 4 + q * 3) * .5 + Math.sin(n * 23 - t * 7 + q) * .3 + Math.sin(n * 41 + t * 13 + 1 + q * 2) * .2, tau = .2;
@@ -415,13 +516,22 @@ function cyPlan(p) {
   const w0 = cyW(x0), D0 = cyD(x0), L0 = Math.max(-1.4, Math.min(1.4, (p.pos.z - cyZc(x0)) / w0)), a0 = (p.pos.y - fl) / D0, r = 80 * cs, m = AP.M * cs, OUT = AP.OUT;
   const xm = x0 + Lsx * .6, pref0 = altPref(xm), E = popE(xm), pref = pref0 + (popAc(xm) - pref0) * E;
   const Lcs = [-1.5, -1.05, -.6, -.35, -.15, 0, .15, .35, .6, 1.05, 1.5], acs = [...new Set([pref * .6, pref * .8, pref, pref * 1.25, pref * 1.6].map(a => Math.max(.1, Math.min(1.9, a))))], acHi = [1.12, 1.5, 1.9];
-  const SR = [], SA = [], SX = [], SE = [], SW = [], SD = [], SZ = [], SF = [], SNX = [], SNZ = [], SB = [];
+  const SR = [], SA = [], SHf = [], SX = [], SE = [], SW = [], SD = [], SZ = [], SF = [], SNX = [], SNZ = [], SB = [];
   for (let i = 1; i <= N; i++) { const s = i / N, xi = x0 + Lsx * s, sl = CW.czd(xi / sc), il = 1 / Math.sqrt(1 + sl * sl);
     SX[i] = xi; SE[i] = popE(xi); SW[i] = cyW(xi); SD[i] = cyD(xi); SZ[i] = cyZc(xi); SF[i] = cyFl(xi); SNX[i] = -sl * il; SNZ[i] = il; SB[i] = sstep(0, AP.BLE, s);
     const rx = SW[i] * 1.3; SR[i] = Math.min(gf(xi + SNX[i] * rx, SZ[i] + SNZ[i] * rx), gf(xi - SNX[i] * rx, SZ[i] - SNZ[i] * rx)); // кромка у оси
-    const na = nextArch(xi - 40 * cs - 300 * sc); SA[i] = Math.abs(na.x - xi) < na.Lt + 80 * cs; }
+    const na = nextArch(xi - 40 * cs - 300 * sc); SA[i] = Math.abs(na.x - xi) < na.Lt + 80 * cs; SHf[i] = CW.shd(xi / sc) * sc < 120 * cs; }
+  /* у полки — явные варианты «под ней» и «над ней» (иначе все высоты вокруг желаемой могут оказаться в плите) */
+  for (let i = 1; i <= N; i++) if (SHf[i]) { const u = SX[i] / sc, ys = CW.shy(u) * sc, th = CW.sht(u) * sc;
+    acs.push(Math.max(.1, Math.min(1.9, (ys - th * .5 - SF[i]) / SD[i] - .12)), Math.max(.1, Math.min(1.9, (ys + th * .5 - SF[i]) / SD[i] + .12))); break; }
+  /* ракеты: берём летящие навстречу/рядом; для каждого варианта пути — момент максимального сближения по времени */
+  const MS = [], vx = Math.max(p.v * Math.max(.3, p.f.x), T.vmax * .2), Rd = 60 * cs + .02 * v;
+  for (const m of TUR.missiles) { if (m.life <= 0) continue; const rx = m.pos.x - p.pos.x, ry = m.pos.y - p.pos.y, rz = m.pos.z - p.pos.z, wx = m.vel.x - p.f.x * p.v, wy = m.vel.y - p.f.y * p.v, wz = m.vel.z - p.f.z * p.v;
+    if (rx * wx + ry * wy + rz * wz > 0 && rx * rx + ry * ry + rz * rz > Rd * Rd) continue; MS.push(m); }
+  if (window.__noDodge) MS.length = 0; // для проверки: без уклонения
   let best = null; if (window.__dbg) pl.dbg = [];
   for (const Lc of Lcs) for (const ac of (Math.abs(Lc) > .8 ? acHi : acs)) {
+    let qx = p.pos.x, qy = p.pos.y, qz = p.pos.z, qt = 0;
     let cost = (Math.abs(Lc) > .8 ? 0 : AP.LCW * Lc * Lc + AP.AW * (ac - pref) * (ac - pref)) + AP.HY * (Math.abs(Lc - pl.Lc) + AP.HYA * Math.abs(ac - pl.ac)), Cmin = 1e9, wmin = 1e9, kmax = 0, nOut = 0; const pts = PTS; let np = 0;
     for (let i = 1; i <= N; i++) {
       const s = i / N, bl = SB[i], xi = SX[i], Ei = SE[i], Li = L0 + (Lc - L0) * bl, ai = a0 + (ac - a0) * bl, wi = SW[i], Di = SD[i], zi = SZ[i] + Li * wi, yi = SF[i] + ai * Di, nx = SNX[i], nzz = SNZ[i];
@@ -429,10 +539,15 @@ function cyPlan(p) {
       Cmin = Math.min(Cmin, C); wmin = Math.min(wmin, wi);
       if (C < m) cost += Math.pow((m - C) / m, 2) * AP.COLW * (1.25 - s * .7);
       if (SA[i] && archHit(xi, yi, zi, 35 * cs)) cost += AP.ARW;
+      if (SHf[i] && shelfHit(xi, yi, zi, 35 * cs + .04 * v)) cost += AP.ARW; // запас растёт со скоростью: на 94 000 км/ч ошибка следования больше
       if (false) { const rx = wi * 1.3, rim = Math.min(gf(xi + nx * rx, zi + nzz * rx), gf(xi - nx * rx, zi - nzz * rx)), lim = rim - 90 * cs; if (yi > lim) cost += Math.pow((yi - lim) / (90 * cs), 2) * 30; }
       const r2 = Math.min(r * 2.4, .9 * wi), gl2 = gf(xi + nx * r2, zi + nzz * r2), gr2 = gf(xi - nx * r2, zi - nzz * r2); if (Math.max(gl2, gr2) > yi) cost += .5;
       { if (Math.abs(Li) > 1.02 || yi > SR[i] - 30 * cs) { const q = OUT * (1 - Ei); cost += q; nOut++; } }
       pts[np++] = xi; pts[np++] = yi; pts[np++] = zi;
+      if (MS.length) { const ti = (xi - x0) / vx;
+        for (const m of MS) { const ax = qx - m.pos.x - m.vel.x * qt, ay = qy - m.pos.y - m.vel.y * qt, az = qz - m.pos.z - m.vel.z * qt, dx = xi - m.pos.x - m.vel.x * ti - ax, dy = yi - m.pos.y - m.vel.y * ti - ay, dz = zi - m.pos.z - m.vel.z * ti - az, dd = dx * dx + dy * dy + dz * dz;
+          const uu = dd > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy + az * dz) / dd)) : 0, d = Math.hypot(ax + dx * uu, ay + dy * uu, az + dz * uu); if (d < Rd) cost += AP.ARW * 1.5 * (1 - d / Rd) + AP.ARW * .5; }
+        qx = xi; qy = yi; qz = zi; qt = ti; }
     }
     for (let i = 4; i <= 11; i++) { const j = i * 3; const ax = pts[j - 3] - pts[j - 6], ay = pts[j - 2] - pts[j - 5], az = pts[j - 1] - pts[j - 4], bx = pts[j] - pts[j - 3], by = pts[j + 1] - pts[j - 2], bz = pts[j + 2] - pts[j - 1], la = Math.hypot(ax, ay, az), lb = Math.hypot(bx, by, bz), ang = Math.hypot(ax / la - bx / lb, ay / la - by / lb, az / la - bz / lb); kmax = Math.max(kmax, ang / ((la + lb) / 2)); }
     cost += AP.KW * Math.min(2.5, kmax * 500 * sc); // гоночная линия: срезать дугу
@@ -712,9 +827,9 @@ function startCanyon() {
   camera.near = 2 * T.cs; camera.far = T.R * 1.7; camera.updateProjectionMatrix(); sky.scale.setScalar(T.R * 1.5);
   planeMesh.p.scale.setScalar(T.cs); planeMesh.r.visible = false; life.A.visible = life.B.visible = life.C.visible = false;
   if (gates) gates.visible = false;
-  cy.arches.clear(); for (const m of cy.pool) m.visible = false;
+  cy.arches.clear(); for (const m of cy.pool) m.visible = false; clearShelves(); clearTurrets();
   player = new Plane(T); rival = player;
-  const x0 = (window.__x0 || 0) * T.SC, D = cyD(x0), a = altPref(x0), z0 = cyZc(x0), y0 = cyFl(x0) + a * D;
+  const x0 = (window.__x0 || 0) * T.SC, a = altPref(x0), [y0, z0] = safeSpot(x0, a);
   player.pos.set(x0, y0, z0); player.prev.copy(player.pos); player.f.set(1, 0, CW.czd(x0 / T.SC)).normalize(); player.v = T.vmax * .55; player.roll = 0; player.rollV = 0; player.basis();
   Object.assign(cy, { x0, segX: x0, segT: 0, segManual: 0, passed: 0, crashes: 0, nextK: nextArch(x0).k });
   cy.plan = { Lc: 0, ac: a, L0: 0, a0: a, x0, Lsx: 1000, vt: player.v, t: -1e9 };
@@ -727,7 +842,7 @@ function startCanyon() {
 
 function startGame() {
   if (S.mode !== "race") return startCanyon();
-  cyMode = false; terrain.visible = true; if (CHK.group) { CHK.group.visible = false; chunkClear(); } if (clouds) clouds.visible = false; terrain.material = terrMat.race; for (const m of cy.pool) m.visible = false; planeMesh.r.visible = !!S.rival;
+  cyMode = false; clearShelves(); clearTurrets(); terrain.visible = true; if (CHK.group) { CHK.group.visible = false; chunkClear(); } if (clouds) clouds.visible = false; terrain.material = terrMat.race; for (const m of cy.pool) m.visible = false; planeMesh.r.visible = !!S.rival;
   const preset = PRESETS.find(p => p.id === S.preset) || PRESETS[1];
   T = buildTrack(preset, S.seed, S.skill / 100, S.style);
   terrain.material.uniforms.uSC.value = T.SC; terrain.material.uniforms.uR.value = T.R;
@@ -820,24 +935,25 @@ function playerControlCanyon() {
       const p = player, cs = T.cs, r = 70 * cs; let danger = 0;
       for (let k = 1; k <= 10; k++) { const d = p.v * 2.4 * k / 10, x = p.pos.x + p.f.x * d, y = p.pos.y + p.f.y * d, z = p.pos.z + p.f.z * d;
         const C = Math.min(y - gnd(x, z), y - gnd(x + p.r0.x * r, z + p.r0.z * r), y - gnd(x - p.r0.x * r, z - p.r0.z * r));
-        if (C < 30 * cs || archHit(x, y, z, 25 * cs)) { danger = 1 - (k - 1) / 12; break; } }
+        if (C < 30 * cs || archHit(x, y, z, 25 * cs) || shelfHit(x, y, z, 25 * cs)) { danger = 1 - (k - 1) / 12; break; } }
       if (danger > 0) { const w = Math.min(1, danger * 1.3); ar = ar * (1 - w) + ai[0] * w; au = au * (1 - w) + ai[1] * w; }
     }
   }
   if (ctl.spdMan || ctl.steerMan) vt = T.vmax * (0.1 + 1.0 * ctl.thr);
   return [ar, au, vt];
 }
-function cyCrash() {
+function cyCrash(msg) {
   cy.crashes++; $("flash").style.opacity = 0.55; setTimeout(() => $("flash").style.opacity = 0, 120);
   const p = player, x = p.pos.x - 150 * T.cs - T.vmax * .8, a = altPref(x);
-  p.pos.set(x, cyFl(x) + a * cyD(x), cyZc(x)); p.prev.copy(p.pos); p.f.set(1, 0, CW.czd(x / T.SC)).normalize(); p.v = T.vmax * .5; p.roll = 0; p.rollV = 0; p.basis();
-  ctl.steerMan = false; camState.f.copy(p.f); cy.plan.t = -1e9; cy.segX = x; cy.segT = 0; cy.segManual = 0; cy.nextK = nextArch(x).k; toast("Падение — возврат в каньон", 1600);
+  const [ys, zs] = safeSpot(x, a); p.pos.set(x, ys, zs); p.prev.copy(p.pos); p.f.set(1, 0, CW.czd(x / T.SC)).normalize(); p.v = T.vmax * .5; p.roll = 0; p.rollV = 0; p.basis();
+  ctl.steerMan = false; camState.f.copy(p.f); cy.plan.t = -1e9; cy.segX = x; cy.segT = 0; cy.segManual = 0; cy.nextK = nextArch(x).k; toast(msg || "Падение — возврат в каньон", 1600);
 }
 function simStepCanyon(dt) {
-  tNow += dt; const c = playerControl(), p = player; p.step(dt, c[0], c[1], c[2]);
+  tNow += dt; const c = playerControl(), p = player, px = p.pos.x, py = p.pos.y, pz = p.pos.z; p.step(dt, c[0], c[1], c[2]);
+  if ((+S.tur || TUR.missiles.length) && turretsStep(dt, px, py, pz)) { cyCrash("Сбит ракетой — возврат в каньон"); return; }
   cy.segT += dt; if (ctl.steerMan) cy.segManual += dt;
   const x = p.pos.x, z = p.pos.z;
-  if (p.pos.y < gnd(x, z) + 2 * T.cs || archHit(x, p.pos.y, z, 2 * T.cs)) { const dist = x - cy.segX; if (cy.segManual / Math.max(cy.segT, 1) > .5 && dist > cy.best) { cy.best = dist; try { localStorage.setItem("race-canyon-best-" + S.preset, String(dist)); } catch {} } cyCrash(); return; }
+  if (p.pos.y < gnd(x, z) + 2 * T.cs || archHit(x, p.pos.y, z, 2 * T.cs) || shelfHit(x, p.pos.y, z, 2 * T.cs)) { const dist = x - cy.segX; if (cy.segManual / Math.max(cy.segT, 1) > .5 && dist > cy.best) { cy.best = dist; try { localStorage.setItem("race-canyon-best-" + S.preset, String(dist)); } catch {} } cyCrash(); return; }
   while (x > archParams(cy.nextK).x) { cy.passed++; cy.nextK++; }
   p.err = 0;
 }
@@ -879,7 +995,7 @@ function frame(ms) {
   // мир следует за камерой
   const u = terrain.material.uniforms; u.uC.value.set(pl.pos.x, pl.pos.z); u.uCam.value.copy(camera.position); sky.position.copy(camera.position);
   applyPlane(planeMesh.p, pl, trail.p, dt); if (S.rival && !cyMode) applyPlane(planeMesh.r, rival, trail.r, dt);
-  if (cyMode) { updateChunks(pl.pos.x); updateArches(); }
+  if (cyMode) { updateChunks(pl.pos.x); updateArches(); updateShelves(); turretsDraw(dt); }
   updateStreaks(dt);
   renderer.render(SCN, camera);
   hud(t);
@@ -897,6 +1013,7 @@ function hud(t) {
   if (!inside) { if (!fwd) { x = W - x; y = Hh - y; } const cx = W / 2, cy = Hh / 2; let dx = x - cx, dy = y - cy; if (!dx && !dy) dy = -1; const k = Math.min((W / 2 - 34) / Math.abs(dx || 1e-6), (Hh / 2 - 130) / Math.abs(dy || 1e-6)); x = cx + dx * k; y = cy + dy * k; rot = Math.atan2(dy, dx) + Math.PI / 2; }
   mk.style.display = "block"; mk.style.transform = `translate(${x.toFixed(0)}px,${y.toFixed(0)}px)`; $("markArrow").parentNode.style.transform = inside ? "scale(.55) rotate(180deg)" : `rotate(${rot}rad)`;
   if (t - hudT < 0.1) return; hudT = t;
+  { let near = false; if (cyMode) for (const m of TUR.missiles) if (m.life > 0 && m.pos.distanceTo(pl.pos) < T.vmax * 2.2 && m.vel.dot(_v.subVectors(pl.pos, m.pos)) > 0) { near = true; break; } $("warn").style.display = near ? "block" : "none"; }
   const dist = pl.pos.distanceTo(g.p); $("markT").textContent = dist > 1000 ? (dist / 1000).toFixed(1) + " км" : dist.toFixed(0) + " м";
   $("vS").textContent = Math.round(pl.v * 3.6).toLocaleString("ru"); $("mach").textContent = "M " + (pl.v / 340).toFixed(1) + " · крен " + Math.abs(Math.round(pl.roll * 57.3)) + "°";
   if (cyMode) {
@@ -937,7 +1054,7 @@ addEventListener("keyup", e => { ctl.keys[e.key.length === 1 ? e.key.toLowerCase
 
 /* ================= панель ================= */
 const sP = $("sPreset"); PRESETS.forEach(p => sP.add(new Option(p.name, p.id)));
-function syncPanel() { sP.value = S.preset; $("sMode").value = S.mode === "race" ? "race" : "canyon"; $("sAlt").value = S.alt; $("sStyle").value = S.style === "wild" ? "wild" : "easy"; $("sSkill").value = S.skill; $("sRival").checked = !!S.rival; $("sResume").value = S.resume; $("sAssist").checked = !!S.assist; $("sInv").checked = !!S.inv; $("sFx").value = S.fx; $("sLife").value = S.life === 0 ? 0 : 1; $("sQ").value = S.q; $("sPop").value = S.pop; $("sCloud").value = S.cloud; $("sPilot").value = PILOTS[S.pilot] || S.pilot === "std" ? S.pilot : "c2"; }
+function syncPanel() { sP.value = S.preset; $("sMode").value = S.mode === "race" ? "race" : "canyon"; $("sAlt").value = S.alt; $("sStyle").value = S.style === "wild" ? "wild" : "easy"; $("sSkill").value = S.skill; $("sRival").checked = !!S.rival; $("sResume").value = S.resume; $("sAssist").checked = !!S.assist; $("sInv").checked = !!S.inv; $("sFx").value = S.fx; $("sLife").value = S.life === 0 ? 0 : 1; $("sQ").value = S.q; $("sPop").value = S.pop; $("sCloud").value = S.cloud; $("sTur").value = S.tur; $("sPilot").value = PILOTS[S.pilot] || S.pilot === "std" ? S.pilot : "c2"; }
 $("bSet").onclick = () => { syncPanel(); $("panel").style.display = "block"; };
 $("bClose").onclick = $("bX").onclick = () => $("panel").style.display = "none";
 addEventListener("keydown", e => { if (e.key === "Escape") $("panel").style.display = "none"; });
@@ -982,6 +1099,7 @@ for (const [file, id, mark, tail] of [["champions.json", "site", "🌐", ""], ["
     parsePilots(j).forEach((h, i) => { PILOTS[id + i] = { name: pilotLabel({ ...h, name: h.name + tail }, mark), ap: h.ap }; });
     fillPilots(); if (S.pilot.startsWith(id)) applyPilot(); }).catch(() => {});
 $("sPilot").onchange = e => { S.pilot = e.target.value; saveS(); applyPilot(); };
+$("sTur").onchange = e => { S.tur = +e.target.value; saveS(); clearTurrets(); };
 $("sCloud").onchange = e => { S.cloud = +e.target.value; saveS(); applyClouds(); };
 $("sPop").onchange = e => { S.pop = +e.target.value; saveS(); };
 $("sInv").onchange = e => { S.inv = e.target.checked; saveS(); };
@@ -996,7 +1114,7 @@ initScene(); startGame(); renderer.setAnimationLoop(frame);
 
 /* отладка и тесты */
 window.__race = {
-  get life() { return life; }, get terrain() { return terrain; }, frame: t => frame(t), bio: (x, z) => { const h = hgtRaw(x, z, 1); return [h, bioRaw[0](x, z, 1, h), bioRaw[1](x, z, 1)]; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, ctl, S, ground: (x, z) => gnd(x, z), cy, CW, archHit, get cyMode() { return cyMode; }, popE, CHK, altPref, AP, applyPilot, HC,
+  get life() { return life; }, get terrain() { return terrain; }, frame: t => frame(t), bio: (x, z) => { const h = hgtRaw(x, z, 1); return [h, bioRaw[0](x, z, 1, h), bioRaw[1](x, z, 1)]; }, nz: (...a) => nzRaw(...a), get renderer() { return renderer; }, get T() { return T; }, get player() { return player; }, get rival() { return rival; }, ctl, S, ground: (x, z) => gnd(x, z), cy, CW, archHit, shelfHit, shelves, TUR, clearTurrets, get cyMode() { return cyMode; }, popE, CHK, altPref, AP, applyPilot, HC,
   /* симуляция без рендера: автопилот, статистика */
   sim(seconds, dt = 1 / 60) {
     const st = { t: 0, maxErr: 0, sumErr: 0, n: 0, minAgl: 1e18, crashes0: crashes, misses0: misses, passed0: gatesPassed, laps0: lapCount, maxV: 0, minV: 1e18, rollMax: 0 };

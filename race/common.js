@@ -35,10 +35,18 @@ export const C_SRC = `
 ${CZC}
 float cfl(float x){ return 45.+45.*sin(x*3.7e-4+1.)+30.*sin(x*9.1e-4+2.3); }
 float czd(float x){ return .798*cos(x*5.7e-4+.7)+.695*cos(x*1.337e-3+2.1)+.24*cos(x*2.0e-3+4.0); }
-float cw0(float x){ return 260.+90.*sin(x*3.1e-4+1.1)+50.*sin(x*7.3e-4+.5); }
+/* развилка: между соседними арками (примерно в половине промежутков) каньон расширяется, посреди вырастает скальный остров */
+float fkk(float x,float kk){ float a=4300.*(kk+.5+.22*sin(2.3*kk+.6)); float b=4300.*(kk+1.5+.22*sin(2.3*kk+2.9)); float hl=min(1300.,(b-a)*.5-650.); return step(.1,sin(kk*3.71+2.2))*(1.-smoothstep(hl-600.,hl,abs(x-(a+b)*.5))); }
+float fkz(float x){ float k=floor(x/4300.-.5); return max(fkk(x,k-1.),max(fkk(x,k),fkk(x,k+1.))); }
+float cw0(float x){ return (260.+90.*sin(x*3.1e-4+1.1)+50.*sin(x*7.3e-4+.5))*(1.+.85*fkz(x)); }
 float cD(float x){ return 650.+220.*sin(x*2.3e-4+2.2)+90.*sin(x*5.1e-4+.3); }
 float axk(float x,float k){ return abs(x-4300.*(k+.5+.22*sin(2.3*k+.6))); }
 float archd(float x){ float k=floor(x/4300.); return min(axk(x,k-1.),min(axk(x,k),axk(x,k+1.))); }
+/* полка: каменная плита поперёк каньона (проход над ней и под ней); shd<0 — внутри полки по длине */
+float shk(float x,float kk){ if(sin(kk*2.17+.4)<.3) return 1e9; float a=4300.*(kk+.5+.22*sin(2.3*kk+.6)); float b=4300.*(kk+1.5+.22*sin(2.3*kk+2.9)); float hl=min(950.,(b-a)*.5-800.); if(hl<250.) return 1e9; return abs(x-(a+b)*.5)-hl; }
+float shd(float x){ float k=floor(x/4300.-.5); return min(shk(x,k-1.),min(shk(x,k),shk(x,k+1.))); }
+float shy(float x){ return 30.+cfl(x)+cD(x)*(.52+.06*sin(x*7e-4)); }
+float sht(float x){ return cD(x)*.07; }
 float chgt(float x,float z,float sc){
   x/=sc; z/=sc;
   float sl=czd(x); float isl=inversesqrt(1.+sl*sl);
@@ -59,12 +67,15 @@ float chgt(float x,float z,float sc){
   h+=pu*(pl+ms);
   float qa=nz(x*4.1e-3,z*4.1e-3,.5,.86,1.1); float qb=nz(x*2.9e-3,z*2.9e-3,.9,.44,3.7);
   float sp=max(0.,qa*qb-.4)/.6;
-  h+=min(380.,.72*D)*sp*smoothstep(600.,1700.,archd(x))*smoothstep(130.,230.,w0)*smoothstep(.05,.22,u)*(1.-smoothstep(.95,1.15,u));
+  float fk=fkz(x);
+  h+=min(380.,.72*D)*sp*smoothstep(600.,1700.,archd(x))*smoothstep(130.,230.,w0)*smoothstep(.05,.22,u)*(1.-smoothstep(.95,1.15,u))*(1.-fk)*smoothstep(0.,500.,shd(x));
+  if(fk>0.){ float iw=.15*w0*(.45+.55*fk); float ci=1.-smoothstep(iw*.5,iw*1.5,d); float cs4=ci*4.; ci=mix(ci,(floor(cs4)+smoothstep(.55,.95,fract(cs4)))/4.,.6);
+    float ihf=.55+.45*smoothstep(-.3,.3,sin(x*1.9e-4+1.3)); float hi=fl+(D*ihf-fl)*fk*ci+ci*fk*nz(x*3.1e-3,z*3.1e-3,.6,.8,2.4)*25.; h=max(h,hi); }
   return h*sc;
 }`;
-export const WRAPJS = "const abs=Math.abs,sin=Math.sin,cos=Math.cos,floor=Math.floor,sign=Math.sign,pow=Math.pow,sqrt=Math.sqrt,max=Math.max,min=Math.min,fract=x=>x-Math.floor(x),inversesqrt=x=>1/Math.sqrt(x),smoothstep=(a,b,x)=>{const t=Math.min(1,Math.max(0,(x-a)/(b-a)));return t*t*(3-2*t)},mix=(a,b,t)=>a+(b-a)*t,clamp=(x,a,b)=>Math.min(b,Math.max(a,x));";
+export const WRAPJS = "const abs=Math.abs,sin=Math.sin,cos=Math.cos,floor=Math.floor,sign=Math.sign,pow=Math.pow,sqrt=Math.sqrt,max=Math.max,min=Math.min,fract=x=>x-Math.floor(x),inversesqrt=x=>1/Math.sqrt(x),smoothstep=(a,b,x)=>{const t=Math.min(1,Math.max(0,(x-a)/(b-a)));return t*t*(3-2*t)},mix=(a,b,t)=>a+(b-a)*t,clamp=(x,a,b)=>Math.min(b,Math.max(a,x)),step=(e,x)=>x<e?0:1;";
 export const toJs = src => src.replace(/float (\w+)(?=\s*[,)])/g, "$1").replace(/float\s+(\w+)\s*\(/g, "function $1(").replace(/float\s+(\w+)\s*=/g, "let $1 =");
-export const CW = new Function(WRAPJS + toJs(H_SRC) + toJs(C_SRC) + ";return {czc,czd,cw0,cD,chgt,archd,cfl};")();
+export const CW = new Function(WRAPJS + toJs(H_SRC) + toJs(C_SRC) + ";return {czc,czd,cw0,cD,chgt,archd,cfl,fkz,shd,shy,sht};")();
 
 export function paramsFor(vmax) {
   const SC = Math.pow(vmax / 250, 0.8);
