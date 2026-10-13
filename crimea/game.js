@@ -80,8 +80,8 @@ function aiBomber(b, dt) {
   const dTg = Math.hypot(tg.x - p.x, tg.z - p.z), psi = Math.atan2(b.f.z, b.f.x), gam = Math.asin(clamp(b.f.y, -1, 1));
   let psiD = psi, yT = p.y, vt = PL.CRU, gDive = null;
   /* ракета летит в нас: ловушки и резкий отворот с уходом вниз к земле */
-  const thr = G.missiles.find(m => m.alive && m.tgt === b && !m.decoy && m.pos.distanceTo(p) < 5500);
-  if (thr && tNow - b.flT > 1.3 && b.flares > 0 && thr.pos.distanceTo(p) < 3000) dropFlares(b); // ловушки — когда ракета близко (дальше её не обмануть)
+  const thr = G.missiles.find(m => m.alive && m.tgt === b && !m.decoy && m.pos.distanceTo(p) < 1300);
+  if (thr && tNow - b.flT > 1.3 && b.flares > 0 && thr.pos.distanceTo(p) < 1800) dropFlares(b); // ловушки — когда ракета близко (дальше её не обмануть)
   if (thr && b.evT < tNow && b.mode !== "dive" && b.mode !== "popup" && b.mode !== "release") { b.evT = tNow + 3; const s = thr.src, br = Math.atan2(s.z - p.z, s.x - p.x); b.evPsi = [br + Math.PI / 2, br - Math.PI / 2].sort((x, y) => Math.abs(wrap(x - psi)) - Math.abs(wrap(y - psi)))[0]; }
   /* фазы: маршрут → горка → пикирование и сброс → уход к морю */
   if (b.mode === "ingress" && (b.ri >= b.route.length - 1 || dTg < 4300) && b.bombs > 0 && !G.success) b.mode = "popup";
@@ -172,7 +172,7 @@ function defenseStep(dt) {
 /* камера «от лица ПВО»: когда оно открывает огонь по нашему борту — на ~3 с кадр от позиции ЗРК/зенитки с длиннофокусным обзором */
 function startAdCam(src, tgt, txt, w = 1) { G.heat = (G.heat || 0) + w; /* «накал» огня: пуск ракеты весит 6, залп зениток по 1; решает суммарная плотность за ~2.5 с */
   if (G.heat < 6 || ctl.steerMan || tNow < (G.adCool || 0) || (G.impactCam && tNow < G.impactCam.until) || G.done || !tgt.alive || tgt.falling) return;
-  G.adCam = { src, tgt, t0: tNow, until: tNow + 4, m: src.kind === "sam" || src.kind === "frigate" ? G.missiles[G.missiles.length - 1] : null }; G.adCool = tNow + 10; G.heat = 0; toast(txt, 1800); }
+  G.adCam = { src, tgt, t0: tNow, until: tNow + (src.kind === "sam" || src.kind === "frigate" ? 2 : 4), m: src.kind === "sam" || src.kind === "frigate" ? G.missiles[G.missiles.length - 1] : null }; G.adCool = tNow + 10; G.heat = 0; toast(txt, 1800); }
 function launchMissile(s, h, b) {
   const pos = new THREE.Vector3(s.x, s.y + h, s.z), dir = new THREE.Vector3().subVectors(b.pos, pos).normalize(); dir.y = Math.max(dir.y, .5); dir.normalize();
   G.missiles.push({ pos, vel: dir.multiplyScalar(60), src: s, srcH: h, tgt: b, t0: tNow, alive: true, decoy: null, lostT: 0, trail: [], mesh: null, lineMesh: null });
@@ -583,6 +583,12 @@ function cameraUpdate(dt) {
   const ad = G.adCam; if (ad && tNow < ad.until && camMode < 3 && b.alive && !b.falling && !ctl.steerMan && ad.tgt.alive && !ad.src.dead) {
     const tb = ad.tgt, s = ad.src, ex = tb.pos.x - s.x, ez = tb.pos.z - s.z, el = Math.hypot(ex, ez) || 1, sy = (s.y || 0) + 14;
     /* камера сбоку и чуть позади установки — сама она в кадр не лезет; сначала смотрим на ракету/трассы, потом на цель */
+    const mm = ad.m, chase = mm && tNow - ad.t0 > 1 && (mm.alive || (ad.mEnd && tNow < ad.mEnd));
+    if (mm && !mm.alive && !ad.mEnd) { ad.mEnd = tNow + 1.6; ad.until = Math.max(ad.until, ad.mEnd); }
+    if (mm && ad.until < ad.t0 + 12 && mm.alive) ad.until = Math.max(ad.until, tNow + .5); // пока ракета летит — следим за ней
+    if (chase) { /* камера летит за ракетой, смотрит вперёд на цель; после разрыва — 1.6 с на месте */
+      if (mm.alive) { const d = _b.copy(mm.vel).normalize(); ad.cp ??= new THREE.Vector3(); ad.cp.copy(mm.pos).addScaledVector(d, -30).addScaledVector(UP, 7); ad.look = _c.copy(mm.pos).addScaledVector(d, 70); if (mm.pos.distanceTo(tb.pos) < 900) ad.look.lerp(tb.pos, .75); ad.lk ??= new THREE.Vector3(); ad.lk.copy(ad.look); }
+      camera.position.copy(ad.cp || mm.pos); camera.up.set(0, 1, 0); camera.lookAt(mm.alive ? ad.lk : tb.pos); cam.reset = true; if (cam.zoom) { cam.zoom = false; resize(); } return; }
     camera.position.set(s.x - ex / el * 40 - ez / el * 75, Math.max(sy + 8, Math.max(0, W.gnd(s.x - ex / el * 40 - ez / el * 75, s.z - ez / el * 40 + ex / el * 75)) + 22), s.z - ez / el * 40 + ex / el * 75); camera.up.set(0, 1, 0);
     const k = clamp((tNow - ad.t0 - .9) / 1.4, 0, 1), fp = ad.m && ad.m.alive ? ad.m.pos : tb.pos; camera.lookAt(_a.copy(fp).lerp(tb.pos, k));
     if (!cam.zoom || camera.fov !== 38) { camera.fov = 38; camera.updateProjectionMatrix(); cam.zoom = true; } cam.reset = true; return; }

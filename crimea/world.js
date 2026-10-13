@@ -198,7 +198,7 @@ export function planRoute(w, TM, from, goalFn, noise = 0, seed = 1) {
     if (goalFn(i * G, j * G)) { goal = k; break; }
     for (const [di, dj, l] of D) { const a = i + di, b = j + dj; if (a < 0 || b < 0 || a >= gx || b >= gz) continue; const q = b * gx + a; if (done[q]) continue;
       const hh = Math.max(0, w.gnd(a * G, b * G)), climb = hh > 500 ? (hh - 500) / 400 : 0; // высокие горы — дороже (дольше набор, виден издалека)
-      const c = d + l * G * (1 + 1.6 * T[q] + climb) * jit[q]; if (c < dist[q]) { dist[q] = c; prev[q] = k; push(q, c); } } }
+      const c = d + l * G * (1 + .3 * T[q] + climb) * jit[q]; if (c < dist[q]) { dist[q] = c; prev[q] = k; push(q, c); } } }
   if (goal < 0) return null;
   const pts = []; for (let k = goal; k >= 0; k = prev[k]) { const i = k % gx; pts.push([i * G, (k - i) / gx * G]); }
   pts.reverse(); pts[0] = [from.x, from.z];
