@@ -4,7 +4,7 @@ import { genWorld, threatMap, planRoute, losClear, rng } from "./world.js";
 
 const $ = id => document.getElementById(id);
 const KEY = "crimea-settings-v1";
-const S = Object.assign({ diff: 1, wing: 3, agl: 60, resume: 3, life: 1, q: 1.25, inv: 0, cam: 0, seed: 0 }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
+const S = Object.assign({ diff: 1, wing: 3, agl: 60, resume: 3, life: 1, q: 1.5, inv: 0, cam: 0, seed: 0 }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
 const saveS = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
 let rnd = Math.random; const seedRnd = n => { rnd = rng(n); };
 const UP = new THREE.Vector3(0, 1, 0), _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _m = new THREE.Matrix4();
@@ -291,7 +291,7 @@ function playerFlare() { const b = G.bombers[G.me]; if (b && b.alive && !b.falli
 let renderer, scene, camera, sun, terrainMesh, water, sky, objGroup, fxGroup;
 const MAT = {}, GEO = {};
 function initGfx() {
-  renderer = new THREE.WebGLRenderer({ canvas: $("c"), antialias: (devicePixelRatio || 1) < 1.75, powerPreference: "high-performance" });
+  renderer = new THREE.WebGLRenderer({ canvas: $("c"), antialias: true, powerPreference: "high-performance" });
   scene = new THREE.Scene(); camera = new THREE.PerspectiveCamera(65, 1, 4, 90000);
   scene.fog = new THREE.Fog(0xc4d6e6, 4000, 42000);
   scene.add(new THREE.HemisphereLight(0xdcecff, 0x6a5a40, .85)); sun = new THREE.DirectionalLight(0xfff1dc, 1.25); sun.position.set(.5, .7, .35); scene.add(sun);
@@ -356,7 +356,7 @@ function buildWaterTex() {
   WU.uWt.value?.dispose(); WU.uWt.value = t; WU.uSz.value.set(W.W, W.H);
 }
 /* дороги и посёлки — карта поверх рельефа (в шейдер как цветовая подложка с прозрачностью) */
-const OV = { uRoad: { value: null }, uOSz: { value: new THREE.Vector2(36000, 24000) } };
+const OV = { uTerCol: { value: null }, uRoad: { value: null }, uOSz: { value: new THREE.Vector2(36000, 24000) } };
 function pickVillages() {
   const r = rng(W.seed + 11), { nx, land, mt, dIn, cs } = W, nv = 10 + Math.floor(r() * 8), out = [];
   for (let v = 0; v < nv; v++) for (let t = 0; t < 200; t++) { const cx = r() * W.W, cz = r() * W.H, k = Math.round(cz / cs) * nx + Math.round(cx / cs);
@@ -377,34 +377,35 @@ function buildOverlay() {
 }
 /* рельеф: сетка с цветами вершин (пляж, степь, солончак, лес на склонах, светлый известняк на плато и обрывах) */
 const FIELDS = [0xd8c27a, 0xc9b25e, 0x8fa04f, 0x7d8a45, 0x9c7a52, 0xb59a62, 0xa8b066].map(c => new THREE.Color(c));
-function terrainColors() {
-  const { nx, nz, h, land, mt, dIn, cs } = W, col = new Float32Array(nx * nz * 3), c = new THREE.Color(), r = rng(W.seed + 5);
+function terrainColors(f = 2) {
+  const { nx, nz, h, land, mt, dIn, cs } = W, Nx = (nx - 1) * f + 1, Nz = (nz - 1) * f + 1, data = new Uint8Array(Nx * Nz * 4), c = new THREE.Color(), r = rng(W.seed + 5), at = W.at;
   const C = { sand: new THREE.Color(0xd9c58e), steppe: new THREE.Color(0xb7a96a), steppe2: new THREE.Color(0x9a9a58), forest: new THREE.Color(0x3f6234), meadow: new THREE.Color(0x8fa060), lime: new THREE.Color(0xc9c4b4), salt: new THREE.Color(0xe7e2da), sea: new THREE.Color(0x2b5a6a), cliff: new THREE.Color(0xa59f92) };
-  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) { const k = j * nx + i, y = h[k];
+  for (let oj = 0; oj < Nz; oj++) for (let oi = 0; oi < Nx; oi++) { const x = oi * cs / f, z = oj * cs / f, i = Math.min(nx - 1, Math.round(oi / f)), j = Math.min(nz - 1, Math.round(oj / f)), k = j * nx + i, y = at(h, x, z);
     if (!land[k]) { c.copy(C.sea).lerp(C.sand, Math.max(0, 1 + y / 12)); }
     else if (land[k] === 2) c.copy(C.salt);
-    else { const sl = Math.hypot((h[k + 1] || y) - (h[k - 1] || y), (h[k + nx] || y) - (h[k - nx] || y)) / (2 * cs), m = mt[k], n = r();
-      { const x0 = i * cs, z0 = j * cs; c.copy(C.steppe).lerp(C.steppe2, .5 + .5 * Math.sin(x0 * 5.8e-4 + z0 * 4.2e-4) * Math.cos(x0 * 2.6e-4 - z0 * 5e-4)); }
+    else { const sl = Math.hypot(at(h, x + cs, z) - at(h, x - cs, z), at(h, x, z + cs) - at(h, x, z - cs)) / (2 * cs), m = at(mt, x, z), n = r(), din = at(dIn, x, z);
+      c.copy(C.steppe).lerp(C.steppe2, .5 + .5 * Math.sin(x * 5.8e-4 + z * 4.2e-4) * Math.cos(x * 2.6e-4 - z * 5e-4));
       /* поля в степи: прямоугольные участки (пшеница, зелень, пашня, сухая трава), сетка полей слегка повёрнута по районам */
-      if (m < .12) { const x = i * cs, z = j * cs, a = .5 * Math.sin(x / 9000 + 1.3) + .3 * Math.cos(z / 7000), u = x * Math.cos(a) + z * Math.sin(a), w = -x * Math.sin(a) + z * Math.cos(a), fi = Math.floor(u / 520), fj = Math.floor(w / 380);
+      if (m < .12) { const a = .5 * Math.sin(x / 9000 + 1.3) + .3 * Math.cos(z / 7000), u = x * Math.cos(a) + z * Math.sin(a), w = -x * Math.sin(a) + z * Math.cos(a), fi = Math.floor(u / 520), fj = Math.floor(w / 380);
         const hsh = Math.abs(Math.sin(fi * 127.1 + fj * 311.7 + W.seed) * 43758.5) % 1, F = FIELDS[Math.floor(hsh * FIELDS.length)]; if (hsh > .12) c.lerp(F, .55 * (1 - sstep(.05, .12, m))); }
       if (m > .08) c.lerp(C.forest, sstep(.08, .3, m) * (1 - sstep(.75, .95, m)));
       if (m > .85) c.lerp(C.meadow, sstep(.85, .97, m)).lerp(C.lime, .25 * n);
       if (sl > .45) c.lerp(C.cliff, sstep(.45, .9, sl));
-      if (dIn[k] < 150 && y < 12) c.lerp(C.sand, 1 - dIn[k] / 150);
-      for (const L of W.lakes) { const d = Math.hypot(i * cs - L.x, j * cs - L.z) / L.r; if (d < 1.6) c.lerp(C.salt, .6 * (1 - sstep(1, 1.6, d))); }
+      if (din < 150 && y < 12) c.lerp(C.sand, 1 - din / 150);
+      for (const L of W.lakes) { const d = Math.hypot(x - L.x, z - L.z) / L.r; if (d < 1.6) c.lerp(C.salt, .6 * (1 - sstep(1, 1.6, d))); }
       c.multiplyScalar(.93 + .14 * n); }
-    col[3 * k] = c.r; col[3 * k + 1] = c.g; col[3 * k + 2] = c.b; }
-  return col;
+    c.convertLinearToSRGB(); const o = (oj * Nx + oi) * 4; data[o] = Math.max(0, Math.min(255, Math.round(c.r * 255))); data[o + 1] = Math.max(0, Math.min(255, Math.round(c.g * 255))); data[o + 2] = Math.max(0, Math.min(255, Math.round(c.b * 255))); data[o + 3] = 255; }
+  const t = new THREE.DataTexture(data, Nx, Nz, THREE.RGBAFormat); t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.flipY = false; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true;
+  return t;
 }
 /* процедурная детализация рельефа в шейдере: цвет и микро-неровности по мировым координатам (3 масштаба, с затуханием вдали), слоистость на обрывах */
 function terrainMaterial() {
-  const m = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const m = new THREE.MeshLambertMaterial({ color: 0xffffff });
   m.onBeforeCompile = sh => { Object.assign(sh.uniforms, OV);
     sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 vWP; varying vec3 vWN;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.)).xyz; vWN = normal;");
     sh.fragmentShader = sh.fragmentShader.replace("#include <common>", `#include <common>
-varying vec3 vWP; varying vec3 vWN; uniform sampler2D uRoad; uniform vec2 uOSz;
+varying vec3 vWP; varying vec3 vWN; uniform sampler2D uRoad; uniform sampler2D uTerCol; uniform vec2 uOSz;
 float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f); return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
 float fb(vec2 p, float k){ float s = 0., a = .5; for (int i = 0; i < 3; i++) { s += a * vn(p); p = p * 2.07 + 13.1; a *= .5 * k; } return s; }`)
@@ -415,6 +416,7 @@ float fb(vec2 p, float k){ float s = 0., a = .5; for (int i = 0; i < 3; i++) { s
     if (fa > 0.) { float e = .6, n0 = fb(q / 5., 1.), gx = fb((q + vec2(e, 0.)) / 5., 1.) - n0, gz = fb((q + vec2(0., e)) / 5., 1.) - n0; pw += vec3(-(gx / e) * .9 * fa, 0., -(gz / e) * .9 * fa); } }
   normal = normalize(normal + mat3(viewMatrix) * pw);`)
       .replace("#include <color_fragment>", `#include <color_fragment>
+  diffuseColor.rgb *= texture2D(uTerCol, vWP.xz / uOSz).rgb;
   { float fa = 1. - smoothstep(500., 2500., length(cameraPosition - vWP)); float c1 = fa > 0. ? fb(vWP.xz / 4., 1.) : .5, c2 = fb(vWP.xz / 31. + 7., 1.), c3 = fb(vWP.xz / 260. + 3., 1.);
     float v = .76 + .5 * c3 * (1. - .5 * fa) ; v *= mix(1., .82 + .36 * c2, .75 * (1. - smoothstep(4000., 14000., length(cameraPosition - vWP)))); v *= mix(1., .86 + .28 * c1, fa);
     float steep = smoothstep(.42, .78, 1. - normalize(vWN).y); float band = .5 + .5 * sin(vWP.y * .55 + c2 * 5.);
@@ -433,21 +435,21 @@ float fb(vec2 p, float k){ float s = 0., a = .5; for (int i = 0; i < 3; i++) { s
 const TER = { chunks: [], mat: null };
 function buildTerrain() {
   for (const c of TER.chunks) for (const m of c.lod) { scene.remove(m); m.geometry.dispose(); } TER.chunks = [];
-  const { nx, nz, h, cs } = W, col = terrainColors(), CH = 50, SKIRT = 90, hh = (i, j) => h[Math.max(0, Math.min(nz - 1, j)) * nx + Math.max(0, Math.min(nx - 1, i))];
-  TER.mat ??= terrainMaterial(); TER.mat.side = THREE.DoubleSide;
+  const { nx, nz, h, cs } = W, CH = 50, SKIRT = 90, hh = (i, j) => h[Math.max(0, Math.min(nz - 1, j)) * nx + Math.max(0, Math.min(nx - 1, i))];
+  TER.mat ??= terrainMaterial(); TER.tex?.dispose(); TER.tex = terrainColors(2); OV.uTerCol.value = TER.tex; OV.uOSz.value.set(W.W, W.H);
   for (let cz = 0; cz < nz - 1; cz += CH) for (let cx = 0; cx < nx - 1; cx += CH) {
     const ex = Math.min(CH, nx - 1 - cx), ez = Math.min(CH, nz - 1 - cz), lod = [];
     for (const s of [1, 2, 5]) { const sx = ex % s ? 1 : s, sz = ez % s ? 1 : s, gx = ex / sx + 1, gz = ez / sz + 1, nb = 2 * (gx + gz) - 4, nv = gx * gz + nb;
-      const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), cl = new Float32Array(nv * 3), idx = [];
+      const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), idx = [];
       const put = (v, i, j, dy) => { const y = Math.max(hh(i, j), -60), a = hh(i - 1, j) - hh(i + 1, j), b = hh(i, j - 1) - hh(i, j + 1), l = Math.hypot(a, 2 * cs, b), k = Math.max(0, Math.min(nz - 1, j)) * nx + Math.max(0, Math.min(nx - 1, i));
-        pos[3 * v] = i * cs; pos[3 * v + 1] = y - dy; pos[3 * v + 2] = j * cs; nor[3 * v] = a / l; nor[3 * v + 1] = 2 * cs / l; nor[3 * v + 2] = b / l; cl[3 * v] = col[3 * k]; cl[3 * v + 1] = col[3 * k + 1]; cl[3 * v + 2] = col[3 * k + 2]; };
+        pos[3 * v] = i * cs; pos[3 * v + 1] = y - dy; pos[3 * v + 2] = j * cs; if (dy) { nor[3 * v + 1] = 1; } else { nor[3 * v] = a / l; nor[3 * v + 1] = 2 * cs / l; nor[3 * v + 2] = b / l; } };
       for (let q = 0; q < gz; q++) for (let p = 0; p < gx; p++) put(q * gx + p, cx + p * sx, cz + q * sz, 0);
       for (let q = 0; q < gz - 1; q++) for (let p = 0; p < gx - 1; p++) { const a = q * gx + p, b = a + 1, c = a + gx, d = c + 1; idx.push(a, c, b, b, c, d); }
       /* юбка: по периметру копии вершин, опущенные вниз */
       const ring = []; for (let p = 0; p < gx; p++) ring.push([p, 0]); for (let q = 1; q < gz; q++) ring.push([gx - 1, q]); for (let p = gx - 2; p >= 0; p--) ring.push([p, gz - 1]); for (let q = gz - 2; q > 0; q--) ring.push([0, q]);
       const base = gx * gz; ring.forEach(([p, q], r) => put(base + r, cx + p * sx, cz + q * sz, SKIRT));
-      for (let r = 0; r < ring.length; r++) { const r2 = (r + 1) % ring.length, a = ring[r][1] * gx + ring[r][0], b = ring[r2][1] * gx + ring[r2][0]; idx.push(a, base + r, b, b, base + r, base + r2); }
-      const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(pos, 3)); geo.setAttribute("normal", new THREE.BufferAttribute(nor, 3)); geo.setAttribute("color", new THREE.BufferAttribute(cl, 3)); geo.setIndex(new THREE.BufferAttribute(nv > 65535 ? new Uint32Array(idx) : new Uint16Array(idx), 1)); geo.computeBoundingSphere();
+      for (let r = 0; r < ring.length; r++) { const r2 = (r + 1) % ring.length, a = ring[r][1] * gx + ring[r][0], b = ring[r2][1] * gx + ring[r2][0]; idx.push(a, base + r, b, b, base + r, base + r2, a, b, base + r, b, base + r2, base + r); } // юбка двусторонняя: видна с любой стороны, освещается одинаково
+      const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(pos, 3)); geo.setAttribute("normal", new THREE.BufferAttribute(nor, 3)); geo.setIndex(new THREE.BufferAttribute(nv > 65535 ? new Uint32Array(idx) : new Uint16Array(idx), 1)); geo.computeBoundingSphere();
       const m = new THREE.Mesh(geo, TER.mat); m.visible = s === 1; scene.add(m); lod.push(m); }
     TER.chunks.push({ x: (cx + ex / 2) * cs, z: (cz + ez / 2) * cs, lod, sel: 0 }); }
 }
@@ -754,7 +756,7 @@ function frame(ms) {
   SM.uTime.value = tNow; SM.uPx.value = renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360)); WU.uTime.value = t; bombersDraw(dt); objectsDraw(dt); fxDraw(dt);
   renderer.render(scene, camera);
   /* авто-чёткость: если кадры тяжёлые — снижаем разрешение рендера (до 55 %), если быстрые — возвращаем */
-  { const ft = Math.min(.1, dt); fEma = fEma ? fEma + (ft - fEma) * .08 : ft; if (t - qT > 1.5 && !window.__noLoop) { qT = t; const want = fEma > .03 ? Math.max(.55, qAuto * .85) : fEma < .019 ? Math.min(1, qAuto * 1.1) : qAuto; if (Math.abs(want - qAuto) > .04) { qAuto = want; resize(); } } }
+  { const ft = Math.min(.1, dt); fEma = fEma ? fEma + (ft - fEma) * .08 : ft; if (t - qT > 1.5 && !window.__noLoop) { qT = t; const want = fEma > .042 ? Math.max(.75, qAuto * .88) : fEma < .024 ? Math.min(1, qAuto * 1.08) : qAuto; if (Math.abs(want - qAuto) > .04) { qAuto = want; resize(); } } }
   if (t - hudT > .1) { hudT = t; hud(); } markUpdate(); pipUpdate();
 }
 
