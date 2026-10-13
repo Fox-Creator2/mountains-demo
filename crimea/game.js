@@ -167,15 +167,17 @@ function defenseStep(dt) {
     if (tNow < (A.next || 0)) continue; A.next = tNow + dif.aaaRate * (.7 + .6 * rnd());
     if (!losClear(W, A.x, ay, A.z, P.x, P.y, P.z, 90)) continue;
     const sp = 45 * dif.spread * (bd / 2000 + .35); P.x += (rnd() - .5) * 2 * sp; P.y += (rnd() - .5) * 1.4 * sp; P.z += (rnd() - .5) * 2 * sp;
-    G.shells.push({ from: new THREE.Vector3(A.x, ay, A.z), to: P.clone(), t0: tNow, tb: tNow + tt, mesh: null }); A.recoil = 1; startAdCam(A, tgt, "Зенитки открыли огонь"); }
+    G.shells.push({ from: new THREE.Vector3(A.x, ay, A.z), to: P.clone(), t0: tNow, tb: tNow + tt, mesh: null }); A.recoil = 1; startAdCam(A, tgt, "Плотный огонь зениток", 1); }
 }
 /* камера «от лица ПВО»: когда оно открывает огонь по нашему борту — на ~3 с кадр от позиции ЗРК/зенитки с длиннофокусным обзором */
-function startAdCam(src, tgt, txt) { if (ctl.steerMan || tgt !== G.bombers[G.me] || tNow < (G.adCool || 0) || (G.impactCam && tNow < G.impactCam.until) || G.done) return;
-  G.adCam = { src, tgt, t0: tNow, until: tNow + 3.4, m: G.missiles[G.missiles.length - 1] }; G.adCool = tNow + 16; toast(txt, 1800); }
+function startAdCam(src, tgt, txt, w = 1) { G.heat = (G.heat || 0) + w; /* «накал» огня: пуск ракеты весит 6, залп зениток по 1; решает суммарная плотность за ~2.5 с */
+  if (G.heat < 6 || ctl.steerMan || tNow < (G.adCool || 0) || (G.impactCam && tNow < G.impactCam.until) || G.done || !tgt.alive || tgt.falling) return;
+  G.adCam = { src, tgt, t0: tNow, until: tNow + 4, m: src.kind === "sam" || src.kind === "frigate" ? G.missiles[G.missiles.length - 1] : null }; G.adCool = tNow + 10; G.heat = 0; toast(txt, 1800); }
 function launchMissile(s, h, b) {
   const pos = new THREE.Vector3(s.x, s.y + h, s.z), dir = new THREE.Vector3().subVectors(b.pos, pos).normalize(); dir.y = Math.max(dir.y, .5); dir.normalize();
   G.missiles.push({ pos, vel: dir.multiplyScalar(60), src: s, srcH: h, tgt: b, t0: tNow, alive: true, decoy: null, lostT: 0, trail: [], mesh: null, lineMesh: null });
-  if (b.id === G.me) { warnT = tNow + 1.5; startAdCam(s, b, "ПВО: пуск ракеты по нашему борту"); }
+  if (b.id === G.me) warnT = tNow + 1.5;
+  startAdCam(s, b, "ПВО: пуск ракеты — смотрим от расчёта", 6);
 }
 function missilesStep(dt) {
   const dif = D();
@@ -217,7 +219,7 @@ function bombsStep(dt) {
   for (const B of G.bombs) { if (B.done) continue; B.t += dt; B.vel.y -= 9.81 * dt; B.vel.multiplyScalar(1 - .015 * dt); B.pos.addScaledVector(B.vel, dt);
     /* за ~3 с до падения бомбы камера уходит на точку падения, чтобы увидеть разрыв */
     if (B.owner.id === G.me && !B.owner.falling && !(G.impactCam && tNow < G.impactCam.until) && !ctl.steerMan) { const h = B.pos.y - Math.max(0, W.gnd(B.pos.x, B.pos.z)), tti = (B.vel.y + Math.sqrt(B.vel.y * B.vel.y + 19.62 * Math.max(0, h))) / 9.81;
-      if (tti < 3.2) { const lx = B.pos.x + B.vel.x * tti, lz = B.pos.z + B.vel.z * tti, o = B.owner; G.impactCam = { x: lx, y: Math.max(0, W.gnd(lx, lz)), z: lz, t0: tNow, hit: tNow + tti, until: tNow + tti + 2.8, kills: 0,
+      if (tti < 4.6) { const lx = B.pos.x + B.vel.x * tti, lz = B.pos.z + B.vel.z * tti, o = B.owner; G.impactCam = { x: lx, y: Math.max(0, W.gnd(lx, lz)), z: lz, t0: tNow, hit: tNow + tti, until: tNow + tti + 3, kills: 0, bomb: B,
         cp: new THREE.Vector3(lx, 0, lz).addScaledVector(_b.copy(o.f).setY(0).normalize(), -330).addScaledVector(o.r0, 90) }; G.adCam = null; } }
     const gy = Math.max(0, W.gnd(B.pos.x, B.pos.z)); if (B.pos.y > gy) continue;
     B.done = true; B.pos.y = gy; const water = gy <= 0 && W.isSea(B.pos.x, B.pos.z); boom(B.pos, water ? 34 : 52, water ? 0xd8eaff : 0xffa040, water);
@@ -238,7 +240,7 @@ function bombsStep(dt) {
 /* ================= шаг симуляции ================= */
 let warnT = 0;
 function simStep(dt) {
-  if (!G) return; tNow += dt; G.t = tNow;
+  if (!G) return; tNow += dt; G.t = tNow; G.heat = (G.heat || 0) * Math.exp(-dt / 2.5);
   const prevPos = new Map();
   for (const b of G.bombers) { if (!b.alive) continue; prevPos.set(b, b.pos.clone());
     if (b.falling) { // подбит: падает, крутится, дымит
@@ -298,7 +300,7 @@ function initGfx() {
     vertexShader: `varying vec3 vP; void main(){ vP=normalize(position); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
     fragmentShader: `varying vec3 vP; void main(){ float h=max(vP.y,0.); vec3 c=mix(vec3(.77,.84,.9),vec3(.33,.55,.85),pow(h,.55)); gl_FragColor=vec4(c,1.); }` }));
   scene.add(sky);
-  water = new THREE.Mesh(new THREE.PlaneGeometry(240000, 240000), new THREE.MeshPhongMaterial({ color: 0x2b6a86, specular: 0x334450, shininess: 25, transparent: true, opacity: .92 }));
+  water = new THREE.Mesh(new THREE.PlaneGeometry(240000, 240000), waterMaterial());
   water.rotation.x = -Math.PI / 2; water.position.y = 0; scene.add(water);
   const L = c => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
   Object.assign(MAT, { olive: L(0x5d6642), dark: L(0x2b2e28), grey: L(0x7c848e), grey2: L(0x69707a), steel: L(0xb9bec4), conc: L(0x9a958a), roof: L(0xa04530), wall: L(0xe6dfcf), tree: L(0x2f5a2c), tree2: L(0x46703a), red: new THREE.MeshBasicMaterial({ color: 0xff3020 }),
@@ -316,6 +318,62 @@ function initGfx() {
 }
 function resize() { const q = +S.q || 1; renderer.setPixelRatio(Math.min(devicePixelRatio || 1, q)); renderer.setSize(innerWidth, innerHeight, false); camera.aspect = innerWidth / innerHeight; camera.fov = camera.aspect < 1 ? 82 : 65; camera.updateProjectionMatrix(); }
 
+/* море и озёра: цвет по глубине (карта расстояния до берега), пена прибоя, бегущая рябь и блики солнца — всё в шейдере */
+const WU = { uTime: { value: 0 }, uWt: { value: null }, uSz: { value: new THREE.Vector2(36000, 24000) } };
+function waterMaterial() {
+  const m = new THREE.MeshPhongMaterial({ color: 0x2b6a86, specular: 0xbfd6e6, shininess: 70, transparent: true, opacity: .95 });
+  m.onBeforeCompile = sh => { Object.assign(sh.uniforms, WU);
+    sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 vWP;").replace("#include <begin_vertex>", "#include <begin_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.)).xyz;");
+    sh.fragmentShader = sh.fragmentShader.replace("#include <common>", `#include <common>
+varying vec3 vWP; uniform float uTime; uniform sampler2D uWt; uniform vec2 uSz;
+float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f); return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
+float wv(vec2 p){ return vn(p / 26. + vec2(uTime * .05, uTime * .03)) * .55 + vn(p / 9. - vec2(uTime * .09, -uTime * .06)) * .3 + vn(p / 3.2 + vec2(uTime * .17, uTime * .11)) * .15; }`)
+      .replace("#include <color_fragment>", `#include <color_fragment>
+  vec4 wt = texture2D(uWt, vWP.xz / uSz); float dst = wt.r, lake = wt.g;
+  float k = pow(clamp(dst, 0., 1.), .5);
+  vec3 shallow = vec3(.16, .62, .64), deep = vec3(.025, .15, .30);
+  vec3 col = mix(shallow, deep, smoothstep(0., .75, k));
+  vec3 lakeC = mix(vec3(.62, .78, .72), vec3(.2, .48, .56), clamp(lake * 1.4, 0., 1.));
+  col = mix(col, lakeC, step(.004, lake));
+  float wn = wv(vWP.xz);
+  col *= .88 + .24 * wn;
+  float shore = (1. - smoothstep(.006, .05, dst)) * (1. - step(.004, lake));
+  float foam = shore * smoothstep(.38, .7, wn + .4 * sin(uTime * .8 - dst * 200.) * (1. - dst * 8.)) * 1.0 + (1. - smoothstep(0., .005, dst)) * (1. - step(.004, lake)) * .5;
+  col = mix(col, vec3(.93, .97, 1.), clamp(foam, 0., .85));
+  diffuseColor.rgb = col; diffuseColor.a = mix(.55, .96, smoothstep(0., .5, k)) * (1. - .1 * step(.004, lake));`)
+      .replace("#include <normal_fragment_begin>", `#include <normal_fragment_begin>
+  { float fa = 1. - smoothstep(1500., 9000., length(cameraPosition - vWP)); vec2 q = vWP.xz, e = vec2(1.2, 0.);
+    float w0 = wv(q), gx = wv(q + e.xy) - w0, gz = wv(q + e.yx) - w0; normal = normalize(normal + mat3(viewMatrix) * vec3(-gx, 0., -gz) * 1.3 * fa); }`);
+  };
+  return m;
+}
+function buildWaterTex() {
+  const { nx, nz, h, land, dOut } = W, d = new Uint8Array(nx * nz * 4);
+  for (let k = 0; k < nx * nz; k++) { const sea = land[k] === 0; d[4 * k] = sea ? Math.min(255, dOut[k] / 4500 * 255) : 0; d[4 * k + 1] = land[k] === 2 ? Math.max(8, Math.min(255, -h[k] / 30 * 255)) : 0; d[4 * k + 2] = 0; d[4 * k + 3] = 255; }
+  const t = new THREE.DataTexture(d, nx, nz, THREE.RGBAFormat); t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearFilter; t.flipY = false; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true;
+  WU.uWt.value?.dispose(); WU.uWt.value = t; WU.uSz.value.set(W.W, W.H);
+}
+/* дороги и посёлки — карта поверх рельефа (в шейдер как цветовая подложка с прозрачностью) */
+const OV = { uRoad: { value: null }, uOSz: { value: new THREE.Vector2(36000, 24000) } };
+function pickVillages() {
+  const r = rng(W.seed + 11), { nx, land, mt, dIn, cs } = W, nv = 10 + Math.floor(r() * 8), out = [];
+  for (let v = 0; v < nv; v++) for (let t = 0; t < 200; t++) { const cx = r() * W.W, cz = r() * W.H, k = Math.round(cz / cs) * nx + Math.round(cx / cs);
+    if (land[k] === 1 && mt[k] < .3 && W.gnd(cx, cz) > 3 && (dIn[k] < 2500 || r() < .4) && Math.hypot(cx - W.target.x, cz - W.target.z) > 1200) { out.push({ x: cx, z: cz, rot: r() * 3, n: 12 + Math.floor(r() * 30) }); break; } }
+  return out;
+}
+function buildOverlay() {
+  const px = 20, cw = Math.ceil(W.W / px), ch = Math.ceil(W.H / px), cv = document.createElement("canvas"); cv.width = cw; cv.height = ch; const c = cv.getContext("2d"), r = rng(W.seed + 21), P = (x, z) => [x / px, z / px];
+  c.lineCap = "round"; c.lineJoin = "round";
+  const pts = [...W.vil.map(v => ({ x: v.x, z: v.z, v })), { x: W.target.x, z: W.target.z, t: 1 }], conn = [pts[0]], rest = pts.slice(1), edges = [];
+  while (rest.length) { let best = null; for (const a of conn) for (const b of rest) { const d = Math.hypot(a.x - b.x, a.z - b.z); if (!best || d < best.d) best = { a, b, d }; } edges.push(best); conn.push(best.b); rest.splice(rest.indexOf(best.b), 1); }
+  for (let i = 0; i < 3 && pts.length > 4; i++) { const a = pts[Math.floor(r() * pts.length)], b = pts[Math.floor(r() * pts.length)]; if (a !== b) edges.push({ a, b, d: Math.hypot(a.x - b.x, a.z - b.z) }); }
+  const road = (e, w, col) => { const { a, b, d } = e, nx_ = -(b.z - a.z) / d, nz_ = (b.x - a.x) / d, bend = (r() - .5) * .22 * d, N = Math.max(8, Math.floor(d / 250)); c.strokeStyle = col; c.lineWidth = w; let pen = false; c.beginPath();
+    for (let i = 0; i <= N; i++) { const t = i / N, s = Math.sin(Math.PI * t) * bend + Math.sin(t * 17 + e.d) * 40, x = a.x + (b.x - a.x) * t + nx_ * s, z = a.z + (b.z - a.z) * t + nz_ * s; if (W.isSea(x, z) || W.gnd(x, z) < 1.2 || W.gnd(x, z) > 700) { pen = false; continue; } const [u, v] = P(x, z); if (!pen) { c.moveTo(u, v); pen = true; } else c.lineTo(u, v); } c.stroke(); };
+  for (const e of edges) { road(e, 1.55, "rgba(60,58,56,.55)"); road(e, 1.0, "rgba(176,170,160,.85)"); } // обочина + полотно
+  for (const v of W.vil) { const [u, w] = P(v.x, v.z); c.fillStyle = "rgba(150,128,96,.5)"; c.beginPath(); c.arc(u, w, 5 + v.n / 12, 0, 6.3); c.fill(); }
+  const t = new THREE.CanvasTexture(cv); t.flipY = false; t.anisotropy = 4; t.colorSpace = THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; OV.uRoad.value?.dispose(); OV.uRoad.value = t; OV.uOSz.value.set(W.W, W.H);
+}
 /* рельеф: сетка с цветами вершин (пляж, степь, солончак, лес на склонах, светлый известняк на плато и обрывах) */
 const FIELDS = [0xd8c27a, 0xc9b25e, 0x8fa04f, 0x7d8a45, 0x9c7a52, 0xb59a62, 0xa8b066].map(c => new THREE.Color(c));
 function terrainColors() {
@@ -341,11 +399,11 @@ function terrainColors() {
 /* процедурная детализация рельефа в шейдере: цвет и микро-неровности по мировым координатам (3 масштаба, с затуханием вдали), слоистость на обрывах */
 function terrainMaterial() {
   const m = new THREE.MeshLambertMaterial({ vertexColors: true });
-  m.onBeforeCompile = sh => {
+  m.onBeforeCompile = sh => { Object.assign(sh.uniforms, OV);
     sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 vWP; varying vec3 vWN;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.)).xyz; vWN = normal;");
     sh.fragmentShader = sh.fragmentShader.replace("#include <common>", `#include <common>
-varying vec3 vWP; varying vec3 vWN;
+varying vec3 vWP; varying vec3 vWN; uniform sampler2D uRoad; uniform vec2 uOSz;
 float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f); return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
 float fb(vec2 p, float k){ float s = 0., a = .5; for (int i = 0; i < 4; i++) { s += a * vn(p); p = p * 2.07 + 13.1; a *= .5 * k; } return s; }`)
@@ -361,7 +419,13 @@ float fb(vec2 p, float k){ float s = 0., a = .5; for (int i = 0; i < 4; i++) { s
     float v = .76 + .5 * c3 * (1. - .5 * fa) ; v *= mix(1., .82 + .36 * c2, .75 * (1. - smoothstep(4000., 14000., length(cameraPosition - vWP)))); v *= mix(1., .86 + .28 * c1, fa);
     float steep = smoothstep(.42, .78, 1. - normalize(vWN).y); float band = .5 + .5 * sin(vWP.y * .55 + c2 * 5.);
     v *= 1. - steep * (.10 + .20 * band);
-    diffuseColor.rgb *= v; }`);
+    diffuseColor.rgb *= v;
+    /* поля: живая изгородь по границам, у некоторых — ряды (виноградники/сады), видны вблизи */
+    if (vWP.y < 140. && vWN.y > .97 && fa > 0.) { float a = .5 * sin(vWP.x / 9000. + 1.3) + .3 * cos(vWP.z / 7000.), u = vWP.x * cos(a) + vWP.z * sin(a), w = -vWP.x * sin(a) + vWP.z * cos(a), fi = floor(u / 520.), fj = floor(w / 380.);
+      float hs = fract(sin(fi * 127.1 + fj * 311.7) * 43758.5), du = abs(fract(u / 520.) - .5) * 520., dw = abs(fract(w / 380.) - .5) * 380.;
+      float edge = 1. - smoothstep(0., 3.5, min(250. - du, 190. - dw)); diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(.55, .66, .45), edge * .55 * fa);
+      if (hs < .22) { float rows = smoothstep(.3, .7, abs(fract(u / 5.5) - .5) * 2.); diffuseColor.rgb *= 1. - .22 * rows * fa; } }
+    vec4 rd = texture2D(uRoad, vWP.xz / uOSz); diffuseColor.rgb = mix(diffuseColor.rgb, rd.rgb / max(rd.a, .001), rd.a * (1. - .6 * smoothstep(3000., 12000., length(cameraPosition - vWP)))); }`);
   };
   return m;
 }
@@ -373,6 +437,7 @@ function buildScene() {
   for (let j = 0; j < nz - 1; j++) for (let i = 0; i < nx - 1; i++) { const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1; idx[q++] = a; idx[q++] = c; idx[q++] = b; idx[q++] = b; idx[q++] = c; idx[q++] = d; }
   const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(pos, 3)); geo.setAttribute("color", new THREE.BufferAttribute(terrainColors(), 3)); geo.setIndex(new THREE.BufferAttribute(idx, 1)); geo.computeVertexNormals();
   terrainMesh = new THREE.Mesh(geo, terrainMaterial()); scene.add(terrainMesh);
+  W.vil = pickVillages(); buildWaterTex(); buildOverlay();
   if (+S.life) buildLife();
   buildObjects(); buildMinimap();
   for (const b of G.bombers) { b.mesh = makeJet(); objGroup.add(b.mesh); b.trail = makeTrail(); fxGroup.add(b.trail); }
@@ -380,11 +445,9 @@ function buildScene() {
 /* лес на склонах гор, посёлки в степи и у берега — для ощущения скорости у земли */
 function buildLife() {
   const r = rng(W.seed + 9), trees = [], houses = [], { nx, nz, h, land, mt, dIn, cs } = W;
-  for (let t = 0; t < 120000 && trees.length < 9000; t++) { const x = r() * W.W, z = r() * W.H, i = Math.round(x / cs), j = Math.round(z / cs), k = j * nx + i; if (land[k] !== 1) continue; const m = mt[k];
+  for (let t = 0; t < 120000 && trees.length < 13000; t++) { const x = r() * W.W, z = r() * W.H, i = Math.round(x / cs), j = Math.round(z / cs), k = j * nx + i; if (land[k] !== 1) continue; const m = mt[k];
     if (m > .1 && m < .85 && r() < .9) trees.push([x, W.gnd(x, z), z, .7 + .8 * r()]); else if (m < .05 && r() < .015) trees.push([x, W.gnd(x, z), z, .6 + .4 * r()]); }
-  const nv = 10 + Math.floor(r() * 8);
-  for (let v = 0; v < nv; v++) { let cx, cz, ok = false; for (let t = 0; t < 200 && !ok; t++) { cx = r() * W.W; cz = r() * W.H; const k = Math.round(cz / cs) * nx + Math.round(cx / cs); ok = land[k] === 1 && mt[k] < .3 && W.gnd(cx, cz) > 3 && (dIn[k] < 2500 || r() < .4) && Math.hypot(cx - W.target.x, cz - W.target.z) > 1200; }
-    if (!ok) continue; const nH = 12 + Math.floor(r() * 30), rot = r() * 3;
+  for (const V of W.vil) { const cx = V.x, cz = V.z, nH = V.n, rot = V.rot;
     for (let i = 0; i < nH; i++) { const a = (i % 6) * 38 - 95, b = Math.floor(i / 6) * 34 - 70, x = cx + a * Math.cos(rot) - b * Math.sin(rot) + (r() - .5) * 10, z = cz + a * Math.sin(rot) + b * Math.cos(rot) + (r() - .5) * 10; if (W.isSea(x, z)) continue; houses.push([x, W.gnd(x, z), z, rot]); } }
   const m4 = new THREE.Matrix4(), qt = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3();
   const tg = new THREE.ConeGeometry(5, 16, 6).translate(0, 8, 0); tg.userData.own = true;
@@ -514,13 +577,15 @@ function cameraUpdate(dt) {
   const b = G.bombers[G.me] || G.bombers[0], p = b.pos;
   /* камера попадания: короткий план места разрыва сразу после сброса (только на автопилоте) */
   const ic = G.impactCam; if (ic && tNow < ic.until && camMode < 3 && b.alive && !b.falling && !ctl.steerMan) {
+    if (ic.bomb && !ic.bomb.done) { /* вид «от бомбы»: камера летит вместе с бомбой чуть позади и выше, смотрит вперёд-вниз на цель */
+      const B = ic.bomb, d = _b.copy(B.vel).normalize(); camera.position.copy(B.pos).addScaledVector(d, -9).addScaledVector(UP, 2.5); camera.up.set(0, 1, 0); camera.lookAt(_a.copy(B.pos).addScaledVector(d, 80)); cam.reset = true; if (cam.zoom) { cam.zoom = false; resize(); } return; }
     const gy = Math.max(0, W.gnd(ic.cp.x, ic.cp.z)); ic.cp.y = Math.max(ic.cp.y, gy + 70, gy + 70); camera.position.copy(ic.cp); camera.up.set(0, 1, 0); camera.lookAt(ic.x, ic.y + 20, ic.z); cam.reset = true; if (cam.zoom) { cam.zoom = false; resize(); } return; }
-  const ad = G.adCam; if (ad && tNow < ad.until && camMode < 3 && b.alive && !b.falling && !ctl.steerMan && ad.tgt === b && !ad.src.dead) {
-    const s = ad.src, ex = b.pos.x - s.x, ez = b.pos.z - s.z, el = Math.hypot(ex, ez) || 1, sy = (s.y || 0) + 14;
+  const ad = G.adCam; if (ad && tNow < ad.until && camMode < 3 && b.alive && !b.falling && !ctl.steerMan && ad.tgt.alive && !ad.src.dead) {
+    const tb = ad.tgt, s = ad.src, ex = tb.pos.x - s.x, ez = tb.pos.z - s.z, el = Math.hypot(ex, ez) || 1, sy = (s.y || 0) + 14;
     /* камера сбоку и чуть позади установки — сама она в кадр не лезет; сначала смотрим на ракету/трассы, потом на цель */
     camera.position.set(s.x - ex / el * 40 - ez / el * 75, Math.max(sy + 8, Math.max(0, W.gnd(s.x - ex / el * 40 - ez / el * 75, s.z - ez / el * 40 + ex / el * 75)) + 22), s.z - ez / el * 40 + ex / el * 75); camera.up.set(0, 1, 0);
-    const k = clamp((tNow - ad.t0 - .9) / 1.4, 0, 1), fp = ad.m && ad.m.alive ? ad.m.pos : b.pos; camera.lookAt(_a.copy(fp).lerp(b.pos, k));
-    if (!cam.zoom || camera.fov !== 26) { camera.fov = 26; camera.updateProjectionMatrix(); cam.zoom = true; } cam.reset = true; return; }
+    const k = clamp((tNow - ad.t0 - .9) / 1.4, 0, 1), fp = ad.m && ad.m.alive ? ad.m.pos : tb.pos; camera.lookAt(_a.copy(fp).lerp(tb.pos, k));
+    if (!cam.zoom || camera.fov !== 38) { camera.fov = 38; camera.updateProjectionMatrix(); cam.zoom = true; } cam.reset = true; return; }
   if (cam.zoom) { cam.zoom = false; resize(); }
   /* камера гибели: борт подбит или взорвался — смотрим со стороны, как он падает и взрывается */
   if ((b.falling || !b.alive) && camMode < 3) {
@@ -608,12 +673,12 @@ function flash(o) { const f = $("flash"); f.style.opacity = o; setTimeout(() => 
 let lastT = 0;
 function frame(ms) {
   const t = ms / 1000, dt = Math.min(.1, t - lastT || .016); lastT = t; if (!G) return;
-  let left = dt; const me0 = G.bombers[G.me], slow = me0 && ((G.impactCam && tNow < G.impactCam.until && tNow > G.impactCam.hit - .5 && !ctl.steerMan && me0.alive && !me0.falling && camMode < 3) || (me0.falling && tNow - (me0.fallT || 0) < 2.2) || (!me0.alive && tNow - (me0.deadT ?? -99) < 2.2)); // замедление на гибели борта
+  let left = dt; const me0 = G.bombers[G.me], slow = me0 && ((G.impactCam && tNow < G.impactCam.until && tNow > G.impactCam.hit - 1.2 && !ctl.steerMan && me0.alive && !me0.falling && camMode < 3) || (me0.falling && tNow - (me0.fallT || 0) < 2.2) || (!me0.alive && tNow - (me0.deadT ?? -99) < 2.2)); // замедление на гибели борта
   if (slow) left *= .45;
   while (left > 1e-6 && !window.__freeze) { const d = Math.min(1 / 60, left); simStep(d); left -= d; }
   if (G.hitMsg && !G.hitMsg.shown) { G.hitMsg.shown = true; toast(G.hitMsg.txt, 2800); }
   cameraUpdate(dt); sky.position.copy(camera.position); water.position.x = camera.position.x; water.position.z = camera.position.z;
-  bombersDraw(dt); objectsDraw(dt); fxDraw(dt);
+  WU.uTime.value = t; bombersDraw(dt); objectsDraw(dt); fxDraw(dt);
   renderer.render(scene, camera);
   if (t - hudT > .1) { hudT = t; hud(); } markUpdate(); pipUpdate();
 }
