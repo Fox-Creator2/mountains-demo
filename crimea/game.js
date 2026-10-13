@@ -36,7 +36,7 @@ function newRound(seed) {
     const back = i * 1500, side = (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 500;
     const x = W.start.x - Math.cos(dir) * back - Math.sin(dir) * side, z = W.start.z - Math.sin(dir) * back + Math.cos(dir) * side;
     const b = { id: i, pos: new THREE.Vector3(x, (+S.agl || 60) + 20, z), f: new THREE.Vector3(Math.cos(dir), 0, Math.sin(dir)), v: PL.CRU, roll: 0, rollV: 0, ar: 0, au: 0,
-      hp: PL.HP, alive: true, falling: false, bombs: 6, flares: 8, mode: "ingress", sector, route: null, ri: 0, rel: 0, relT: 0, evT: 0, flT: -9, r0: new THREE.Vector3(), u0: new THREE.Vector3(), r: new THREE.Vector3(), u: new THREE.Vector3(), tracked: 0, safe: false };
+      hp: PL.HP, alive: true, falling: false, bombs: 6, flares: 8, abN: 2, abT: -9, abCd: -9, mode: "ingress", sector, route: null, ri: 0, rel: 0, relT: 0, evT: 0, flT: -9, r0: new THREE.Vector3(), u0: new THREE.Vector3(), r: new THREE.Vector3(), u: new THREE.Vector3(), tracked: 0, safe: false };
     planIngress(b); G.bombers.push(b);
   }
   STATS.rounds++;
@@ -63,7 +63,7 @@ function stepPlane(b, dt, ar, au, vt) {
   basis(b); const m = Math.hypot(ar, au); if (m > PL.AMAX) { ar *= PL.AMAX / m; au *= PL.AMAX / m; } b.ar = ar; b.au = au;
   const vv = Math.max(b.v, 80); b.f.addScaledVector(b.r0, ar * dt / vv).addScaledVector(b.u0, au * dt / vv);
   if (Math.abs(b.f.y) > .85) { const k = Math.sqrt((1 - .85 * .85) / (b.f.x * b.f.x + b.f.z * b.f.z + 1e-12)); b.f.x *= k; b.f.z *= k; b.f.y = Math.sign(b.f.y) * .85; }
-  b.f.normalize(); b.v += clamp(vt - b.v, -PL.BRK * dt, PL.ACC * dt); b.pos.addScaledVector(b.f, b.v * dt);
+  b.f.normalize(); const ab = b.abT > tNow; if (ab) vt = Math.max(vt, PL.VMAX * 1.5); b.v += clamp(vt - b.v, -PL.BRK * (b.v > PL.VMAX ? .45 : 1) * dt, PL.ACC * (ab ? 5 : 1) * dt); b.pos.addScaledVector(b.f, b.v * dt);
   const rt = clamp(Math.atan2(ar, 9.81 + Math.max(0, au) * .3), -1.35, 1.35);
   for (let k = 0, h = dt / 2; k < 2; k++) { b.rollV += (100 * (rt - b.roll) - 17 * b.rollV) * h; b.roll += b.rollV * h; }
   basis(b);
@@ -287,6 +287,9 @@ function playerControl(b, ai) {
   return [ar, au, vt];
 }
 function playerBomb() { const b = G.bombers[G.me]; if (!b || !b.alive || b.falling || b.bombs <= 0) return; if (!ctl.steerMan) { b.mode = "release"; b.relT = tNow; b.rel = 0; return; } dropBomb(b); }
+/* форсаж: короткий импульсный рывок (+40 м/с сразу, затем 3 с разгона до ~1600 км/ч), 2 заряда на вылет, только по кнопке */
+function playerBurner() { const b = G.bombers[G.me]; if (!b || !b.alive || b.falling || b.abN <= 0 || tNow < b.abCd) return;
+  b.abN--; b.abT = tNow + 3; b.abCd = tNow + 4; b.v = Math.min(PL.VMAX * 1.5, b.v + 40); toast("Форсаж!", 900); }
 function playerFlare() { const b = G.bombers[G.me]; if (b && b.alive && !b.falling) dropFlares(b); }
 
 /* ================= графика ================= */
@@ -695,7 +698,7 @@ function burn(mesh) { mesh.traverse(o => { if (o.isMesh && o.material !== MAT.fl
 function bombersDraw(dt) {
   for (const b of G.bombers) { const m = b.mesh; if (!m) continue; m.visible = b.alive || tNow - (b.fallT || 0) < .1; if (!m.visible) { b.trail.visible = false; continue; }
     m.position.copy(b.pos); _m.makeBasis(b.r, b.u, _a.copy(b.f).negate()); m.quaternion.setFromRotationMatrix(_m);
-    const th = .4 + 1.2 * (b.v / PL.VMAX); m.userData.flame.scale.set(1, 1, th); m.userData.fl2.scale.set(1, 1, th);
+    const abk = Math.max(0, Math.min(1, (b.abT - tNow) / .4)), th = .4 + 1.2 * Math.min(1, b.v / PL.VMAX) + abk * (2.2 + .4 * Math.sin(tNow * 47)); m.userData.flame.scale.set(1 + abk * .5, 1 + abk * .5, th); m.userData.fl2.scale.set(1 + abk * .5, 1 + abk * .5, th); m.userData.flame.material.color.setHex(abk > 0 ? 0xffe6b0 : 0xffa040); m.userData.fl2.material.color.copy(m.userData.flame.material.color);
     const d = b.trail.userData; d.t += dt; if (d.t > .05) { d.t = 0; d.hist.unshift(b.pos.clone()); if (d.hist.length > d.n) d.hist.pop(); }
     const arr = b.trail.geometry.attributes.position.array; for (let i = 0; i < d.n; i++) { const q = d.hist[Math.min(i, d.hist.length - 1)] || b.pos; arr[3 * i] = q.x; arr[3 * i + 1] = q.y; arr[3 * i + 2] = q.z; } b.trail.geometry.attributes.position.needsUpdate = true;
     b.trail.material.color.set(b.falling ? 0x333333 : 0xffffff); b.trail.material.opacity = b.falling ? .9 : .3; b.trail.visible = false; emitSmoke(b);
@@ -782,7 +785,7 @@ function hud() {
   $("tgt").textContent = `${tg.name}: ${G.success ? "поражена" : `${Math.round(Math.hypot(tg.x - b.pos.x, tg.z - b.pos.z) / 100) / 10} км · разрушено ${tg.parts.length - left} из ${tg.need} нужных`}`;
   $("score").textContent = `раунд ${STATS.rounds} · успехов ${STATS.wins} · неудач ${STATS.losses}`;
   $("grp").innerHTML = G.bombers.map(q => `<div class="${q.id === G.me ? "me" : ""} ${q.alive && !q.falling ? "" : "dead"}">✈ Борт ${q.id + 1} · 💣${q.bombs} ✨${q.flares}${q.safe ? " · в море" : ""}</div>`).join("");
-  $("nBm").textContent = b.bombs; $("nFl").textContent = b.flares;
+  $("nBm").textContent = b.bombs; $("nFl").textContent = b.flares; $("nAb").textContent = b.abN; $("bAb").classList.toggle("on", b.abT > tNow); $("bAb").style.opacity = b.abN > 0 || b.abT > tNow ? 1 : .45;
   $("chip").textContent = ctl.steerMan ? "РУЧНОЕ" : "АВТОПИЛОТ"; $("chip").className = ctl.steerMan ? "man" : "auto";
   $("thr").className = ctl.steerMan || ctl.spdMan ? "man" : ""; $("thrFill").style.height = (ctl.steerMan || ctl.spdMan ? ctl.thr : (b.v - 120) / (PL.VMAX - 120)) * 100 + "%";
   const mis = G.missiles.find(m => m.alive && m.tgt === b && !m.decoy), w = $("warn");
@@ -850,8 +853,9 @@ $("bCam").onclick = () => { camMode = (camMode + 1) % 5; S.cam = camMode; saveS(
 $("map").onclick = () => $("map").classList.toggle("big");
 $("bBomb").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); playerBomb(); });
 $("bFlare").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); playerFlare(); });
+$("bAb").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); playerBurner(); });
 addEventListener("keydown", e => { const k = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase(); ctl.keys[k] = true; ctl.keys[e.key] = true;
-  if (e.key === " ") { $("bAuto").onclick(); e.preventDefault(); } if (k === "b" || k === "и" || k === "enter") playerBomb(); if (k === "f" || k === "а") playerFlare(); if (k === "c" || k === "с") $("bCam").onclick(); if (k === "m" || k === "ь") $("map").onclick(); if (k === "escape") $("panel").style.display = "none"; });
+  if (e.key === " ") { $("bAuto").onclick(); e.preventDefault(); } if (k === "b" || k === "и" || k === "enter") playerBomb(); if (k === "f" || k === "а") playerFlare(); if (k === "n" || k === "т") playerBurner(); if (k === "c" || k === "с") $("bCam").onclick(); if (k === "m" || k === "ь") $("map").onclick(); if (k === "escape") $("panel").style.display = "none"; });
 addEventListener("keyup", e => { const k = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase(); ctl.keys[k] = false; ctl.keys[e.key] = false; });
 /* панель */
 const sel = { sDiff: "diff", sWing: "wing", sAgl: "agl", sResume: "resume", sLife: "life", sQ: "q", sQa: "qa", sInv: "inv" };
@@ -864,7 +868,7 @@ $("bNew").onclick = () => { $("panel").style.display = "none"; hideSummary(); ne
 /* ---------- запуск ---------- */
 initGfx();
 setTimeout(() => { newRound(S.seed ? S.seed + 1 : 1 + Math.floor(Math.random() * 999)); $("loading").style.display = "none"; renderer.setAnimationLoop(frame);
-  $("hint").textContent = "правая часть экрана — стик · 💣 бомбы · ✨ ловушки"; setTimeout(() => $("hint").textContent = "", 6000); }, 30);
+  $("hint").textContent = "правая часть экрана — стик · 💣 бомбы · ✨ ловушки · 🔥 форсаж (2 раза за вылет)"; setTimeout(() => $("hint").textContent = "", 6000); }, 30);
 
 /* тесты: симуляция без графики */
 window.__cr = { fns: { terrainColors, terrainNormals, buildWaterTex }, sim(sec, dt = 1 / 60) { for (let t = 0; t < sec; t += dt) simStep(dt); return this.state(); },
