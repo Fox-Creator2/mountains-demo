@@ -167,12 +167,15 @@ function defenseStep(dt) {
     if (tNow < (A.next || 0)) continue; A.next = tNow + dif.aaaRate * (.7 + .6 * rnd());
     if (!losClear(W, A.x, ay, A.z, P.x, P.y, P.z, 90)) continue;
     const sp = 45 * dif.spread * (bd / 2000 + .35); P.x += (rnd() - .5) * 2 * sp; P.y += (rnd() - .5) * 1.4 * sp; P.z += (rnd() - .5) * 2 * sp;
-    G.shells.push({ from: new THREE.Vector3(A.x, ay, A.z), to: P.clone(), t0: tNow, tb: tNow + tt, mesh: null }); A.recoil = 1; }
+    G.shells.push({ from: new THREE.Vector3(A.x, ay, A.z), to: P.clone(), t0: tNow, tb: tNow + tt, mesh: null }); A.recoil = 1; startAdCam(A, tgt, "Зенитки открыли огонь"); }
 }
+/* камера «от лица ПВО»: когда оно открывает огонь по нашему борту — на ~3 с кадр от позиции ЗРК/зенитки с длиннофокусным обзором */
+function startAdCam(src, tgt, txt) { if (ctl.steerMan || tgt !== G.bombers[G.me] || tNow < (G.adCool || 0) || (G.impactCam && tNow < G.impactCam.until) || G.done) return;
+  G.adCam = { src, tgt, t0: tNow, until: tNow + 3.4, m: G.missiles[G.missiles.length - 1] }; G.adCool = tNow + 16; toast(txt, 1800); }
 function launchMissile(s, h, b) {
   const pos = new THREE.Vector3(s.x, s.y + h, s.z), dir = new THREE.Vector3().subVectors(b.pos, pos).normalize(); dir.y = Math.max(dir.y, .5); dir.normalize();
   G.missiles.push({ pos, vel: dir.multiplyScalar(60), src: s, srcH: h, tgt: b, t0: tNow, alive: true, decoy: null, lostT: 0, trail: [], mesh: null, lineMesh: null });
-  if (b.id === G.me) warnT = tNow + 1.5;
+  if (b.id === G.me) { warnT = tNow + 1.5; startAdCam(s, b, "ПВО: пуск ракеты по нашему борту"); }
 }
 function missilesStep(dt) {
   const dif = D();
@@ -212,13 +215,17 @@ function shellsStep(dt, prevPos) {
 }
 function bombsStep(dt) {
   for (const B of G.bombs) { if (B.done) continue; B.t += dt; B.vel.y -= 9.81 * dt; B.vel.multiplyScalar(1 - .015 * dt); B.pos.addScaledVector(B.vel, dt);
+    /* за ~3 с до падения бомбы камера уходит на точку падения, чтобы увидеть разрыв */
+    if (B.owner.id === G.me && !B.owner.falling && !(G.impactCam && tNow < G.impactCam.until) && !ctl.steerMan) { const h = B.pos.y - Math.max(0, W.gnd(B.pos.x, B.pos.z)), tti = (B.vel.y + Math.sqrt(B.vel.y * B.vel.y + 19.62 * Math.max(0, h))) / 9.81;
+      if (tti < 3.2) { const lx = B.pos.x + B.vel.x * tti, lz = B.pos.z + B.vel.z * tti, o = B.owner; G.impactCam = { x: lx, y: Math.max(0, W.gnd(lx, lz)), z: lz, t0: tNow, hit: tNow + tti, until: tNow + tti + 2.8, kills: 0,
+        cp: new THREE.Vector3(lx, 0, lz).addScaledVector(_b.copy(o.f).setY(0).normalize(), -330).addScaledVector(o.r0, 90) }; G.adCam = null; } }
     const gy = Math.max(0, W.gnd(B.pos.x, B.pos.z)); if (B.pos.y > gy) continue;
     B.done = true; B.pos.y = gy; const water = gy <= 0 && W.isSea(B.pos.x, B.pos.z); boom(B.pos, water ? 34 : 52, water ? 0xd8eaff : 0xffa040, water);
     { const ap = B.owner.aimP; (G.imp ??= []).push(ap ? Math.round(Math.hypot(ap.x - B.pos.x, ap.z - B.pos.z)) : -1); }
     const R = 48; let hitN = 0, dMin = 1e9; for (const p of W.target.parts) { const d = Math.hypot(p.x - B.pos.x, p.z - B.pos.z); dMin = Math.min(dMin, d); if (p.hp <= 0) continue; if (W.target.type === "ship" ? d < 45 : d < R + p.sz * .4) { p.hp = 0; hitN++; G.fires.push({ x: p.x, y: p.y + 6, z: p.z, t0: tNow, big: true }); boom(_a.set(p.x, p.y + 8, p.z), 70, 0xff9030, false); } }
     /* показать результат: камера на месте попадания и подпись */
     if (B.owner.id === G.me && !B.owner.falling) { const ic = G.impactCam; const o = B.owner;
-      if (!ic || tNow > ic.until) G.impactCam = { x: B.pos.x, y: B.pos.y, z: B.pos.z, until: tNow + 3.2, cp: new THREE.Vector3(B.pos.x, 0, B.pos.z).addScaledVector(_b.copy(o.f).setY(0).normalize(), -330).addScaledVector(o.r0, 90), kills: 0 };
+      if (!ic || tNow > ic.until) G.impactCam = { x: B.pos.x, y: B.pos.y, z: B.pos.z, t0: tNow, hit: tNow, until: tNow + 3.2, cp: new THREE.Vector3(B.pos.x, 0, B.pos.z).addScaledVector(_b.copy(o.f).setY(0).normalize(), -330).addScaledVector(o.r0, 90), kills: 0 };
       else { ic.x = B.pos.x; ic.y = B.pos.y; ic.z = B.pos.z; ic.until = Math.max(ic.until, tNow + 2.4); }
       G.impactCam.kills += hitN; G.hitMsg = { t: tNow, txt: G.impactCam.kills ? `Попадание! Разрушено частей цели: ${W.target.parts.filter(q => q.hp <= 0).length + 0} из ${W.target.parts.length}` : dMin < 160 ? "Близкий разрыв — цель цела" : "Мимо" }; }
     for (const L of [W.sams, W.aaa, W.ships]) for (const s of L) if (!s.dead && Math.hypot(s.x - B.pos.x, s.z - B.pos.z) < (s.kind === "frigate" ? 50 : 40)) { if (s.hp > 1) s.hp--; else { s.dead = true; STATS.defKilled++; G.fires.push({ x: s.x, y: (s.y || 0) + 4, z: s.z, t0: tNow }); } }
@@ -507,7 +514,14 @@ function cameraUpdate(dt) {
   const b = G.bombers[G.me] || G.bombers[0], p = b.pos;
   /* камера попадания: короткий план места разрыва сразу после сброса (только на автопилоте) */
   const ic = G.impactCam; if (ic && tNow < ic.until && camMode < 3 && b.alive && !b.falling && !ctl.steerMan) {
-    const gy = Math.max(0, W.gnd(ic.cp.x, ic.cp.z)); ic.cp.y = Math.max(ic.cp.y, gy + 70, gy + 70); camera.position.copy(ic.cp); camera.up.set(0, 1, 0); camera.lookAt(ic.x, ic.y + 20, ic.z); cam.reset = true; return; }
+    const gy = Math.max(0, W.gnd(ic.cp.x, ic.cp.z)); ic.cp.y = Math.max(ic.cp.y, gy + 70, gy + 70); camera.position.copy(ic.cp); camera.up.set(0, 1, 0); camera.lookAt(ic.x, ic.y + 20, ic.z); cam.reset = true; if (cam.zoom) { cam.zoom = false; resize(); } return; }
+  const ad = G.adCam; if (ad && tNow < ad.until && camMode < 3 && b.alive && !b.falling && !ctl.steerMan && ad.tgt === b && !ad.src.dead) {
+    const s = ad.src, ex = b.pos.x - s.x, ez = b.pos.z - s.z, el = Math.hypot(ex, ez) || 1, sy = (s.y || 0) + 14;
+    /* камера сбоку и чуть позади установки — сама она в кадр не лезет; сначала смотрим на ракету/трассы, потом на цель */
+    camera.position.set(s.x - ex / el * 40 - ez / el * 75, Math.max(sy + 8, Math.max(0, W.gnd(s.x - ex / el * 40 - ez / el * 75, s.z - ez / el * 40 + ex / el * 75)) + 22), s.z - ez / el * 40 + ex / el * 75); camera.up.set(0, 1, 0);
+    const k = clamp((tNow - ad.t0 - .9) / 1.4, 0, 1), fp = ad.m && ad.m.alive ? ad.m.pos : b.pos; camera.lookAt(_a.copy(fp).lerp(b.pos, k));
+    if (!cam.zoom || camera.fov !== 26) { camera.fov = 26; camera.updateProjectionMatrix(); cam.zoom = true; } cam.reset = true; return; }
+  if (cam.zoom) { cam.zoom = false; resize(); }
   /* камера гибели: борт подбит или взорвался — смотрим со стороны, как он падает и взрывается */
   if ((b.falling || !b.alive) && camMode < 3) {
     if (!cam.dc) { const o = _a.copy(camera.position).sub(p); if (o.length() < 140) o.copy(b.r0).multiplyScalar(170).addScaledVector(UP, 40); else o.setLength(Math.min(o.length(), 280)); cam.dc = { off: o.clone(), p: camera.position.clone() }; }
@@ -594,8 +608,8 @@ function flash(o) { const f = $("flash"); f.style.opacity = o; setTimeout(() => 
 let lastT = 0;
 function frame(ms) {
   const t = ms / 1000, dt = Math.min(.1, t - lastT || .016); lastT = t; if (!G) return;
-  let left = dt; const me0 = G.bombers[G.me], slow = me0 && ((G.impactCam && tNow < G.impactCam.until && !ctl.steerMan && me0.alive && !me0.falling && camMode < 3) || (me0.falling && tNow - (me0.fallT || 0) < 2.2) || (!me0.alive && tNow - (me0.deadT ?? -99) < 2.2)); // замедление на гибели борта
-  if (slow) left *= .4;
+  let left = dt; const me0 = G.bombers[G.me], slow = me0 && ((G.impactCam && tNow < G.impactCam.until && tNow > G.impactCam.hit - .5 && !ctl.steerMan && me0.alive && !me0.falling && camMode < 3) || (me0.falling && tNow - (me0.fallT || 0) < 2.2) || (!me0.alive && tNow - (me0.deadT ?? -99) < 2.2)); // замедление на гибели борта
+  if (slow) left *= .45;
   while (left > 1e-6 && !window.__freeze) { const d = Math.min(1 / 60, left); simStep(d); left -= d; }
   if (G.hitMsg && !G.hitMsg.shown) { G.hitMsg.shown = true; toast(G.hitMsg.txt, 2800); }
   cameraUpdate(dt); sky.position.copy(camera.position); water.position.x = camera.position.x; water.position.z = camera.position.z;
