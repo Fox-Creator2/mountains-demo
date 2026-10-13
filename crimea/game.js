@@ -385,15 +385,13 @@ function terrainNormals(f = 2) {
   const t = new THREE.DataTexture(data, Nx, Nz, THREE.RGBAFormat); t.colorSpace = THREE.NoColorSpace; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.flipY = false; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true; return t;
 }
 function terrainColors(f = 2) {
-  const { nx, nz, h, land, mt, dIn, cs } = W, Nx = (nx - 1) * f + 1, Nz = (nz - 1) * f + 1, data = new Uint8Array(Nx * Nz * 4), c = new THREE.Color(), r = rng(W.seed + 5), at = W.at;
+  const { nx, nz, h, land, mt, dIn, cs } = W, Nx = (nx - 1) * f + 1, Nz = (nz - 1) * f + 1, data = new Uint8Array(Nx * Nz * 4), c = new THREE.Color(), sea = new THREE.Color(), r = rng(W.seed + 5), at = W.at, SALT = Float32Array.from(land, v => v === 2 ? 1 : 0);
   const C = { sand: new THREE.Color(0xd9c58e), steppe: new THREE.Color(0xb7a96a), steppe2: new THREE.Color(0x9a9a58), forest: new THREE.Color(0x3f6234), meadow: new THREE.Color(0x8fa060), lime: new THREE.Color(0xc9c4b4), salt: new THREE.Color(0xe7e2da), sea: new THREE.Color(0x2b5a6a), cliff: new THREE.Color(0xa59f92) };
   for (let oj = 0; oj < Nz; oj++) for (let oi = 0; oi < Nx; oi++) { const x = oi * cs / f, z = oj * cs / f, i = Math.min(nx - 1, Math.round(oi / f)), j = Math.min(nz - 1, Math.round(oj / f)), k = j * nx + i, y = at(h, x, z);
-    if (!land[k]) { c.copy(C.sea).lerp(C.sand, Math.max(0, 1 + y / 12)); }
-    else if (land[k] === 2) c.copy(C.salt);
-    else { const sl = Math.hypot(at(h, x + cs, z) - at(h, x - cs, z), at(h, x, z + cs) - at(h, x, z - cs)) / (2 * cs), m = at(mt, x, z), n = r(), din = at(dIn, x, z);
+    {  const sl = Math.hypot(at(h, x + cs, z) - at(h, x - cs, z), at(h, x, z + cs) - at(h, x, z - cs)) / (2 * cs), m = at(mt, x, z), n = r(), din = at(dIn, x, z);
       c.copy(C.steppe).lerp(C.steppe2, .5 + .5 * Math.sin(x * 5.8e-4 + z * 4.2e-4) * Math.cos(x * 2.6e-4 - z * 5e-4));
       /* поля в степи: прямоугольные участки (пшеница, зелень, пашня, сухая трава), сетка полей слегка повёрнута по районам */
-      if (m < .12) { const a = .5 * Math.sin(x / 9000 + 1.3) + .3 * Math.cos(z / 7000), u = x * Math.cos(a) + z * Math.sin(a), w = -x * Math.sin(a) + z * Math.cos(a), fi = Math.floor(u / 520), fj = Math.floor(w / 380);
+      if (m < .12) { const xw = x + 70 * Math.sin(z / 410) + 35 * Math.sin(z / 130 + x / 300), zw = z + 70 * Math.sin(x / 470) + 35 * Math.sin(x / 150 + z / 330), a = .5 * Math.sin(xw / 9000 + 1.3) + .3 * Math.cos(zw / 7000), u = xw * Math.cos(a) + zw * Math.sin(a), w = -xw * Math.sin(a) + zw * Math.cos(a), fi = Math.floor(u / 520), fj = Math.floor(w / 380);
         const hsh = Math.abs(Math.sin(fi * 127.1 + fj * 311.7 + W.seed) * 43758.5) % 1, F = FIELDS[Math.floor(hsh * FIELDS.length)]; if (hsh > .12) c.lerp(F, .55 * (1 - sstep(.05, .12, m))); }
       if (m > .08) c.lerp(C.forest, sstep(.08, .3, m) * (1 - sstep(.75, .95, m)));
       if (m > .85) c.lerp(C.meadow, sstep(.85, .97, m)).lerp(C.lime, .12);
@@ -401,6 +399,7 @@ function terrainColors(f = 2) {
       if (din < 150 && y < 12) c.lerp(C.sand, 1 - din / 150);
       for (const L of W.lakes) { const d = Math.hypot(x - L.x, z - L.z) / L.r; if (d < 1.6) c.lerp(C.salt, .6 * (1 - sstep(1, 1.6, d))); }
       }
+    { const wf = sstep(1.2, -1.2, y); if (wf > 0) { sea.copy(C.sea).lerp(C.sand, Math.max(0, 1 + y / 12)); c.lerp(sea, wf); } const sf = at(SALT, x, z); if (sf > 0) c.lerp(C.salt, Math.min(1, sf * 1.4) * (1 - wf)); }
     c.convertLinearToSRGB(); const o = (oj * Nx + oi) * 4; data[o] = Math.max(0, Math.min(255, Math.round(c.r * 255))); data[o + 1] = Math.max(0, Math.min(255, Math.round(c.g * 255))); data[o + 2] = Math.max(0, Math.min(255, Math.round(c.b * 255))); data[o + 3] = 255; }
   const t = new THREE.DataTexture(data, Nx, Nz, THREE.RGBAFormat); t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.flipY = false; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true;
   return t;
@@ -435,8 +434,8 @@ float fb(vec2 p, float k){ float s = 0., a = .5; for (int i = 0; i < 3; i++) { s
     /* поля: живая изгородь по границам, у некоторых — ряды (виноградники/сады), видны вблизи */
     if (vWP.y < 140. && nT.y > .97 && fa > 0.) { float a = .5 * sin(vWP.x / 9000. + 1.3) + .3 * cos(vWP.z / 7000.), u = vWP.x * cos(a) + vWP.z * sin(a), w = -vWP.x * sin(a) + vWP.z * cos(a), fi = floor(u / 520.), fj = floor(w / 380.);
       float hs = fract(sin(fi * 127.1 + fj * 311.7) * 43758.5), du = abs(fract(u / 520.) - .5) * 520., dw = abs(fract(w / 380.) - .5) * 380.;
-      float edge = 1. - smoothstep(0., 6., min(250. - du, 190. - dw)); diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(.55, .66, .45), edge * .32 * fa);
-      if (hs < .22) { float rows = smoothstep(.3, .7, abs(fract(u / 5.5) - .5) * 2.); diffuseColor.rgb *= 1. - .22 * rows * fa; } }
+      float edge = 1. - smoothstep(0., 6., min(250. - du, 190. - dw)); 
+      if (hs < .22) { float rows = smoothstep(.3, .7, abs(fract(u / 5.5) - .5) * 2.); diffuseColor.rgb *= 1. - .16 * rows * (1. - smoothstep(120., 420., length(cameraPosition - vWP))); } }
     vec4 rd = texture2D(uRoad, vWP.xz / uOSz); diffuseColor.rgb = mix(diffuseColor.rgb, rd.rgb / max(rd.a, .001), rd.a * (1. - .6 * smoothstep(3000., 12000., length(cameraPosition - vWP)))); }`);
   };
   return m;
