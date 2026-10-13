@@ -139,7 +139,7 @@ function aiBomber(b, dt) {
 /* ---------- оружие синих ---------- */
 function dropBomb(b) { if (b.bombs <= 0) return; b.bombs--; G.bombs.push({ pos: b.pos.clone().addScaledVector(b.u0, -2.5), vel: b.f.clone().multiplyScalar(b.v), owner: b, mesh: null, t: 0 }); }
 function dropFlares(b) { if (b.flares <= 0) return; b.flares--; b.flT = tNow;
-  for (const s of [-1, 1]) G.flares.push({ pos: b.pos.clone(), vel: b.f.clone().multiplyScalar(b.v * .5).addScaledVector(b.r0, s * 40).add(_a.set(0, -15, 0)), t0: tNow, mesh: null });
+  for (const s of [-1, 0, 1]) G.flares.push({ pos: b.pos.clone().addScaledVector(b.u0, -2), vel: b.f.clone().multiplyScalar(b.v * .97).addScaledVector(b.r0, s * 24).add(_a.set(0, s ? -8 : -26, 0)), t0: tNow, mesh: null, trT: 0 });
   for (const m of G.missiles) if (m.alive && m.tgt === b && !m.decoy && m.pos.distanceTo(b.pos) < 3200 && rnd() < D().decoy) { m.decoy = G.flares[G.flares.length - 1]; }
 }
 
@@ -172,7 +172,7 @@ function defenseStep(dt) {
 /* камера «от лица ПВО»: когда оно открывает огонь по нашему борту — на ~3 с кадр от позиции ЗРК/зенитки с длиннофокусным обзором */
 function startAdCam(src, tgt, txt, w = 1) { G.heat = (G.heat || 0) + w; /* «накал» огня: пуск ракеты весит 6, залп зениток по 1; решает суммарная плотность за ~2.5 с */
   if (G.heat < 6 || ctl.steerMan || tNow < (G.adCool || 0) || (G.impactCam && tNow < G.impactCam.until) || G.done || !tgt.alive || tgt.falling) return;
-  G.adCam = { src, tgt, t0: tNow, until: tNow + (src.kind === "sam" || src.kind === "frigate" ? 2 : 4), m: src.kind === "sam" || src.kind === "frigate" ? G.missiles[G.missiles.length - 1] : null }; G.adCool = tNow + 10; G.heat = 0; toast(txt, 1800); }
+  G.adCam = { src, tgt, t0: tNow, until: tNow + (src.kind === "sam" || src.kind === "frigate" ? 4 : 4), m: src.kind === "sam" || src.kind === "frigate" ? G.missiles[G.missiles.length - 1] : null }; G.adCool = tNow + 10; G.heat = 0; toast(txt, 1800); }
 function launchMissile(s, h, b) {
   const pos = new THREE.Vector3(s.x, s.y + h, s.z), dir = new THREE.Vector3().subVectors(b.pos, pos).normalize(); dir.y = Math.max(dir.y, .5); dir.normalize();
   G.missiles.push({ pos, vel: dir.multiplyScalar(60), src: s, srcH: h, tgt: b, t0: tNow, alive: true, decoy: null, lostT: 0, trail: [], mesh: null, lineMesh: null });
@@ -219,7 +219,7 @@ function bombsStep(dt) {
   for (const B of G.bombs) { if (B.done) continue; B.t += dt; B.vel.y -= 9.81 * dt; B.vel.multiplyScalar(1 - .015 * dt); B.pos.addScaledVector(B.vel, dt);
     /* за ~3 с до падения бомбы камера уходит на точку падения, чтобы увидеть разрыв */
     if (B.owner.id === G.me && !B.owner.falling && !(G.impactCam && tNow < G.impactCam.until) && !ctl.steerMan) { const h = B.pos.y - Math.max(0, W.gnd(B.pos.x, B.pos.z)), tti = (B.vel.y + Math.sqrt(B.vel.y * B.vel.y + 19.62 * Math.max(0, h))) / 9.81;
-      if (tti < 4.6) { const lx = B.pos.x + B.vel.x * tti, lz = B.pos.z + B.vel.z * tti, o = B.owner; G.impactCam = { x: lx, y: Math.max(0, W.gnd(lx, lz)), z: lz, t0: tNow, hit: tNow + tti, until: tNow + tti + 3, kills: 0, bomb: B,
+      if (tti < 4.6) { const lx = B.pos.x + B.vel.x * tti, lz = B.pos.z + B.vel.z * tti, o = B.owner; G.impactCam = { x: lx, y: Math.max(0, W.gnd(lx, lz)), z: lz, t0: tNow, hit: tNow + tti, until: tNow + tti + 1, kills: 0, bomb: B,
         cp: new THREE.Vector3(lx, 0, lz).addScaledVector(_b.copy(o.f).setY(0).normalize(), -330).addScaledVector(o.r0, 90) }; G.adCam = null; } }
     const gy = Math.max(0, W.gnd(B.pos.x, B.pos.z)); if (B.pos.y > gy) continue;
     B.done = true; B.pos.y = gy; const water = gy <= 0 && W.isSea(B.pos.x, B.pos.z); boom(B.pos, water ? 34 : 52, water ? 0xd8eaff : 0xffa040, water);
@@ -227,8 +227,8 @@ function bombsStep(dt) {
     const R = 48; let hitN = 0, dMin = 1e9; for (const p of W.target.parts) { const d = Math.hypot(p.x - B.pos.x, p.z - B.pos.z); dMin = Math.min(dMin, d); if (p.hp <= 0) continue; if (W.target.type === "ship" ? d < 45 : d < R + p.sz * .4) { p.hp = 0; hitN++; G.fires.push({ x: p.x, y: p.y + 6, z: p.z, t0: tNow, big: true }); boom(_a.set(p.x, p.y + 8, p.z), 70, 0xff9030, false); } }
     /* показать результат: камера на месте попадания и подпись */
     if (B.owner.id === G.me && !B.owner.falling) { const ic = G.impactCam; const o = B.owner;
-      if (!ic || tNow > ic.until) G.impactCam = { x: B.pos.x, y: B.pos.y, z: B.pos.z, t0: tNow, hit: tNow, until: tNow + 3.2, cp: new THREE.Vector3(B.pos.x, 0, B.pos.z).addScaledVector(_b.copy(o.f).setY(0).normalize(), -330).addScaledVector(o.r0, 90), kills: 0 };
-      else { ic.x = B.pos.x; ic.y = B.pos.y; ic.z = B.pos.z; ic.until = Math.max(ic.until, tNow + 2.4); }
+      if (!ic || tNow > ic.until) G.impactCam = { x: B.pos.x, y: B.pos.y, z: B.pos.z, t0: tNow, hit: tNow, until: tNow + 1, cp: new THREE.Vector3(B.pos.x, 0, B.pos.z).addScaledVector(_b.copy(o.f).setY(0).normalize(), -330).addScaledVector(o.r0, 90), kills: 0 };
+      else { ic.x = B.pos.x; ic.y = B.pos.y; ic.z = B.pos.z; ic.until = tNow + 1; }
       G.impactCam.kills += hitN; G.hitMsg = { t: tNow, txt: G.impactCam.kills ? `Попадание! Разрушено частей цели: ${W.target.parts.filter(q => q.hp <= 0).length + 0} из ${W.target.parts.length}` : dMin < 160 ? "Близкий разрыв — цель цела" : "Мимо" }; }
     for (const L of [W.sams, W.aaa, W.ships]) for (const s of L) if (!s.dead && Math.hypot(s.x - B.pos.x, s.z - B.pos.z) < (s.kind === "frigate" ? 50 : 40)) { if (s.hp > 1) s.hp--; else { s.dead = true; STATS.defKilled++; G.fires.push({ x: s.x, y: (s.y || 0) + 4, z: s.z, t0: tNow }); } }
     const tg = W.target, killed = tg.parts.filter(p => p.hp <= 0).length;
@@ -254,8 +254,8 @@ function simStep(dt) {
     if (b.pos.y < Math.max(0, W.gnd(b.pos.x, b.pos.z)) + 1.5) { b.hp = 0; b.falling = true; b.alive = false; b.fallT = b.deadT = tNow; G.causes["столкновение с рельефом"] = (G.causes["столкновение с рельефом"] || 0) + 1; (G.crashLog ??= []).push(b.hist.filter((_, i) => i % 12 === 0 || i > b.hist.length - 4)); STATS.planesLost++; boom(b.pos, 70, 0xff8030, W.isSea(b.pos.x, b.pos.z)); G.msg.push(`Борт ${b.id + 1}: столкновение с землёй`); if (b.id === G.me) toast("Столкновение с землёй", 1600); }
   }
   defenseStep(dt); missilesStep(dt); shellsStep(dt, prevPos); bombsStep(dt);
-  for (const F of G.flares) { F.vel.y -= 9.81 * dt; F.vel.multiplyScalar(1 - .8 * dt); F.pos.addScaledVector(F.vel, dt); }
-  G.flares = G.flares.filter(F => tNow - F.t0 < 3.5 || (F.mesh && (F.mesh.parent?.remove(F.mesh), false)));
+  for (const F of G.flares) { F.vel.y -= 9.81 * dt; F.vel.multiplyScalar(1 - .12 * dt); F.pos.addScaledVector(F.vel, dt); }
+  G.flares = G.flares.filter(F => tNow - F.t0 < 3.5 || (F.mesh && (F.mesh.parent?.remove(F.mesh), F.halo?.parent?.remove(F.halo), false)));
   G.bursts = G.bursts.filter(B => tNow - B.t0 < 2.4 || (B.mesh && (drop(B.mesh), false)));
   // кем управляем: если ведущий потерян — следующий живой
   const me = G.bombers[G.me]; if (!me || !me.alive) { const nx = G.bombers.find(b => b.alive && !b.falling); if (nx && (!me || (!me.alive && tNow - (me.deadT ?? me.fallT ?? 0) > 4.5) || (me.falling && tNow - (me.fallT || 0) > 12))) { G.me = nx.id; ctl.steerMan = false; cam.reset = true; cam.dc = null; } }
@@ -310,7 +310,7 @@ function initGfx() {
     smoke: new THREE.MeshLambertMaterial({ color: 0x6a6460, emissive: 0x3a3632, transparent: true, depthWrite: false }),
     smokeW: new THREE.MeshLambertMaterial({ color: 0xe6e4e0, emissive: 0x606060, transparent: true, depthWrite: false }),
     tracer: new THREE.MeshBasicMaterial({ color: 0xffd060, transparent: true, opacity: .85, blending: THREE.AdditiveBlending, depthWrite: false }),
-    flare: new THREE.MeshBasicMaterial({ color: 0xfff0b0, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }) });
+    flare: new THREE.MeshBasicMaterial({ color: 0xfff0b0, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }), flareHalo: new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, opacity: .3, blending: THREE.AdditiveBlending, depthWrite: false }) });
   Object.assign(GEO, { ball: new THREE.SphereGeometry(1, 12, 8), puff: new THREE.IcosahedronGeometry(1, 2), tracer: new THREE.CylinderGeometry(1, 1, 1, 5).translate(0, -.5, 0).rotateX(Math.PI / 2),
     bomb: new THREE.CapsuleGeometry(.35, 2.2, 3, 8).rotateX(Math.PI / 2), missile: new THREE.CylinderGeometry(.25, .25, 6, 8).rotateX(Math.PI / 2) });
   objGroup = new THREE.Group(); fxGroup = new THREE.Group(); scene.add(objGroup, fxGroup);
@@ -521,7 +521,7 @@ function fxDraw(dt) {
   /* взрыв: короткая яркая вспышка + несколько клубов дыма/пыли (на воде — белый столб брызг), клубы расходятся и поднимаются */
   for (const f of G.fx) { const life = f.smokeOnly ? 4 : 3.5, a = tNow - f.t0; if (a > life) { if (f.mesh) drop(f.mesh); continue; } keep.push(f);
     if (!f.mesh) { const g = new THREE.Group(), fl = new THREE.Mesh(GEO.ball, MAT.flash.clone()); fl.material.color.set(f.color); g.add(fl); const puffs = [], n = f.smokeOnly ? 1 : f.r > 20 ? 6 : 3;
-      for (let i = 0; i < n; i++) { const m = new THREE.Mesh(GEO.puff, (f.water ? MAT.smokeW : MAT.smoke).clone()); if (!f.water) m.material.color.setHSL(.07, .1 + .1 * rnd(), .3 + .22 * rnd()); m.rotation.set(rnd() * 3, rnd() * 3, 0);
+      for (let i = 0; i < n; i++) { const m = new THREE.Mesh(GEO.puff, (f.water ? MAT.smokeW : MAT.smoke).clone()); if (f.pale) m.material.color.setHSL(.11, .06, .82 + .12 * rnd()); else if (!f.water) m.material.color.setHSL(.07, .1 + .1 * rnd(), .3 + .22 * rnd()); m.rotation.set(rnd() * 3, rnd() * 3, 0);
         m.userData.v = new THREE.Vector3((rnd() - .5) * 1.2, f.water ? 1.5 + rnd() * 2.5 : .4 + rnd() * .9, (rnd() - .5) * 1.2); m.userData.s = .35 + .35 * rnd(); g.add(m); puffs.push(m); }
       g.userData = { fl, puffs }; f.mesh = g; fxGroup.add(g); }
     const g = f.mesh, k = a / life; g.position.copy(f.pos);
@@ -530,7 +530,7 @@ function fxDraw(dt) {
   G.fx = keep;
   // пожары: столб дыма над разрушенным
   for (const F of G.fires) { if (tNow - (F.last || 0) < (F.big ? .25 : .45)) continue; F.last = tNow; if (G.fx.length > 220) break; G.fx.push({ pos: new THREE.Vector3(F.x + (rnd() - .5) * 8, F.y, F.z + (rnd() - .5) * 8), t0: tNow, r: F.big ? 16 : 9, color: 0xff6020, mesh: null, smokeOnly: true }); }
-  for (const f of G.fx) if (f.smokeOnly && f.mesh) { const a = tNow - f.t0; f.mesh.position.y = f.pos.y + a * 22; f.mesh.position.x = f.pos.x + a * 6; }
+  for (const f of G.fx) if (f.smokeOnly && !f.pale && f.mesh) { const a = tNow - f.t0; f.mesh.position.y = f.pos.y + a * 22; f.mesh.position.x = f.pos.x + a * 6; }
 }
 function objectsDraw(dt) {
   for (const s of W.sams) if (s.mesh) { if (s.dead && !s.burnt) burn(s.mesh); s.burnt = s.dead; if (!s.dead) s.mesh.userData.ant.rotation.y += dt * (s.lock ? 6 : 1.4); }
@@ -544,7 +544,12 @@ function objectsDraw(dt) {
   for (const sh of G.shells) { if (!sh.mesh) { sh.mesh = new THREE.Mesh(GEO.tracer, MAT.tracer); sh.mesh.frustumCulled = false; fxGroup.add(sh.mesh); }
     const k = clamp((tNow - sh.t0) / Math.max(1e-3, sh.tb - sh.t0), 0, 1); sh.mesh.position.lerpVectors(sh.from, sh.to, k); sh.mesh.lookAt(sh.to); const dc = sh.mesh.position.distanceTo(camera.position), wd = Math.max(.5, dc * .002); sh.mesh.scale.set(wd, wd, Math.max(25, dc * .03)); }
   for (const B of G.bombs) { if (!B.mesh) { B.mesh = new THREE.Mesh(GEO.bomb, MAT.dark); fxGroup.add(B.mesh); } B.mesh.position.copy(B.pos); B.mesh.lookAt(_a.copy(B.pos).add(B.vel)); B.mesh.scale.setScalar(1.6); }
-  for (const F of G.flares) { if (!F.mesh) { F.mesh = new THREE.Mesh(GEO.ball, MAT.flare); fxGroup.add(F.mesh); } F.mesh.position.copy(F.pos); const s = 2.5 + 2 * Math.sin(tNow * 40 + F.t0 * 7); F.mesh.scale.setScalar(Math.max(1, s) * (1 - (tNow - F.t0) / 4)); }
+  if (!MAT.flareS) { const mk = (stops, c) => { const cv = document.createElement("canvas"); cv.width = cv.height = 64; const x = cv.getContext("2d"), gr = x.createRadialGradient(32, 32, 0, 32, 32, 32); stops.forEach(([o, col]) => gr.addColorStop(o, col)); x.fillStyle = gr; x.fillRect(0, 0, 64, 64); const t = new THREE.CanvasTexture(cv); return new THREE.SpriteMaterial({ map: t, color: c, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, sizeAttenuation: false, fog: false }); };
+    MAT.flareS = mk([[0, "#ffffff"], [.25, "#fff2c0"], [.6, "#ffb050"], [1, "rgba(255,120,30,0)"]], 0xffffff); MAT.flareH = mk([[0, "rgba(255,190,90,.55)"], [.5, "rgba(255,140,40,.18)"], [1, "rgba(255,100,20,0)"]], 0xffffff); }
+  /* ловушки: яркие точки постоянного экранного размера (видны с любой камеры) + белый дымный след */
+  for (const F of G.flares) { if (!F.mesh) { F.mesh = new THREE.Sprite(MAT.flareS); F.halo = new THREE.Sprite(MAT.flareH); F.mesh.renderOrder = F.halo.renderOrder = 20; fxGroup.add(F.mesh, F.halo); } const age = tNow - F.t0, fade = Math.max(.05, 1 - age / 4.2);
+    F.mesh.position.copy(F.pos); F.halo.position.copy(F.pos); const s = .05 * (1 + .25 * Math.sin(tNow * 40 + F.t0 * 7)) * fade; F.mesh.scale.set(s, s, 1); F.halo.scale.set(s * 3.6, s * 3.6, 1);
+    if (age < 3.4 && tNow - (F.trT || 0) > .06 && G.fx.length < 260) { F.trT = tNow; G.fx.push({ pos: F.pos.clone(), t0: tNow, r: 6.5, color: 0xffe0a0, mesh: null, smokeOnly: true, pale: true }); } }
   for (const m of G.missiles) {
     if (!m.mesh) { m.mesh = new THREE.Group(); const body = new THREE.Mesh(GEO.missile, MAT.white), fl = new THREE.Mesh(GEO.ball, MAT.flash.clone()); fl.position.z = 4; fl.scale.set(.8, .8, 3); m.mesh.add(body, fl); m.mesh.userData.fl = fl; fxGroup.add(m.mesh);
       const n = 90, geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(n * 3), 3)); m.lineMesh = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xe8e4de, transparent: true, opacity: .7, depthWrite: false })); m.lineMesh.frustumCulled = false; fxGroup.add(m.lineMesh); }
@@ -583,10 +588,11 @@ function cameraUpdate(dt) {
   const ad = G.adCam; if (ad && tNow < ad.until && camMode < 3 && b.alive && !b.falling && !ctl.steerMan && ad.tgt.alive && !ad.src.dead) {
     const tb = ad.tgt, s = ad.src, ex = tb.pos.x - s.x, ez = tb.pos.z - s.z, el = Math.hypot(ex, ez) || 1, sy = (s.y || 0) + 14;
     /* камера сбоку и чуть позади установки — сама она в кадр не лезет; сначала смотрим на ракету/трассы, потом на цель */
-    const mm = ad.m, chase = mm && tNow - ad.t0 > 1 && (mm.alive || (ad.mEnd && tNow < ad.mEnd));
+    const mm = ad.m, tt = tNow - ad.t0, chase = mm && tt > 2 && (mm.alive || (ad.mEnd && tNow < ad.mEnd));
     if (mm && !mm.alive && !ad.mEnd) { ad.mEnd = tNow + 1.6; ad.until = Math.max(ad.until, ad.mEnd); }
     if (mm && ad.until < ad.t0 + 12 && mm.alive) ad.until = Math.max(ad.until, tNow + .5); // пока ракета летит — следим за ней
     if (chase) { /* камера летит за ракетой, смотрит вперёд на цель; после разрыва — 1.6 с на месте */
+      if (mm.alive && tt < 3) { /* вид «из носа ракеты» — секунда */ const d = _b.copy(mm.vel).normalize(); camera.position.copy(mm.pos).addScaledVector(d, 4); camera.up.set(0, 1, 0); camera.lookAt(_a.copy(mm.pos).addScaledVector(d, 200).lerp(tb.pos, .35)); cam.reset = true; if (cam.zoom) { cam.zoom = false; resize(); } return; }
       if (mm.alive) { const d = _b.copy(mm.vel).normalize(); ad.cp ??= new THREE.Vector3(); ad.cp.copy(mm.pos).addScaledVector(d, -30).addScaledVector(UP, 7); ad.look = _c.copy(mm.pos).addScaledVector(d, 70); if (mm.pos.distanceTo(tb.pos) < 900) ad.look.lerp(tb.pos, .75); ad.lk ??= new THREE.Vector3(); ad.lk.copy(ad.look); }
       camera.position.copy(ad.cp || mm.pos); camera.up.set(0, 1, 0); camera.lookAt(mm.alive ? ad.lk : tb.pos); cam.reset = true; if (cam.zoom) { cam.zoom = false; resize(); } return; }
     camera.position.set(s.x - ex / el * 40 - ez / el * 75, Math.max(sy + 8, Math.max(0, W.gnd(s.x - ex / el * 40 - ez / el * 75, s.z - ez / el * 40 + ex / el * 75)) + 22), s.z - ez / el * 40 + ex / el * 75); camera.up.set(0, 1, 0);
