@@ -320,40 +320,44 @@ let qAuto = 1;
 function resize() { const q = (+S.q || 1) * qAuto; renderer.setPixelRatio(Math.max(.5, Math.min(devicePixelRatio || 1, q))); renderer.setSize(innerWidth, innerHeight, false); camera.aspect = innerWidth / innerHeight; camera.fov = camera.aspect < 1 ? 82 : 65; camera.updateProjectionMatrix(); }
 
 /* море и озёра: цвет по глубине (карта расстояния до берега), пена прибоя, бегущая рябь и блики солнца — всё в шейдере */
-const WU = { uTime: { value: 0 }, uWt: { value: null }, uSz: { value: new THREE.Vector2(36000, 24000) } };
+const WU = { uWSz: { value: new THREE.Vector2(601, 401) }, uTime: { value: 0 }, uWt: { value: null }, uSz: { value: new THREE.Vector2(36000, 24000) } };
 function waterMaterial() {
   const m = new THREE.MeshPhongMaterial({ color: 0x2b6a86, specular: 0xbfd6e6, shininess: 70, transparent: true, opacity: .95 });
   m.onBeforeCompile = sh => { Object.assign(sh.uniforms, WU);
     sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 vWP;").replace("#include <begin_vertex>", "#include <begin_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.)).xyz;");
     sh.fragmentShader = sh.fragmentShader.replace("#include <common>", `#include <common>
-varying vec3 vWP; uniform float uTime; uniform sampler2D uWt; uniform vec2 uSz;
-float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
-float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f); return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
-float wv(vec2 p){ return vn(p / 26. + vec2(uTime * .05, uTime * .03)) * .55 + vn(p / 9. - vec2(uTime * .09, -uTime * .06)) * .3 + vn(p / 3.2 + vec2(uTime * .17, uTime * .11)) * .15; }`)
+varying vec3 vWP; uniform float uTime; uniform sampler2D uWt; uniform vec2 uSz; uniform vec2 uWSz;
+float h21(vec2 p){ p = mod(p, 289.); p = fract(p * vec2(.1031, .1030)); p += dot(p, p.yx + 33.33); return fract((p.x + p.y) * p.x); }
+float vn(vec2 p){ vec2 i = floor(p), f = p - i; f = f * f * (3. - 2. * f); return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
+/* сглаживающий узор: координаты чтения карты слегка «плывут» шумом — сетка текселей не видна */
+vec2 wUV(vec2 xz){ vec2 o = vec2(vn(xz / 170.), vn(xz / 170. + 17.3)) - .5; return ((xz + o * 70.) / uSz * (uWSz - 1.) + .5) / uWSz; }
+float wv(vec2 p){ float tt = mod(uTime, 2000.); return vn(p / 26. + vec2(tt * .05, tt * .03)) * .55 + vn(p / 9. - vec2(tt * .09, -tt * .06)) * .3 + vn(p / 3.2 + vec2(tt * .17, tt * .11)) * .15; }`)
       .replace("#include <color_fragment>", `#include <color_fragment>
-  vec4 wt = texture2D(uWt, vWP.xz / uSz); float dst = wt.r, lake = wt.g;
+  vec4 wt = texture2D(uWt, wUV(vWP.xz)); { vec2 ob = max(-vWP.xz, vWP.xz - uSz); float out_ = smoothstep(0., 1500., max(ob.x, ob.y)); wt.rg = mix(wt.rg, vec2(max(wt.r, .7), 0.), out_); } float dst = wt.r, lake = wt.g, lw = smoothstep(.03, .2, lake);
   float k = pow(clamp(dst, 0., 1.), .5);
   vec3 shallow = vec3(.16, .62, .64), deep = vec3(.025, .15, .30);
   vec3 col = mix(shallow, deep, smoothstep(0., .75, k));
   vec3 lakeC = mix(vec3(.62, .78, .72), vec3(.2, .48, .56), clamp(lake * 1.4, 0., 1.));
-  col = mix(col, lakeC, step(.004, lake));
+  col = mix(col, lakeC, lw);
   float wn = wv(vWP.xz);
   col *= .88 + .24 * wn;
-  float shore = (1. - smoothstep(.006, .05, dst)) * (1. - step(.004, lake));
-  float foam = shore * smoothstep(.38, .7, wn + .4 * sin(uTime * .8 - dst * 200.) * (1. - dst * 8.)) * 1.0 + (1. - smoothstep(0., .005, dst)) * (1. - step(.004, lake)) * .5;
+  float shore = (1. - smoothstep(.006, .05, dst)) * (1. - lw);
+  float foam = shore * smoothstep(.38, .7, wn + .4 * sin(uTime * .8 - dst * 200.) * (1. - dst * 8.)) * 1.0 + (1. - smoothstep(0., .008, dst)) * (1. - lw) * .5;
   col = mix(col, vec3(.93, .97, 1.), clamp(foam, 0., .85));
-  diffuseColor.rgb = col; diffuseColor.a = mix(.55, .96, smoothstep(0., .5, k)) * (1. - .1 * step(.004, lake));`)
+  diffuseColor.rgb = col; diffuseColor.a = mix(.55, .96, smoothstep(0., .5, k)) * (1. - .1 * lw);`)
       .replace("#include <normal_fragment_begin>", `#include <normal_fragment_begin>
   { float fa = 1. - smoothstep(1500., 9000., length(cameraPosition - vWP)); if (fa > 0.) { vec2 q = vWP.xz, e = vec2(1.2, 0.);
     float w0 = wn, gx = wv(q + e.xy) - w0, gz = wv(q + e.yx) - w0; normal = normalize(normal + mat3(viewMatrix) * vec3(-gx, 0., -gz) * 1.3 * fa); } }`);
   };
   return m;
 }
-function buildWaterTex() {
-  const { nx, nz, h, land, dOut } = W, d = new Uint8Array(nx * nz * 4);
-  for (let k = 0; k < nx * nz; k++) { const sea = land[k] === 0; d[4 * k] = sea ? Math.min(255, dOut[k] / 4500 * 255) : 0; d[4 * k + 1] = land[k] === 2 ? Math.max(8, Math.min(255, -h[k] / 30 * 255)) : 0; d[4 * k + 2] = 0; d[4 * k + 3] = 255; }
-  const t = new THREE.DataTexture(d, nx, nz, THREE.RGBAFormat); t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearFilter; t.flipY = false; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true;
-  WU.uWt.value?.dispose(); WU.uWt.value = t; WU.uSz.value.set(W.W, W.H);
+function buildWaterTex(f = 2) {
+  const { nx, nz, h, land, dOut, cs } = W, at = W.at, Nx = (nx - 1) * f + 1, Nz = (nz - 1) * f + 1, d = new Uint8Array(Nx * Nz * 4);
+  const SEA = Float32Array.from(land, v => v === 0 ? 1 : 0), LK = Float32Array.from(land, (v, k) => v === 2 ? Math.max(.25, Math.min(1, -h[k] / 30)) : 0);
+  for (let oj = 0; oj < Nz; oj++) for (let oi = 0; oi < Nx; oi++) { const x = oi * cs / f, z = oj * cs / f, o = (oj * Nx + oi) * 4, sw = at(SEA, x, z);
+    d[o] = Math.round(Math.min(1, at(dOut, x, z) / 4500) * Math.min(1, sw * 1.5) * 255); d[o + 1] = Math.round(Math.min(1, at(LK, x, z)) * 255); d[o + 3] = 255; }
+  const t = new THREE.DataTexture(d, Nx, Nz, THREE.RGBAFormat); t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearFilter; t.flipY = false; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true;
+  WU.uWt.value?.dispose(); WU.uWt.value = t; WU.uSz.value.set(W.W, W.H); WU.uWSz.value.set(Nx, Nz);
 }
 /* дороги и посёлки — карта поверх рельефа (в шейдер как цветовая подложка с прозрачностью) */
 const OV = { uFld: { value: FIELDS_L() }, uSeed: { value: 0 }, uTSz: { value: new THREE.Vector2(1201, 801) }, uNrm: { value: null }, uTerCol: { value: null }, uRoad: { value: null }, uOSz: { value: new THREE.Vector2(36000, 24000) } };
@@ -413,11 +417,11 @@ function terrainMaterial() {
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.)).xyz; vWN = normal;");
     sh.fragmentShader = sh.fragmentShader.replace("#include <common>", `#include <common>
 varying vec3 vWP; varying vec3 vWN; uniform sampler2D uRoad; uniform sampler2D uTerCol; uniform sampler2D uNrm; uniform vec2 uOSz; uniform vec2 uTSz; uniform vec3 uFld[7]; uniform float uSeed;
-/* текстуры рельефа: обычная аппаратная билинейная фильтрация, координаты точно по центрам текселей */
-vec2 terUV(vec2 xz){ return (xz / uOSz * (uTSz - 1.) + .5) / uTSz; }
 /* хеш и шум: решётка по модулю 289 — без потери точности на больших координатах (телефонные GPU) */
 float h21(vec2 p){ p = mod(p, 289.); p = fract(p * vec2(.1031, .1030)); p += dot(p, p.yx + 33.33); return fract((p.x + p.y) * p.x); }
 float vn(vec2 p){ vec2 i = floor(p), f = p - i; f = f * f * (3. - 2. * f); return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
+/* текстуры рельефа: обычная аппаратная билинейная фильтрация, координаты точно по центрам текселей */
+vec2 terUV(vec2 xz){ vec2 o = vec2(vn(xz / 150.), vn(xz / 150. + 17.3)) - .5; xz += o * 36.; return (xz / uOSz * (uTSz - 1.) + .5) / uTSz; }
 vec3 fldCol(float k){ return k < 1. ? uFld[0] : k < 2. ? uFld[1] : k < 3. ? uFld[2] : k < 4. ? uFld[3] : k < 5. ? uFld[4] : k < 6. ? uFld[5] : uFld[6]; }
 float fb(vec2 p, float k){ float s = 0., a = .5; for (int i = 0; i < 3; i++) { s += a * vn(p); p = p * 2.07 + 13.1; a *= .5 * k; } return s; }`)
       .replace("#include <normal_fragment_begin>", `#include <normal_fragment_begin>
@@ -428,7 +432,7 @@ float fb(vec2 p, float k){ float s = 0., a = .5; for (int i = 0; i < 3; i++) { s
     if (fa > 0.) { float e = .6, n0 = fb(q / 5., 1.), gx = fb((q + vec2(e, 0.)) / 5., 1.) - n0, gz = fb((q + vec2(0., e)) / 5., 1.) - n0; pw += vec3(-(gx / e) * .9 * fa, 0., -(gz / e) * .9 * fa); } }
   normal = normalize(normal + mat3(viewMatrix) * pw);`)
       .replace("#include <color_fragment>", `#include <color_fragment>
-  vec4 tc = texture2D(uTerCol, terUV(vWP.xz)); vec3 nT = normalize(texture2D(uNrm, terUV(vWP.xz)).xyz * 2. - 1.);
+  vec2 tUV = terUV(vWP.xz); vec4 tc = texture2D(uTerCol, tUV); vec3 nT = normalize(texture2D(uNrm, tUV).xyz * 2. - 1.);
   float fHs = 1.; float fU = 0.;
   /* поля считаются прямо в шейдере (не из текстуры): края плавные при любом разрешении, без ступенек */
   if (tc.a > .004) { vec2 q = vWP.xz; float xw = q.x + 70. * sin(q.y / 410.) + 35. * sin(q.y / 130. + q.x / 300.), zw = q.y + 70. * sin(q.x / 470.) + 35. * sin(q.x / 150. + q.y / 330.);
