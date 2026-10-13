@@ -440,7 +440,7 @@ function buildScene() {
   W.vil = pickVillages(); buildWaterTex(); buildOverlay();
   if (+S.life) buildLife();
   buildObjects(); buildMinimap();
-  for (const b of G.bombers) { b.mesh = makeJet(); objGroup.add(b.mesh); b.trail = makeTrail(); fxGroup.add(b.trail); }
+  for (const b of G.bombers) { b.mesh = makeJet(); objGroup.add(b.mesh); b.trail = makeTrail(); fxGroup.add(b.trail); b.smoke = makeSmoke(); fxGroup.add(b.smoke); }
 }
 /* лес на склонах гор, посёлки в степи и у берега — для ощущения скорости у земли */
 function buildLife() {
@@ -473,6 +473,24 @@ function makeJet() { // бомбардировщик синих: стрелов�
   const fl2 = flame.clone(); flame.position.x = -1.3; fl2.position.x = 1.3; g.add(fl2);
   g.userData = { flame, fl2 }; g.scale.setScalar(1.25); return g;
 }
+/* дымный след двигателей: кольцевой буфер точек-«клубов» (один draw call на борт); белый, у повреждённого борта — чёрный */
+const SM = { uTime: { value: 0 }, uPx: { value: 800 } };
+function makeSmoke() { const N = 420, geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(N * 3), 3)); geo.setAttribute("birth", new THREE.BufferAttribute(new Float32Array(N).fill(-99), 1)); geo.setAttribute("dark", new THREE.BufferAttribute(new Float32Array(N), 1)); geo.setAttribute("sz", new THREE.BufferAttribute(new Float32Array(N), 1));
+  const mat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, uniforms: SM,
+    vertexShader: `attribute float birth; attribute float dark; attribute float sz; uniform float uTime; uniform float uPx; varying float vA; varying float vD;
+      void main(){ float age = uTime - birth, life = 4.2 + 2. * dark; vec4 mv = modelViewMatrix * vec4(position, 1.); gl_Position = projectionMatrix * mv;
+        float ok = step(0., age) * step(age, life); float k = clamp(age / life, 0., 1.);
+        gl_PointSize = ok * sz * (1. + 4.5 * sqrt(k)) * uPx / max(1., -mv.z); vA = pow(1. - k, 1.3) * (.45 + .8 * dark) * smoothstep(0., .25, age); vD = dark; }`,
+    fragmentShader: `varying float vA; varying float vD; void main(){ vec2 p = gl_PointCoord * 2. - 1.; float r2 = dot(p, p); if (r2 > 1.) discard; float a = pow(1. - r2, 1.2) * vA;
+      vec3 c = mix(vec3(.96, .97, 1.), vec3(.05, .05, .055), vD); gl_FragColor = vec4(c, a); }` });
+  const pts = new THREE.Points(geo, mat); pts.frustumCulled = false; pts.renderOrder = 5; pts.userData = { N, i: 0, last: null }; return pts; }
+function emitSmoke(b) { const P = b.smoke; if (!P) return; const u = P.userData, g = P.geometry, pos = g.attributes.position, bi = g.attributes.birth, dk = g.attributes.dark, sz = g.attributes.sz;
+  const dmg = b.falling ? 1.6 : b.hp < PL.HP ? 1 : 0, now = b.pos; if (!u.last) u.last = now.clone();
+  const dist = u.last.distanceTo(now), n = Math.min(8, Math.floor(dist / 5)); if (!n) return;
+  for (let k = 1; k <= n; k++) for (const s of [-1, 1]) { const f = k / n, i = u.i = (u.i + 1) % u.N;
+    _a.copy(u.last).lerp(now, f).addScaledVector(b.r0, s * 1.5).addScaledVector(b.f, -7).addScaledVector(b.u0, -.2);
+    pos.setXYZ(i, _a.x, _a.y, _a.z); bi.setX(i, tNow - (1 - f) * dist / Math.max(b.v, 50)); dk.setX(i, Math.min(1, dmg)); sz.setX(i, dmg ? 5.5 * (dmg > 1 ? 1.5 : 1) : 3.6); }
+  u.last.copy(now); pos.needsUpdate = bi.needsUpdate = dk.needsUpdate = sz.needsUpdate = true; }
 function makeTrail() { const n = 50, geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(n * 3), 3));
   const l = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: .35, depthWrite: false })); l.frustumCulled = false; l.userData = { n, hist: [], t: 0 }; return l; }
 function gunMesh() { const g = new THREE.Group(), base = new THREE.Mesh(new THREE.CylinderGeometry(5, 6, 3, 8), MAT.olive); base.position.y = 1.5; g.add(base);
@@ -570,7 +588,7 @@ function bombersDraw(dt) {
     const th = .4 + 1.2 * (b.v / PL.VMAX); m.userData.flame.scale.set(1, 1, th); m.userData.fl2.scale.set(1, 1, th);
     const d = b.trail.userData; d.t += dt; if (d.t > .05) { d.t = 0; d.hist.unshift(b.pos.clone()); if (d.hist.length > d.n) d.hist.pop(); }
     const arr = b.trail.geometry.attributes.position.array; for (let i = 0; i < d.n; i++) { const q = d.hist[Math.min(i, d.hist.length - 1)] || b.pos; arr[3 * i] = q.x; arr[3 * i + 1] = q.y; arr[3 * i + 2] = q.z; } b.trail.geometry.attributes.position.needsUpdate = true;
-    b.trail.material.color.set(b.falling ? 0x333333 : 0xffffff); b.trail.material.opacity = b.falling ? .9 : .3; b.trail.visible = d.hist.length > 2;
+    b.trail.material.color.set(b.falling ? 0x333333 : 0xffffff); b.trail.material.opacity = b.falling ? .9 : .3; b.trail.visible = false; emitSmoke(b);
     if (b.falling && tNow - (b.smT || 0) > .08) { b.smT = tNow; G.fx.push({ pos: b.pos.clone(), t0: tNow, r: 7, color: 0xff5010, mesh: null }); } }
 }
 
@@ -690,7 +708,7 @@ function frame(ms) {
   while (left > 1e-6 && !window.__freeze) { const d = Math.min(1 / 60, left); simStep(d); left -= d; }
   if (G.hitMsg && !G.hitMsg.shown) { G.hitMsg.shown = true; toast(G.hitMsg.txt, 2800); }
   cameraUpdate(dt); sky.position.copy(camera.position); water.position.x = camera.position.x; water.position.z = camera.position.z;
-  WU.uTime.value = t; bombersDraw(dt); objectsDraw(dt); fxDraw(dt);
+  SM.uTime.value = tNow; SM.uPx.value = renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360)); WU.uTime.value = t; bombersDraw(dt); objectsDraw(dt); fxDraw(dt);
   renderer.render(scene, camera);
   if (t - hudT > .1) { hudT = t; hud(); } markUpdate(); pipUpdate();
 }
@@ -707,6 +725,11 @@ zl.addEventListener("pointerdown", e => { thrId = e.pointerId; zl.setPointerCapt
 zl.addEventListener("pointermove", e => { if (e.pointerId === thrId) setThr(e); });
 zl.addEventListener("pointerup", () => thrId = null);
 $("bAuto").onclick = () => { const b = G.bombers[G.me]; if (ctl.steerMan || ctl.spdMan) { ctl.steerMan = ctl.spdMan = false; if (b && b.alive) { if (b.bombs > 0 && !G.success) planIngress(b); else planEgress(b); } toast("Автопилот", 900); } else { ctl.steerMan = true; ctl.lastStick = tNow + 1e6; ctl.thr = clamp((b.v - 120) / (PL.VMAX - 120), 0, 1); toast("Ручное управление", 900); } };
+/* полный экран */
+{ const el = document.documentElement, req = el.requestFullscreen || el.webkitRequestFullscreen, FS = () => document.fullscreenElement || document.webkitFullscreenElement;
+  if (!req) $("bFull").style.display = "none";
+  $("bFull").onclick = async () => { try { if (FS()) (document.exitFullscreen || document.webkitExitFullscreen).call(document); else await req.call(el, { navigationUI: "hide" }); } catch { toast("Полный экран недоступен в этом браузере", 1800); } };
+  const upd = () => { $("bFull").textContent = FS() ? "🗗" : "⛶"; setTimeout(resize, 150); }; document.addEventListener("fullscreenchange", upd); document.addEventListener("webkitfullscreenchange", upd); }
 $("bCam").onclick = () => { camMode = (camMode + 1) % 5; S.cam = camMode; saveS(); cam.reset = true; toast(CAMN[camMode], 900); };
 $("map").onclick = () => $("map").classList.toggle("big");
 $("bBomb").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); playerBomb(); });
