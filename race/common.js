@@ -47,14 +47,16 @@ float archd(float x){ float k=floor(x/4300.); return min(axk(x,k-1.),min(axk(x,k
 /* полка: каменная плита поперёк каньона (проход над ней и под ней); shd<0 — внутри полки по длине */
 float shk(float x,float kk){ if(sin(kk*2.17+.4)<.3||sin(kk*3.71+2.2)>=.1) return 1e9; /* не в том же промежутке, что развилка: вместе они образуют западню */ float a=4300.*(kk+.5+.22*sin(2.3*kk+.6)); float b=4300.*(kk+1.5+.22*sin(2.3*kk+2.9)); float hl=min(950.,(b-a)*.5-800.); if(hl<250.) return 1e9; return abs(x-(a+b)*.5)-hl; }
 float shd(float x){ float k=floor(x/4300.-.5); return min(shk(x,k-1.),min(shk(x,k),shk(x,k+1.))); }
-float shy(float x){ return 30.+cfl(x)+cD(x)*(.52+.06*sin(x*7e-4)); }
+float shy(float x){ return 30.+cfl(x)+cD(x)*(.52+.06*sin(x*7e-4)+.055*sin(x*2.4e-3+1.3)); } /* вдоль — горб/прогиб, мост не прямой */
 float sht(float x){ return cD(x)*.07; }
 /* форма полки — природный каменный мост: a — поперечное положение в долях ширины (по перпендикуляру к оси, знак — сторона).
    Низ — арка: к стенам опускается и уходит в склон (контрфорсы), верх поднимается к кромкам; у стен мост длиннее, чем посередине,
-   толщина «гуляет» вдоль и поперёк, края рваные; shU — толщина вверх от shy, shB — вниз */
-float shT(float x,float a){ return sqrt(clamp((-shd(x)+110.*nz(x*1.1e-3,a*1.7,.8,.6,3.3)+300.*smoothstep(.3,1.1,abs(a)))/320.,0.,1.)); }
-float shU(float x,float a){ float t=shT(x,a); float q=smoothstep(.35,1.05,abs(a)); return max(0.,sht(x)*t*(.5+1.6*smoothstep(.5,1.2,abs(a))+.35*nz(x*3.7e-3,a*2.9,.7,.7,1.3))*(1.+.3*nz(x*1.3e-3,a*.7,.9,.4,2.6))+cD(x)*.22*t*q*q); }
-float shB(float x,float a){ float t=shT(x,a); float q=smoothstep(.3,1.,abs(a)); return max(0.,sht(x)*t*(.55+2.6*smoothstep(.45,1.2,abs(a))+.55*nz(x*2.9e-3,a*2.3+5.,.6,.8,4.1))*(1.+.3*nz(x*1.1e-3,a*.8,.4,.9,5.2))+cD(x)*.38*t*q*q); }
+   толщина «гуляет» вдоль и поперёк, края рваные; shU — верх над shy, shB — низ под shy (оба со сдвигом коробления shO; толщина = shU+shB) */
+float shT(float x,float a){ return sqrt(clamp((-shd(x)+110.*nz(x*1.1e-3,a*1.7,.8,.6,3.3)+300.*smoothstep(.3,1.1,abs(a))+160.*sin(a*2.6+x*7e-4)+70.*nz(x*2.3e-3,a*5.3,.6,.8,7.7))/600.,0.,1.)); } /* край моста — изогнутый язык, а не прямая кромка; к краю истончается плавно */
+/* коробление: средняя поверхность моста наклонена поперёк (наклон меняется вдоль) и волнистая — сдвигает и верх, и низ */
+float shO(float x,float a){ return cD(x)*(.075*a*sin(x*1.3e-3+.7)+.05*nz(x*1.9e-3,a*1.4,.7,.7,6.1)); }
+float shU(float x,float a){ float t=shT(x,a); float q=smoothstep(.35,1.05,abs(a)); return shO(x,a)+max(0.,sht(x)*t*(.5+1.6*smoothstep(.5,1.2,abs(a))+.35*nz(x*3.7e-3,a*2.9,.7,.7,1.3))*(1.+.3*nz(x*1.3e-3,a*.7,.9,.4,2.6))+cD(x)*.22*t*q*q); }
+float shB(float x,float a){ float t=shT(x,a); float q=smoothstep(.3,1.,abs(a)); return -shO(x,a)+max(0.,sht(x)*t*(.55+2.6*smoothstep(.45,1.2,abs(a))+.75*nz(x*2.9e-3,a*2.3+5.,.6,.8,4.1)+.3*nz(x*7.1e-3,a*4.3,.9,.4,2.2))*(1.+.35*nz(x*1.1e-3,a*.8,.4,.9,5.2))+cD(x)*.38*t*q*q); }
 float chgt(float x,float z,float sc){
   x/=sc; z/=sc;
   float sl=czd(x); float isl=inversesqrt(1.+sl*sl);
