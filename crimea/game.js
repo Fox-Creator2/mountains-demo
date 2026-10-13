@@ -4,7 +4,7 @@ import { genWorld, threatMap, planRoute, losClear, rng } from "./world.js";
 
 const $ = id => document.getElementById(id);
 const KEY = "crimea-settings-v1";
-const S = Object.assign({ diff: 1, wing: 3, agl: 60, resume: 3, life: 1, q: 2, inv: 0, cam: 0, seed: 0 }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
+const S = Object.assign({ diff: 1, wing: 3, agl: 60, resume: 3, life: 1, q: 2, qa: 1, inv: 0, cam: 0, seed: 0 }, (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })());
 const saveS = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
 let rnd = Math.random; const seedRnd = n => { rnd = rng(n); };
 const UP = new THREE.Vector3(0, 1, 0), _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _m = new THREE.Matrix4();
@@ -330,10 +330,11 @@ varying vec3 vWP; uniform float uTime; uniform sampler2D uWt; uniform vec2 uSz; 
 float h21(vec2 p){ p = mod(p, 289.); p = fract(p * vec2(.1031, .1030)); p += dot(p, p.yx + 33.33); return fract((p.x + p.y) * p.x); }
 float vn(vec2 p){ vec2 i = floor(p), f = p - i; f = f * f * (3. - 2. * f); return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
 /* сглаживающий узор: координаты чтения карты слегка «плывут» шумом — сетка текселей не видна */
-vec2 wUV(vec2 xz){ vec2 o = vec2(vn(xz / 170.), vn(xz / 170. + 17.3)) - .5; return ((xz + o * 70.) / uSz * (uWSz - 1.) + .5) / uWSz; }
-float wv(vec2 p){ float tt = mod(uTime, 2000.); return vn(p / 26. + vec2(tt * .05, tt * .03)) * .55 + vn(p / 9. - vec2(tt * .09, -tt * .06)) * .3 + vn(p / 3.2 + vec2(tt * .17, tt * .11)) * .15; }`)
+vec2 wUV(vec2 xz){ vec2 o = vec2(vn(xz / 170.), vn(xz / 170. + 17.3)) - .5; return ((xz + o * 50.) / uSz * (uWSz - 1.) + .5) / uWSz; }
+float wF = 1.;
+float wv(vec2 p){ float tt = mod(uTime, 2000.); return vn(p / 26. + vec2(tt * .05, tt * .03)) * .55 + vn(p / 9. - vec2(tt * .09, -tt * .06)) * .3 + vn(p / 3.2 + vec2(tt * .17, tt * .11)) * .15 + wF * (vn(p / 1.1 - vec2(tt * .31, tt * .23)) - .5) * .12; }`)
       .replace("#include <color_fragment>", `#include <color_fragment>
-  vec4 wt = texture2D(uWt, wUV(vWP.xz)); { vec2 ob = max(-vWP.xz, vWP.xz - uSz); float out_ = smoothstep(0., 1500., max(ob.x, ob.y)); wt.rg = mix(wt.rg, vec2(max(wt.r, .7), 0.), out_); } float dst = wt.r, lake = wt.g, lw = smoothstep(.03, .2, lake);
+  wF = 1. - smoothstep(150., 700., length(cameraPosition - vWP)); vec4 wt = texture2D(uWt, wUV(vWP.xz)); { vec2 ob = max(-vWP.xz, vWP.xz - uSz); float out_ = smoothstep(0., 1500., max(ob.x, ob.y)); wt.rg = mix(wt.rg, vec2(max(wt.r, .7), 0.), out_); } float dst = wt.r, lake = wt.g, lw = smoothstep(.03, .2, lake);
   float k = pow(clamp(dst, 0., 1.), .5);
   vec3 shallow = vec3(.16, .62, .64), deep = vec3(.025, .15, .30);
   vec3 col = mix(shallow, deep, smoothstep(0., .75, k));
@@ -351,7 +352,7 @@ float wv(vec2 p){ float tt = mod(uTime, 2000.); return vn(p / 26. + vec2(tt * .0
   };
   return m;
 }
-function buildWaterTex(f = 2) {
+function buildWaterTex(f = 3) {
   const { nx, nz, h, land, dOut, cs } = W, at = W.at, Nx = (nx - 1) * f + 1, Nz = (nz - 1) * f + 1, d = new Uint8Array(Nx * Nz * 4);
   const SEA = Float32Array.from(land, v => v === 0 ? 1 : 0), LK = Float32Array.from(land, (v, k) => v === 2 ? Math.max(.25, Math.min(1, -h[k] / 30)) : 0);
   for (let oj = 0; oj < Nz; oj++) for (let oi = 0; oi < Nx; oi++) { const x = oi * cs / f, z = oj * cs / f, o = (oj * Nx + oi) * 4, sw = at(SEA, x, z);
@@ -360,7 +361,7 @@ function buildWaterTex(f = 2) {
   WU.uWt.value?.dispose(); WU.uWt.value = t; WU.uSz.value.set(W.W, W.H); WU.uWSz.value.set(Nx, Nz);
 }
 /* дороги и посёлки — карта поверх рельефа (в шейдер как цветовая подложка с прозрачностью) */
-const OV = { uFld: { value: FIELDS_L() }, uSeed: { value: 0 }, uTSz: { value: new THREE.Vector2(1201, 801) }, uNrm: { value: null }, uTerCol: { value: null }, uRoad: { value: null }, uOSz: { value: new THREE.Vector2(36000, 24000) } };
+const OV = { uCSz: { value: new THREE.Vector2(1801, 1201) }, uFld: { value: FIELDS_L() }, uSeed: { value: 0 }, uTSz: { value: new THREE.Vector2(1201, 801) }, uNrm: { value: null }, uTerCol: { value: null }, uRoad: { value: null }, uOSz: { value: new THREE.Vector2(36000, 24000) } };
 function pickVillages() {
   const r = rng(W.seed + 11), { nx, land, mt, dIn, cs } = W, nv = 10 + Math.floor(r() * 8), out = [];
   for (let v = 0; v < nv; v++) for (let t = 0; t < 200; t++) { const cx = r() * W.W, cz = r() * W.H, k = Math.round(cz / cs) * nx + Math.round(cx / cs);
@@ -385,16 +386,27 @@ const FIELDS = [0xd8c27a, 0xc9b25e, 0x8fa04f, 0x7d8a45, 0x9c7a52, 0xb59a62, 0xa8
 /* карта нормалей рельефа из полной сетки высот (30 м на пиксель): освещение не зависит от уровня детализации куска — нет «квадратов» */
 function terrainNormals(f = 2) {
   const { nx, nz, h, cs } = W, Nx = (nx - 1) * f + 1, Nz = (nz - 1) * f + 1, data = new Uint8Array(Nx * Nz * 4), at = W.at;
+  /* «полость/гребень» по узлам сетки: высота против среднего вокруг на 90 и 240 м — гребни светлее, лощины темнее */
+  const CAV = new Float32Array(nx * nz), DIR = [...Array(8)].map((_, q) => [Math.cos(q * Math.PI / 4), Math.sin(q * Math.PI / 4)]);
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) { const x = i * cs, z = j * cs, y0 = Math.max(h[j * nx + i], -60); let s1 = 0, s2 = 0;
+    for (const [ca, sa] of DIR) { s1 += Math.max(at(h, x + ca * 90, z + sa * 90), -60); s2 += Math.max(at(h, x + ca * 240, z + sa * 240), -60); }
+    CAV[j * nx + i] = .5 + .5 * Math.tanh((y0 - s1 / 8) / 14 + (y0 - s2 / 8) / 40); }
   for (let oj = 0; oj < Nz; oj++) for (let oi = 0; oi < Nx; oi++) { const x = oi * cs / f, z = oj * cs / f, a = Math.max(at(h, x - cs, z), -60) - Math.max(at(h, x + cs, z), -60), b = Math.max(at(h, x, z - cs), -60) - Math.max(at(h, x, z + cs), -60), l = Math.hypot(a, 2 * cs, b), o = (oj * Nx + oi) * 4;
-    data[o] = Math.round((a / l * .5 + .5) * 255); data[o + 1] = Math.round((2 * cs / l * .5 + .5) * 255); data[o + 2] = Math.round((b / l * .5 + .5) * 255); data[o + 3] = 255; }
+    data[o] = Math.round((a / l * .5 + .5) * 255); data[o + 1] = Math.round((2 * cs / l * .5 + .5) * 255); data[o + 2] = Math.round((b / l * .5 + .5) * 255);
+    data[o + 3] = Math.round(Math.max(0, Math.min(1, at(CAV, x, z))) * 255); }
   const t = new THREE.DataTexture(data, Nx, Nz, THREE.RGBAFormat); t.colorSpace = THREE.NoColorSpace; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.flipY = false; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true; return t;
 }
 function terrainColors(f = 2) {
   const { nx, nz, h, land, mt, dIn, cs } = W, Nx = (nx - 1) * f + 1, Nz = (nz - 1) * f + 1, data = new Uint8Array(Nx * Nz * 4), c = new THREE.Color(), sea = new THREE.Color(), r = rng(W.seed + 5), at = W.at, SALT = Float32Array.from(land, v => v === 2 ? 1 : 0); let FW = 0;
+  /* уклон по узлам сетки (потом билинейно) и таблица линейный→sRGB — генерация в 20 м/пиксель остаётся быстрой */
+  const SL = new Float32Array(nx * nz), hh = (i, j) => h[Math.max(0, Math.min(nz - 1, j)) * nx + Math.max(0, Math.min(nx - 1, i))];
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) SL[j * nx + i] = Math.hypot(hh(i + 1, j) - hh(i - 1, j), hh(i, j + 1) - hh(i, j - 1)) / (2 * cs);
+  const LUT = new Uint8Array(4097); for (let q = 0; q <= 4096; q++) { const v = q / 4096; LUT[q] = Math.round(255 * (v < .0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - .055)); }
+  const toS = v => LUT[Math.max(0, Math.min(4096, Math.round(v * 4096)))];
   const C = { sand: new THREE.Color(0xd9c58e), steppe: new THREE.Color(0xb7a96a), steppe2: new THREE.Color(0x9a9a58), forest: new THREE.Color(0x3f6234), meadow: new THREE.Color(0x8fa060), lime: new THREE.Color(0xc9c4b4), salt: new THREE.Color(0xe7e2da), sea: new THREE.Color(0x2b5a6a), cliff: new THREE.Color(0xa59f92) };
   for (let oj = 0; oj < Nz; oj++) for (let oi = 0; oi < Nx; oi++) { const x = oi * cs / f, z = oj * cs / f, i = Math.min(nx - 1, Math.round(oi / f)), j = Math.min(nz - 1, Math.round(oj / f)), k = j * nx + i, y = at(h, x, z);
     FW = 0;
-    {  const sl = Math.hypot(at(h, x + cs, z) - at(h, x - cs, z), at(h, x, z + cs) - at(h, x, z - cs)) / (2 * cs), m = at(mt, x, z), n = r(), din = at(dIn, x, z);
+    {  const sl = at(SL, x, z), m = at(mt, x, z), din = at(dIn, x, z);
       c.copy(C.steppe).lerp(C.steppe2, .5 + .5 * Math.sin(x * 5.8e-4 + z * 4.2e-4) * Math.cos(x * 2.6e-4 - z * 5e-4));
       let fw = m < .12 ? .55 * (1 - sstep(.05, .12, m)) : 0;
       if (m > .08) { const t = sstep(.08, .3, m) * (1 - sstep(.75, .95, m)); c.lerp(C.forest, t); fw *= 1 - t; }
@@ -405,7 +417,7 @@ function terrainColors(f = 2) {
       FW = fw;
       }
     { const wf = sstep(1.2, -1.2, y); FW *= 1 - wf; if (wf > 0) { sea.copy(C.sea).lerp(C.sand, Math.max(0, 1 + y / 12)); c.lerp(sea, wf); } const sf = at(SALT, x, z); if (sf > 0) { c.lerp(C.salt, Math.min(1, sf * 1.4) * (1 - wf)); FW *= 1 - Math.min(1, sf * 1.4); } }
-    c.convertLinearToSRGB(); const o = (oj * Nx + oi) * 4; data[o] = Math.max(0, Math.min(255, Math.round(c.r * 255))); data[o + 1] = Math.max(0, Math.min(255, Math.round(c.g * 255))); data[o + 2] = Math.max(0, Math.min(255, Math.round(c.b * 255))); data[o + 3] = Math.round(Math.max(0, Math.min(1, FW)) * 255); }
+    const o = (oj * Nx + oi) * 4; data[o] = toS(c.r); data[o + 1] = toS(c.g); data[o + 2] = toS(c.b); data[o + 3] = Math.round(Math.max(0, Math.min(1, FW)) * 255); }
   const t = new THREE.DataTexture(data, Nx, Nz, THREE.RGBAFormat); t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.flipY = false; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true;
   return t;
 }
@@ -416,12 +428,12 @@ function terrainMaterial() {
     sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 vWP; varying vec3 vWN;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.)).xyz; vWN = normal;");
     sh.fragmentShader = sh.fragmentShader.replace("#include <common>", `#include <common>
-varying vec3 vWP; varying vec3 vWN; uniform sampler2D uRoad; uniform sampler2D uTerCol; uniform sampler2D uNrm; uniform vec2 uOSz; uniform vec2 uTSz; uniform vec3 uFld[7]; uniform float uSeed;
+varying vec3 vWP; varying vec3 vWN; uniform sampler2D uRoad; uniform sampler2D uTerCol; uniform sampler2D uNrm; uniform vec2 uOSz; uniform vec2 uTSz; uniform vec2 uCSz; uniform vec3 uFld[7]; uniform float uSeed;
 /* хеш и шум: решётка по модулю 289 — без потери точности на больших координатах (телефонные GPU) */
 float h21(vec2 p){ p = mod(p, 289.); p = fract(p * vec2(.1031, .1030)); p += dot(p, p.yx + 33.33); return fract((p.x + p.y) * p.x); }
 float vn(vec2 p){ vec2 i = floor(p), f = p - i; f = f * f * (3. - 2. * f); return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
 /* текстуры рельефа: обычная аппаратная билинейная фильтрация, координаты точно по центрам текселей */
-vec2 terUV(vec2 xz){ vec2 o = vec2(vn(xz / 150.), vn(xz / 150. + 17.3)) - .5; xz += o * 36.; return (xz / uOSz * (uTSz - 1.) + .5) / uTSz; }
+vec2 terUV(vec2 xz){ vec2 o = vec2(vn(xz / 150.), vn(xz / 150. + 17.3)) - .5; xz += o * 26.; return (xz / uOSz * (uCSz - 1.) + .5) / uCSz; }
 vec3 fldCol(float k){ return k < 1. ? uFld[0] : k < 2. ? uFld[1] : k < 3. ? uFld[2] : k < 4. ? uFld[3] : k < 5. ? uFld[4] : k < 6. ? uFld[5] : uFld[6]; }
 float fb(vec2 p, float k){ float s = 0., a = .5; for (int i = 0; i < 3; i++) { s += a * vn(p); p = p * 2.07 + 13.1; a *= .5 * k; } return s; }`)
       .replace("#include <normal_fragment_begin>", `#include <normal_fragment_begin>
@@ -432,7 +444,7 @@ float fb(vec2 p, float k){ float s = 0., a = .5; for (int i = 0; i < 3; i++) { s
     if (fa > 0.) { float e = .6, n0 = fb(q / 5., 1.), gx = fb((q + vec2(e, 0.)) / 5., 1.) - n0, gz = fb((q + vec2(0., e)) / 5., 1.) - n0; pw += vec3(-(gx / e) * .9 * fa, 0., -(gz / e) * .9 * fa); } }
   normal = normalize(normal + mat3(viewMatrix) * pw);`)
       .replace("#include <color_fragment>", `#include <color_fragment>
-  vec2 tUV = terUV(vWP.xz); vec4 tc = texture2D(uTerCol, tUV); vec3 nT = normalize(texture2D(uNrm, tUV).xyz * 2. - 1.);
+  vec2 tUV = terUV(vWP.xz); vec4 tc = texture2D(uTerCol, tUV); vec4 nm = texture2D(uNrm, (vWP.xz / uOSz * (uTSz - 1.) + .5) / uTSz); vec3 nT = normalize(nm.xyz * 2. - 1.); float cav = nm.a;
   float fHs = 1.; float fU = 0.;
   /* поля считаются прямо в шейдере (не из текстуры): края плавные при любом разрешении, без ступенек */
   if (tc.a > .004) { vec2 q = vWP.xz; float xw = q.x + 70. * sin(q.y / 410.) + 35. * sin(q.y / 130. + q.x / 300.), zw = q.y + 70. * sin(q.x / 470.) + 35. * sin(q.x / 150. + q.y / 330.);
@@ -446,6 +458,8 @@ float fb(vec2 p, float k){ float s = 0., a = .5; for (int i = 0; i < 3; i++) { s
     float v = .76 + .5 * c3 * (1. - .5 * fa) ; v *= mix(1., .82 + .36 * c2, .75 * (1. - smoothstep(4000., 14000., length(cameraPosition - vWP)))); v *= mix(1., .86 + .28 * c1, fa);
     float steep = smoothstep(.5, .85, 1. - nT.y); float band = .5 + .5 * sin(vWP.y * .22 + c3 * 14. + c2 * 4.);
     v *= 1. - steep * (.05 + .10 * band);
+    v *= mix(.74, 1.14, smoothstep(.15, .85, cav));
+    { float fn = 1. - smoothstep(60., 260., length(cameraPosition - vWP)); if (fn > 0.) v *= 1. + fn * .16 * (vn(vWP.xz / 1.3) + .6 * vn(vWP.xz / .55 + 5.) - .8); }
     diffuseColor.rgb *= v;
     /* поля: живая изгородь по границам, у некоторых — ряды (виноградники/сады), видны вблизи */
     if (vWP.y < 140. && nT.y > .97 && fa > 0.) { float a = .5 * sin(vWP.x / 9000. + 1.3) + .3 * cos(vWP.z / 7000.), u = vWP.x * cos(a) + vWP.z * sin(a), w = -vWP.x * sin(a) + vWP.z * cos(a), fi = floor(u / 520.), fj = floor(w / 380.);
@@ -461,7 +475,7 @@ const TER = { chunks: [], mat: null };
 function buildTerrain() {
   for (const c of TER.chunks) for (const m of c.lod) { scene.remove(m); m.geometry.dispose(); } TER.chunks = [];
   const { nx, nz, h, cs } = W, CH = 50, hh = (i, j) => h[Math.max(0, Math.min(nz - 1, j)) * nx + Math.max(0, Math.min(nx - 1, i))];
-  TER.mat ??= terrainMaterial(); TER.tex?.dispose(); TER.tex = terrainColors(2); OV.uTerCol.value = TER.tex; TER.ntex?.dispose(); TER.ntex = terrainNormals(2); OV.uNrm.value = TER.ntex; OV.uTSz.value.set((nx - 1) * 2 + 1, (nz - 1) * 2 + 1); OV.uSeed.value = W.seed % 97; OV.uOSz.value.set(W.W, W.H);
+  TER.mat ??= terrainMaterial(); TER.tex?.dispose(); TER.tex = terrainColors(3); OV.uCSz.value.set((nx - 1) * 3 + 1, (nz - 1) * 3 + 1); OV.uTerCol.value = TER.tex; TER.ntex?.dispose(); TER.ntex = terrainNormals(2); OV.uNrm.value = TER.ntex; OV.uTSz.value.set((nx - 1) * 2 + 1, (nz - 1) * 2 + 1); OV.uSeed.value = W.seed % 97; OV.uOSz.value.set(W.W, W.H);
   for (let cz = 0; cz < nz - 1; cz += CH) for (let cx = 0; cx < nx - 1; cx += CH) {
     const ex = Math.min(CH, nx - 1 - cx), ez = Math.min(CH, nz - 1 - cz), lod = [];
     for (const s of [1, 2, 5]) { const st = ex % s || ez % s ? 1 : s, gx = ex / st + 1, gz = ez / st + 1, vid = new Map(), P = [], idx = [];
@@ -787,7 +801,7 @@ function frame(ms) {
   SM.uTime.value = tNow; SM.uPx.value = renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360)); WU.uTime.value = t; bombersDraw(dt); objectsDraw(dt); fxDraw(dt);
   renderer.render(scene, camera);
   /* авто-чёткость: если кадры тяжёлые — снижаем разрешение рендера (до 55 %), если быстрые — возвращаем */
-  { const ft = Math.min(.1, dt); fEma = fEma ? fEma + (ft - fEma) * .08 : ft; if (t - qT > 1.5 && !window.__noLoop) { qT = t; const want = fEma > .042 ? Math.max(.75, qAuto * .88) : fEma < .024 ? Math.min(1, qAuto * 1.08) : qAuto; if (Math.abs(want - qAuto) > .04) { qAuto = want; resize(); } } }
+  { const ft = Math.min(.1, dt); fEma = fEma ? fEma + (ft - fEma) * .08 : ft; if (!+S.qa && qAuto !== 1) { qAuto = 1; resize(); } if (+S.qa && t - qT > 1.5 && !window.__noLoop) { qT = t; const want = fEma > .042 ? Math.max(.75, qAuto * .88) : fEma < .024 ? Math.min(1, qAuto * 1.08) : qAuto; if (Math.abs(want - qAuto) > .04) { qAuto = want; resize(); } } }
   if (t - hudT > .1) { hudT = t; hud(); } markUpdate(); pipUpdate();
 }
 
@@ -816,9 +830,10 @@ addEventListener("keydown", e => { const k = e.key.length === 1 ? e.key.toLowerC
   if (e.key === " ") { $("bAuto").onclick(); e.preventDefault(); } if (k === "b" || k === "и" || k === "enter") playerBomb(); if (k === "f" || k === "а") playerFlare(); if (k === "c" || k === "с") $("bCam").onclick(); if (k === "m" || k === "ь") $("map").onclick(); if (k === "escape") $("panel").style.display = "none"; });
 addEventListener("keyup", e => { const k = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase(); ctl.keys[k] = false; ctl.keys[e.key] = false; });
 /* панель */
-const sel = { sDiff: "diff", sWing: "wing", sAgl: "agl", sResume: "resume", sLife: "life", sQ: "q", sInv: "inv" };
-$("bSet").onclick = () => { for (const [id, k] of Object.entries(sel)) $(id).value = String(S[k]); $("panel").style.display = "block"; };
-for (const [id, k] of Object.entries(sel)) $(id).onchange = e => { S[k] = +e.target.value; saveS(); if (k === "q") resize(); };
+const sel = { sDiff: "diff", sWing: "wing", sAgl: "agl", sResume: "resume", sLife: "life", sQ: "q", sQa: "qa", sInv: "inv" };
+$("bSet").onclick = () => { for (const [id, k] of Object.entries(sel)) $(id).value = String(S[k]); $("panel").style.display = "block"; qInfo(); };
+function qInfo() { const e = $("qNow"); if (e) e.textContent = `сейчас: ${Math.round(renderer.getPixelRatio() * 100) / 100}× (экран ${devicePixelRatio || 1}×), авто ${Math.round(qAuto * 100)}% · кадр ${Math.round(fEma * 1000)} мс`; }
+for (const [id, k] of Object.entries(sel)) $(id).onchange = e => { S[k] = +e.target.value; saveS(); if (k === "q" || k === "qa") resize(); qInfo(); };
 $("bClose").onclick = () => { $("panel").style.display = "none"; };
 $("bNew").onclick = () => { $("panel").style.display = "none"; hideSummary(); newRound(); };
 
@@ -828,6 +843,6 @@ setTimeout(() => { newRound(S.seed ? S.seed + 1 : 1 + Math.floor(Math.random() *
   $("hint").textContent = "правая часть экрана — стик · 💣 бомбы · ✨ ловушки"; setTimeout(() => $("hint").textContent = "", 6000); }, 30);
 
 /* тесты: симуляция без графики */
-window.__cr = { sim(sec, dt = 1 / 60) { for (let t = 0; t < sec; t += dt) simStep(dt); return this.state(); },
+window.__cr = { fns: { terrainColors, terrainNormals, buildWaterTex }, sim(sec, dt = 1 / 60) { for (let t = 0; t < sec; t += dt) simStep(dt); return this.state(); },
   state() { return { round: STATS.rounds, t: +tNow.toFixed(1), done: G.done, success: G.success, causes: G.causes, bombers: G.bombers.map(b => ({ id: b.id, alive: b.alive && !b.falling, mode: b.mode, bombs: b.bombs, hp: b.hp, agl: Math.round(agl(b.pos)), v: Math.round(b.v) })), left: W.target.parts.filter(p => p.hp > 0).length, target: W.target.type, missiles: G.missiles.length }; },
   newRound, get W() { return W; }, get G() { return G; }, STATS, S, seedRnd, renderer: () => renderer, scene: () => scene, camera: () => camera, frame, setCam: m => { camMode = m; cam.reset = true; } };
