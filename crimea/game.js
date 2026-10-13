@@ -14,10 +14,11 @@ const wrap = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a
 
 /* ---------- параметры ---------- */
 const PL = { AMAX: 60, VMAX: 300, CRU: 235, ACC: 14, BRK: 28, HP: 5 };          // бомбардировщик: ~6g, 1080 км/ч
-const DIFF = [{ reload: 8, decoy: .65, mg: 220, aaaRate: .6, spread: 1.5, notch: 60 }, { reload: 7, decoy: .6, mg: 250, aaaRate: .45, spread: 1.15, notch: 45 }, { reload: 4, decoy: .4, mg: 320, aaaRate: .3, spread: .9, notch: 30 }];
+const DIFF = [{ reload: 8, decoy: .45, mg: 220, aaaRate: .6, spread: 1.5, notch: 60, amP: .6, kn: .9, air: 2 }, { reload: 6, decoy: .38, mg: 250, aaaRate: .45, spread: 1.15, notch: 45, amP: .55, kn: .65, air: 2 }, { reload: 3.5, decoy: .3, mg: 320, aaaRate: .3, spread: .9, notch: 30, amP: .5, kn: .45, air: 3 }]; // decoy — шанс одной серии ловушек увести ракету; amP — шанс противоракеты; kn — доля ЗРК, известных лётчику заранее; air — сколько ракет одна ЗРК держит в воздухе
 const D = () => DIFF[+S.diff] || DIFF[1];
 
 let W = null, G = null, TM = null, tNow = 0;
+const REP = { n: 0 }; // счётчики для тестов
 const STATS = { rounds: 0, wins: 0, losses: 0, planesLost: 0, defKilled: 0 };
 
 /* ================= раунд ================= */
@@ -27,22 +28,46 @@ function newRound(seed) {
   W = genWorld(seed);
   if (+S.diff === 2) addSams(W, 2); if (+S.diff === 0) W.sams = W.sams.slice(0, Math.max(1, W.sams.length - 1));
   W.aaa = W.aaa.slice(+S.diff === 2 ? 0 : +S.diff === 1 ? 1 : 2); // первые три — у цели: на обычной ПВО их две, на слабой одна
-  TM = threatMap(W, +S.agl || 60);
-  G = { seed, t: 0, bombers: [], missiles: [], shells: [], bursts: [], bombs: [], flares: [], fx: [], fires: [], done: false, endT: 0, success: false, me: 0, msg: [], causes: {} };
+    G = { seed, t: 0, bombers: [], missiles: [], ams: [], shells: [], bursts: [], bombs: [], flares: [], fx: [], fires: [], done: false, endT: 0, success: false, me: 0, msg: [], causes: {}, known: new Set(), replan: 0, replans: 0, amHit: 0, amMiss: 0, flDecoy: 0, mvs: {} };
   tNow = 0;
+  /* разведданные: часть ЗРК лётчик знает заранее, остальные «открываются», когда засветят борт или пустят ракету */
+  for (const s of W.sams) if (rnd() < D().kn) G.known.add(s);
+  if (!G.known.size && W.sams.length) G.known.add(W.sams[0]);
+  TM = buildTM();
   const tg = W.target, ang0 = Math.atan2(W.start.z - tg.z, W.start.x - tg.x), n = +S.wing || 3, dir = Math.atan2(tg.z - W.start.z, tg.x - W.start.x);
   for (let i = 0; i < n; i++) {
     const sector = ang0 + (i === 0 ? 0 : (i % 2 ? 1 : -1) * Math.ceil(i / 2) * .85);
     const back = i * 1500, side = (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 500;
     const x = W.start.x - Math.cos(dir) * back - Math.sin(dir) * side, z = W.start.z - Math.sin(dir) * back + Math.cos(dir) * side;
     const b = { id: i, pos: new THREE.Vector3(x, (+S.agl || 60) + 20, z), f: new THREE.Vector3(Math.cos(dir), 0, Math.sin(dir)), v: PL.CRU, roll: 0, rollV: 0, ar: 0, au: 0,
-      hp: PL.HP, alive: true, falling: false, bombs: 6, flares: 8, mode: "ingress", sector, route: null, ri: 0, rel: 0, relT: 0, evT: 0, flT: -9, r0: new THREE.Vector3(), u0: new THREE.Vector3(), r: new THREE.Vector3(), u: new THREE.Vector3(), tracked: 0, safe: false };
+      hp: PL.HP, alive: true, falling: false, bombs: 6, flares: 10, ams: 2, amT: -9, rpT: -9, evK: "", mvT: 0, mode: "ingress", sector, route: null, ri: 0, rel: 0, relT: 0, evT: 0, flT: -9, r0: new THREE.Vector3(), u0: new THREE.Vector3(), r: new THREE.Vector3(), u: new THREE.Vector3(), tracked: 0, safe: false };
     planIngress(b); G.bombers.push(b);
   }
   STATS.rounds++;
   if (renderer) buildScene();
   ctl.steerMan = false; ctl.spdMan = false;
   toast(`Раунд ${STATS.rounds}: ${tg.name}`, 2600);
+}
+/* карта угроз по ИЗВЕСТНЫМ лётчику ЗРК и кораблям; вклад каждого радара считается один раз и кэшируется */
+function srcTM(s) { if (s._tm) return s._tm; const Gs = 300, gx = Math.ceil(W.W / Gs) + 1, gz = Math.ceil(W.H / Gs) + 1, T = new Float32Array(gx * gz), fr = s.kind === "frigate", y0 = fr ? 25 : s.y + 18, ag = +S.agl || 60;
+  for (let j = 0; j < gz; j++) for (let i = 0; i < gx; i++) { const x = i * Gs, z = j * Gs, d = Math.hypot(x - s.x, z - s.z); if (d > s.R * 1.15) continue; const y = Math.max(0, W.gnd(x, z)) + ag; if (!losClear(W, s.x, y0, s.z, x, y, z, 220)) continue; T[j * gx + i] = 6 * (1.15 - d / s.R) + 1; }
+  return s._tm = T; }
+function buildTM() { const Gs = 300, gx = Math.ceil(W.W / Gs) + 1, gz = Math.ceil(W.H / Gs) + 1, T = new Float32Array(gx * gz);
+  const src = [...W.sams.filter(s => !s.dead && G.known.has(s)), ...W.ships.filter(s => s.kind === "frigate" && !s.dead)];
+  for (const s of src) { const t = srcTM(s); for (let k = 0; k < T.length; k++) T[k] += t[k]; }
+  for (const A of W.aaa) { if (A.dead) continue; const i0 = Math.max(0, Math.floor((A.x - A.R) / Gs)), i1 = Math.min(gx - 1, Math.ceil((A.x + A.R) / Gs)), j0 = Math.max(0, Math.floor((A.z - A.R) / Gs)), j1 = Math.min(gz - 1, Math.ceil((A.z + A.R) / Gs));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const d = Math.hypot(i * Gs - A.x, j * Gs - A.z); if (d < A.R) T[j * gx + i] += 2.5 * (1 - d / A.R); } }
+  return { gx, gz, G: Gs, T }; }
+/* лётчик узнаёт о ЗРК (предупреждение об облучении / пуск) — карта пересчитывается, маршруты перестраиваются */
+function discover(s, why) { if (!G.known.has(s)) { G.known.add(s); G.replan = G.replan || tNow + .4; G.why = why; G.newS = s; } }
+function replanAll() {
+  const why = G.why; G.replan = 0; TM = buildTM(); G.replans++;
+  for (const b of G.bombers) { if (!b.alive || b.falling || tNow - b.rpT < 3) continue;
+    if (b.id === G.me && ctl.steerMan) continue;
+    if (b.mode === "ingress" || b.mode === "outbound") { b.rpT = tNow; planIngress(b); b.mode = b.mode === "outbound" ? "ingress" : b.mode; }
+    else if (b.mode === "egress") { b.rpT = tNow; planEgress(b); } }
+  const me = G.bombers[G.me]; if (me && me.alive && !me.falling && (me.mode === "ingress" || me.mode === "egress")) toast(why === "dead" ? "ЗРК уничтожена — маршрут пересчитан" : "Новая ЗРК обнаружена — маршрут изменён", 2200);
+  G.msg.push(why === "dead" ? "Маршрут пересчитан: ЗРК уничтожена" : "Маршрут пересчитан: обнаружена ЗРК");
 }
 function addSams(w, k) { const r = rng(w.seed * 13 + 1); for (let t = 0; t < 3000 && k > 0; t++) { const x = 2000 + r() * (w.W - 4000), z = 2000 + r() * (w.H - 4000); if (w.isSea(x, z) || w.gnd(x, z) < 5) continue; if (w.sams.some(s => Math.hypot(s.x - x, s.z - z) < 5000)) continue; w.sams.push({ x, z, y: w.gnd(x, z), R: 12000, Rr: 22000, ammo: 6, next: 0, kind: "sam", hd: r() * 6 }); k--; } }
 function planIngress(b) {
@@ -154,9 +179,9 @@ function defenseStep(dt) {
   const shooters = [...W.sams.map(s => ({ s, h: 18 })), ...W.ships.filter(s => s.kind === "frigate").map(s => ({ s, h: 25 }))];
   for (const { s, h } of shooters) { if (s.dead || s.ammo <= 0) continue;
     if (tNow < (s.scanT || 0)) continue; s.scanT = tNow + .4; s.lock = null; let best = null;
-    for (const b of live) { const d = Math.hypot(b.pos.x - s.x, b.pos.z - s.z); if (!radarSees(b.pos.x, b.pos.y, b.pos.z, s.x, s.y + h, s.z, s.Rr)) continue; b.tracked = tNow + .6; if (d < s.R && (!best || d < best.d)) best = { b, d }; }
+    for (const b of live) { const d = Math.hypot(b.pos.x - s.x, b.pos.z - s.z); if (!radarSees(b.pos.x, b.pos.y, b.pos.z, s.x, s.y + h, s.z, s.Rr)) continue; b.tracked = tNow + .6; if (s.kind === "sam") discover(s, "track"); if (d < s.R && (!best || d < best.d)) best = { b, d }; }
     if (best) { s.lock = best.b; const inAir = G.missiles.filter(m => m.alive && m.src === s).length;
-      if (tNow >= s.next && inAir < 2) { s.next = tNow + dif.reload * (.8 + .4 * rnd()); s.ammo--; launchMissile(s, h, best.b); } } }
+      if (tNow >= s.next && inAir < dif.air) { s.next = tNow + dif.reload * (.8 + .4 * rnd()); s.ammo--; launchMissile(s, h, best.b); } } }
   /* зенитки: разрывы в точке упреждения с разбросом */
   const guns = [...W.aaa, ...W.ships];
   for (const A of guns) { if (A.dead) continue; const R = A.R || 3200, ay = (A.y || 0) + 6;
@@ -216,7 +241,7 @@ function bombsStep(dt) {
     B.done = true; B.pos.y = gy; const water = gy <= 0 && W.isSea(B.pos.x, B.pos.z); boom(B.pos, water ? 30 : 38, water ? 0xd8eaff : 0xffa040, water);
     { const ap = B.owner.aimP; (G.imp ??= []).push(ap ? Math.round(Math.hypot(ap.x - B.pos.x, ap.z - B.pos.z)) : -1); }
     const R = 48; for (const p of W.target.parts) { if (p.hp <= 0) continue; const d = Math.hypot(p.x - B.pos.x, p.z - B.pos.z); if (W.target.type === "ship" ? d < 45 : d < R + p.sz * .4) { p.hp = 0; G.fires.push({ x: p.x, y: p.y + 6, z: p.z, t0: tNow, big: true }); } }
-    for (const L of [W.sams, W.aaa, W.ships]) for (const s of L) if (!s.dead && Math.hypot(s.x - B.pos.x, s.z - B.pos.z) < (s.kind === "frigate" ? 50 : 40)) { if (s.hp > 1) s.hp--; else { s.dead = true; STATS.defKilled++; G.fires.push({ x: s.x, y: (s.y || 0) + 4, z: s.z, t0: tNow }); } }
+    for (const L of [W.sams, W.aaa, W.ships]) for (const s of L) if (!s.dead && Math.hypot(s.x - B.pos.x, s.z - B.pos.z) < (s.kind === "frigate" ? 50 : 40)) { if (s.hp > 1) s.hp--; else { s.dead = true; STATS.defKilled++; if (s.kind === "sam" && G.known.has(s)) { G.replan = G.replan || tNow + 1; G.why = "dead"; } G.fires.push({ x: s.x, y: (s.y || 0) + 4, z: s.z, t0: tNow }); } }
     const tg = W.target, killed = tg.parts.filter(p => p.hp <= 0).length;
     if (!G.success && killed >= tg.need) { G.success = true; G.succT = tNow; toast(`Цель поражена: ${tg.name}`, 2600); }
   }
@@ -239,7 +264,8 @@ function simStep(dt) {
     (b.hist ??= []).push([+tNow.toFixed(2), b.mode, Math.round(agl(b.pos)), +Math.asin(b.f.y).toFixed(2), Math.round(c[0]), Math.round(c[1]), b.evT > tNow ? 'EV' : '', Math.round(b.v)]); if (b.hist.length > 240) b.hist.shift();
     if (b.pos.y < Math.max(0, W.gnd(b.pos.x, b.pos.z)) + 1.5) { b.hp = 0; b.falling = true; b.alive = false; G.causes["столкновение с рельефом"] = (G.causes["столкновение с рельефом"] || 0) + 1; (G.crashLog ??= []).push(b.hist.filter((_, i) => i % 12 === 0 || i > b.hist.length - 4)); STATS.planesLost++; boom(b.pos, 45, 0xff8030, W.isSea(b.pos.x, b.pos.z)); G.msg.push(`Борт ${b.id + 1}: столкновение с землёй`); if (b.id === G.me) toast("Столкновение с землёй", 1600); }
   }
-  defenseStep(dt); missilesStep(dt); shellsStep(dt, prevPos); bombsStep(dt);
+  if (G.replan && tNow >= G.replan) replanAll();
+  defenseStep(dt); missilesStep(dt); amStep(dt); shellsStep(dt, prevPos); bombsStep(dt);
   for (const F of G.flares) { F.vel.y -= 9.81 * dt; F.vel.multiplyScalar(1 - .8 * dt); F.pos.addScaledVector(F.vel, dt); }
   G.flares = G.flares.filter(F => tNow - F.t0 < 3.5 || (F.mesh && (F.mesh.parent?.remove(F.mesh), false)));
   G.bursts = G.bursts.filter(B => tNow - B.t0 < 2.4 || (B.mesh && (drop(B.mesh), false)));
