@@ -231,24 +231,24 @@ function simStep(dt) {
   for (const b of G.bombers) { if (!b.alive) continue; prevPos.set(b, b.pos.clone());
     if (b.falling) { // подбит: падает, крутится, дымит
       b.f.y = Math.max(-.85, b.f.y - dt * .35); b.f.normalize(); b.v = Math.max(140, b.v - 10 * dt); b.roll += dt * 3.5; b.pos.addScaledVector(b.f, b.v * dt); basis(b);
-      if (b.pos.y < Math.max(0, W.gnd(b.pos.x, b.pos.z)) + 2) { b.alive = false; boom(b.pos, 45, 0xff8030, W.isSea(b.pos.x, b.pos.z)); if (!W.isSea(b.pos.x, b.pos.z)) G.fires.push({ x: b.pos.x, y: b.pos.y, z: b.pos.z, t0: tNow }); }
+      if (b.pos.y < Math.max(0, W.gnd(b.pos.x, b.pos.z)) + 2) { b.alive = false; b.deadT = tNow; const sea = W.isSea(b.pos.x, b.pos.z); boom(b.pos, 70, 0xff8030, sea); boom(_a.copy(b.pos).add(_b.set(0, 14, 0)), 34, 0xffd070, false); if (!W.isSea(b.pos.x, b.pos.z)) G.fires.push({ x: b.pos.x, y: b.pos.y, z: b.pos.z, t0: tNow }); }
       continue; }
     let c = aiBomber(b, dt);
     if (b.id === G.me) c = playerControl(b, c);
     stepPlane(b, dt, c[0], c[1], c[2]);
     (b.hist ??= []).push([+tNow.toFixed(2), b.mode, Math.round(agl(b.pos)), +Math.asin(b.f.y).toFixed(2), Math.round(c[0]), Math.round(c[1]), b.evT > tNow ? 'EV' : '', Math.round(b.v)]); if (b.hist.length > 240) b.hist.shift();
-    if (b.pos.y < Math.max(0, W.gnd(b.pos.x, b.pos.z)) + 1.5) { b.hp = 0; b.falling = true; b.alive = false; G.causes["столкновение с рельефом"] = (G.causes["столкновение с рельефом"] || 0) + 1; (G.crashLog ??= []).push(b.hist.filter((_, i) => i % 12 === 0 || i > b.hist.length - 4)); STATS.planesLost++; boom(b.pos, 45, 0xff8030, W.isSea(b.pos.x, b.pos.z)); G.msg.push(`Борт ${b.id + 1}: столкновение с землёй`); if (b.id === G.me) toast("Столкновение с землёй", 1600); }
+    if (b.pos.y < Math.max(0, W.gnd(b.pos.x, b.pos.z)) + 1.5) { b.hp = 0; b.falling = true; b.alive = false; b.fallT = b.deadT = tNow; G.causes["столкновение с рельефом"] = (G.causes["столкновение с рельефом"] || 0) + 1; (G.crashLog ??= []).push(b.hist.filter((_, i) => i % 12 === 0 || i > b.hist.length - 4)); STATS.planesLost++; boom(b.pos, 70, 0xff8030, W.isSea(b.pos.x, b.pos.z)); G.msg.push(`Борт ${b.id + 1}: столкновение с землёй`); if (b.id === G.me) toast("Столкновение с землёй", 1600); }
   }
   defenseStep(dt); missilesStep(dt); shellsStep(dt, prevPos); bombsStep(dt);
   for (const F of G.flares) { F.vel.y -= 9.81 * dt; F.vel.multiplyScalar(1 - .8 * dt); F.pos.addScaledVector(F.vel, dt); }
   G.flares = G.flares.filter(F => tNow - F.t0 < 3.5 || (F.mesh && (F.mesh.parent?.remove(F.mesh), false)));
   G.bursts = G.bursts.filter(B => tNow - B.t0 < 2.4 || (B.mesh && (drop(B.mesh), false)));
   // кем управляем: если ведущий потерян — следующий живой
-  const me = G.bombers[G.me]; if (!me || !me.alive) { const nx = G.bombers.find(b => b.alive && !b.falling); if (nx && (!me || tNow - (me.fallT || 0) > 2.5 || !me.alive)) { G.me = nx.id; ctl.steerMan = false; } }
+  const me = G.bombers[G.me]; if (!me || !me.alive) { const nx = G.bombers.find(b => b.alive && !b.falling); if (nx && (!me || (!me.alive && tNow - (me.deadT ?? me.fallT ?? 0) > 4.5) || (me.falling && tNow - (me.fallT || 0) > 12))) { G.me = nx.id; ctl.steerMan = false; cam.reset = true; cam.dc = null; } }
   // конец раунда
   if (!G.done) { const flying = G.bombers.filter(b => b.alive && !b.falling), armed = flying.filter(b => b.bombs > 0);
     let end = null;
-    if (!flying.length) end = G.success ? "win" : "lose";
+    if (!flying.length) { if (tNow - Math.max(...G.bombers.map(q => q.deadT ?? q.fallT ?? -99)) > 4.5) end = G.success ? "win" : "lose"; }
     else if (G.success && flying.every(b => b.safe || b.mode === "egress") && tNow - G.succT > 12) end = "win";
     else if (!G.success && !armed.length && flying.every(b => b.mode === "egress")) end = "lose";
     else if (tNow > 420) end = G.success ? "win" : "lose";
@@ -278,7 +278,7 @@ let renderer, scene, camera, sun, terrainMesh, water, sky, objGroup, fxGroup;
 const MAT = {}, GEO = {};
 function initGfx() {
   renderer = new THREE.WebGLRenderer({ canvas: $("c"), antialias: true, powerPreference: "high-performance" });
-  scene = new THREE.Scene(); camera = new THREE.PerspectiveCamera(65, 1, 2, 90000);
+  scene = new THREE.Scene(); camera = new THREE.PerspectiveCamera(65, 1, 4, 90000);
   scene.fog = new THREE.Fog(0xc4d6e6, 4000, 42000);
   scene.add(new THREE.HemisphereLight(0xdcecff, 0x6a5a40, .85)); sun = new THREE.DirectionalLight(0xfff1dc, 1.25); sun.position.set(.5, .7, .35); scene.add(sun);
   // небо: градиент к горизонту
@@ -313,7 +313,7 @@ function terrainColors() {
     if (!land[k]) { c.copy(C.sea).lerp(C.sand, Math.max(0, 1 + y / 12)); }
     else if (land[k] === 2) c.copy(C.salt);
     else { const sl = Math.hypot((h[k + 1] || y) - (h[k - 1] || y), (h[k + nx] || y) - (h[k - nx] || y)) / (2 * cs), m = mt[k], n = r();
-      c.copy(C.steppe).lerp(C.steppe2, .5 + .5 * Math.sin(i * .07 + j * .05) * Math.cos(i * .031 - j * .06));
+      { const x0 = i * cs, z0 = j * cs; c.copy(C.steppe).lerp(C.steppe2, .5 + .5 * Math.sin(x0 * 5.8e-4 + z0 * 4.2e-4) * Math.cos(x0 * 2.6e-4 - z0 * 5e-4)); }
       /* поля в степи: прямоугольные участки (пшеница, зелень, пашня, сухая трава), сетка полей слегка повёрнута по районам */
       if (m < .12) { const x = i * cs, z = j * cs, a = .5 * Math.sin(x / 9000 + 1.3) + .3 * Math.cos(z / 7000), u = x * Math.cos(a) + z * Math.sin(a), w = -x * Math.sin(a) + z * Math.cos(a), fi = Math.floor(u / 520), fj = Math.floor(w / 380);
         const hsh = Math.abs(Math.sin(fi * 127.1 + fj * 311.7 + W.seed) * 43758.5) % 1, F = FIELDS[Math.floor(hsh * FIELDS.length)]; if (hsh > .12) c.lerp(F, .55 * (1 - sstep(.05, .12, m))); }
@@ -326,6 +326,33 @@ function terrainColors() {
     col[3 * k] = c.r; col[3 * k + 1] = c.g; col[3 * k + 2] = c.b; }
   return col;
 }
+/* процедурная детализация рельефа в шейдере: цвет и микро-неровности по мировым координатам (3 масштаба, с затуханием вдали), слоистость на обрывах */
+function terrainMaterial() {
+  const m = new THREE.MeshLambertMaterial({ vertexColors: true });
+  m.onBeforeCompile = sh => {
+    sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 vWP; varying vec3 vWN;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.)).xyz; vWN = normal;");
+    sh.fragmentShader = sh.fragmentShader.replace("#include <common>", `#include <common>
+varying vec3 vWP; varying vec3 vWN;
+float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f); return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
+float fb(vec2 p, float k){ float s = 0., a = .5; for (int i = 0; i < 4; i++) { s += a * vn(p); p = p * 2.07 + 13.1; a *= .5 * k; } return s; }`)
+      .replace("#include <normal_fragment_begin>", `#include <normal_fragment_begin>
+  float dcam = length(cameraPosition - vWP); float fa = 1. - smoothstep(500., 2500., dcam), fb2 = 1. - smoothstep(2500., 9000., dcam);
+  vec2 q = vWP.xz; float e = .6;
+  float n0 = fb(q / 5., 1.), gx = fb((q + vec2(e, 0.)) / 5., 1.) - n0, gz = fb((q + vec2(0., e)) / 5., 1.) - n0;
+  float m0 = vn(q / 38.), mx = vn((q + vec2(4., 0.)) / 38.) - m0, mz = vn((q + vec2(0., 4.)) / 38.) - m0;
+  vec3 pw = vec3(-(gx / e) * .9 * fa - (mx / 4.) * 11. * fb2, 0., -(gz / e) * .9 * fa - (mz / 4.) * 11. * fb2);
+  normal = normalize(normal + mat3(viewMatrix) * pw);`)
+      .replace("#include <color_fragment>", `#include <color_fragment>
+  { float fa = 1. - smoothstep(500., 2500., length(cameraPosition - vWP)); float c1 = fb(vWP.xz / 4., 1.), c2 = fb(vWP.xz / 31. + 7., 1.), c3 = fb(vWP.xz / 260. + 3., 1.);
+    float v = .76 + .5 * c3 * (1. - .5 * fa) ; v *= mix(1., .82 + .36 * c2, .75 * (1. - smoothstep(4000., 14000., length(cameraPosition - vWP)))); v *= mix(1., .86 + .28 * c1, fa);
+    float steep = smoothstep(.42, .78, 1. - normalize(vWN).y); float band = .5 + .5 * sin(vWP.y * .55 + c2 * 5.);
+    v *= 1. - steep * (.10 + .20 * band);
+    diffuseColor.rgb *= v; }`);
+  };
+  return m;
+}
 function buildScene() {
   for (const g of [objGroup, fxGroup]) while (g.children.length) drop(g.children[g.children.length - 1]);
   if (terrainMesh) { scene.remove(terrainMesh); terrainMesh.geometry.dispose(); }
@@ -333,7 +360,7 @@ function buildScene() {
   for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) { const k = j * nx + i; pos[3 * k] = i * cs; pos[3 * k + 1] = Math.max(h[k], -60); pos[3 * k + 2] = j * cs; }
   for (let j = 0; j < nz - 1; j++) for (let i = 0; i < nx - 1; i++) { const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1; idx[q++] = a; idx[q++] = c; idx[q++] = b; idx[q++] = b; idx[q++] = c; idx[q++] = d; }
   const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(pos, 3)); geo.setAttribute("color", new THREE.BufferAttribute(terrainColors(), 3)); geo.setIndex(new THREE.BufferAttribute(idx, 1)); geo.computeVertexNormals();
-  terrainMesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true })); scene.add(terrainMesh);
+  terrainMesh = new THREE.Mesh(geo, terrainMaterial()); scene.add(terrainMesh);
   if (+S.life) buildLife();
   buildObjects(); buildMinimap();
   for (const b of G.bombers) { b.mesh = makeJet(); objGroup.add(b.mesh); b.trail = makeTrail(); fxGroup.add(b.trail); }
@@ -473,6 +500,14 @@ const cam = { f: new THREE.Vector3(1, 0, 0), up: new THREE.Vector3(0, 1, 0), off
 const CAMN = ["Сзади", "Далеко", "Из кабины", "С земли у цели", "Сверху"];
 function cameraUpdate(dt) {
   const b = G.bombers[G.me] || G.bombers[0], p = b.pos;
+  /* камера гибели: борт подбит или взорвался — смотрим со стороны, как он падает и взрывается */
+  if ((b.falling || !b.alive) && camMode < 3) {
+    if (!cam.dc) { const o = _a.copy(camera.position).sub(p); if (o.length() < 140) o.copy(b.r0).multiplyScalar(170).addScaledVector(UP, 40); else o.setLength(Math.min(o.length(), 280)); cam.dc = { off: o.clone(), p: camera.position.clone() }; }
+    const dc = cam.dc; if (b.alive) dc.p.addScaledVector(b.f, b.v * .6 * dt); // пока падает — камера немного сопровождает
+    const ang = dt * .22, c = Math.cos(ang), s = Math.sin(ang), ox = dc.off.x * c - dc.off.z * s; dc.off.z = dc.off.x * s + dc.off.z * c; dc.off.x = ox;
+    camera.position.copy(b.alive ? dc.p : _b.copy(p).add(dc.off)); const gyy = Math.max(0, W.gnd(camera.position.x, camera.position.z)) + 6; if (camera.position.y < gyy) camera.position.y = gyy;
+    camera.up.set(0, 1, 0); camera.lookAt(p); return; }
+  if (b.alive && !b.falling) cam.dc = null;
   if (camMode === 3) { const tg = W.target, a = Math.atan2(W.start.z - tg.z, W.start.x - tg.x) + .6, cx = tg.x + Math.cos(a) * 700, cz = tg.z + Math.sin(a) * 700;
     camera.position.set(cx, Math.max(0, W.gnd(cx, cz)) + 25, cz); camera.up.set(0, 1, 0); camera.lookAt(p); return; }
   if (camMode === 4) { camera.position.set(p.x - b.f.x * 600, p.y + 1800, p.z - b.f.z * 600); camera.up.set(b.f.x, 0, b.f.z); camera.lookAt(p); return; }
@@ -551,7 +586,9 @@ function flash(o) { const f = $("flash"); f.style.opacity = o; setTimeout(() => 
 let lastT = 0;
 function frame(ms) {
   const t = ms / 1000, dt = Math.min(.1, t - lastT || .016); lastT = t; if (!G) return;
-  let left = dt; while (left > 1e-6 && !window.__freeze) { const d = Math.min(1 / 60, left); simStep(d); left -= d; }
+  let left = dt; const me0 = G.bombers[G.me], slow = me0 && ((me0.falling && tNow - (me0.fallT || 0) < 2.2) || (!me0.alive && tNow - (me0.deadT ?? -99) < 2.2)); // замедление на гибели борта
+  if (slow) left *= .4;
+  while (left > 1e-6 && !window.__freeze) { const d = Math.min(1 / 60, left); simStep(d); left -= d; }
   cameraUpdate(dt); sky.position.copy(camera.position); water.position.x = camera.position.x; water.position.z = camera.position.z;
   bombersDraw(dt); objectsDraw(dt); fxDraw(dt);
   renderer.render(scene, camera);

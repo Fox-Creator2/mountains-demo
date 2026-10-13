@@ -23,7 +23,7 @@ const lerp = (a, b, t) => a + (b - a) * t;
 export const TARGET_NAMES = { depot: "Склад горючего", radar: "Радиолокационный пост", airfield: "Аэродром", ship: "Корабль в бухте", bridge: "Узел связи" };
 
 export function genWorld(seed, opt = {}) {
-  const r = rng(seed), N = makeNoise(r), W = opt.W || 36000, H = opt.H || 24000, cs = opt.cs || 120;
+  const r = rng(seed), N = makeNoise(r), W = opt.W || 36000, H = opt.H || 24000, cs = opt.cs || 60;
   const nx = Math.round(W / cs) + 1, nz = Math.round(H / cs) + 1, J = (a, b) => a + (b - a) * r();
   /* ---------- 1. береговая линия: «знаковое расстояние» до моря (плюс — суша) ---------- */
   const body = { cx: W * J(.43, .5), cz: H * J(.53, .58), rx: W * J(.27, .31), rz: H * J(.26, .3) };
@@ -89,13 +89,17 @@ export function genWorld(seed, opt = {}) {
       const valley = Math.exp(-vr * vr / .006) * sstep(1200, 2800, d);
       m = fx * p; y += fx * (Hp * p * (1 + .12 * N.fbm(x / 3000, z / 3000, 2)) + karst + cuesta) * (1 - .55 * valley);
     }
+    /* мелкая структура: хребты и промоины на горах, бугры и балки в степи (всё процедурное, учитывается в высоте для столкновений) */
+    if (m > .02) { const rg = Math.max(0, 1 - Math.abs(N.fbm(x / 700 + 31, z / 700 - 7, 4)) * 2.4), gul = Math.abs(N.fbm(x / 260 - 5, z / 330 + 11, 3));
+      y += m * (95 * rg * rg - 38 * Math.min(1, gul * 2.2) + 14 * N.fbm(x / 90, z / 90, 3)); }
+    y += (1 - m) * (5 * N.fbm(x / 420 + 2, z / 420, 3) + 1.6 * N.fbm(x / 70, z / 70, 2));
     // восточный выступ — невысокие холмы
     const ee = ell(x, z, east); if (ee > 0) y += 90 * sstep(0, 2500, ee) * (N.fbm(x / 1800, z / 1800, 3) * .5 + .5);
     // солёные озёра на севере
-    for (const L of lakes) { const dd = Math.hypot(x - L.x, z - L.z) / L.r + .35 * N.n2(x / 500, z / 500); if (dd < 1) { y = Math.min(y, -2); } else if (dd < 1.4) y = Math.min(y, lerp(3, y, (dd - 1) / .4)); }
+    for (const L of lakes) { const dd = Math.hypot(x - L.x, z - L.z) / L.r + .35 * N.n2(x / 500, z / 500); if (dd < 1) { y = Math.min(y, -2 - 28 * sstep(.95, .6, dd)); } else if (dd < 1.4) y = Math.min(y, lerp(3, y, (dd - 1) / .4)); }
     // у берега — пляж; на юге у гряды допускается обрыв
     const slope = m > .3 ? 2.2 : .5; y = Math.min(y, .4 + Math.max(0, sdf[k]) * slope);
-    h[k] = Math.max(-2, y); mt[k] = m;
+    h[k] = Math.max(-30, y); mt[k] = m;
   }
   // озёра — тоже вода (для цвета и кораблей не годятся)
   for (let k = 0; k < n; k++) if (land[k] && h[k] <= -1) land[k] = 2;
