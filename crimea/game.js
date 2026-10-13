@@ -356,7 +356,7 @@ function buildWaterTex() {
   WU.uWt.value?.dispose(); WU.uWt.value = t; WU.uSz.value.set(W.W, W.H);
 }
 /* дороги и посёлки — карта поверх рельефа (в шейдер как цветовая подложка с прозрачностью) */
-const OV = { uNrm: { value: null }, uTerCol: { value: null }, uRoad: { value: null }, uOSz: { value: new THREE.Vector2(36000, 24000) } };
+const OV = { uTSz: { value: new THREE.Vector2(1201, 801) }, uNrm: { value: null }, uTerCol: { value: null }, uRoad: { value: null }, uOSz: { value: new THREE.Vector2(36000, 24000) } };
 function pickVillages() {
   const r = rng(W.seed + 11), { nx, land, mt, dIn, cs } = W, nv = 10 + Math.floor(r() * 8), out = [];
   for (let v = 0; v < nv; v++) for (let t = 0; t < 200; t++) { const cx = r() * W.W, cz = r() * W.H, k = Math.round(cz / cs) * nx + Math.round(cx / cs);
@@ -396,11 +396,11 @@ function terrainColors(f = 2) {
       if (m < .12) { const a = .5 * Math.sin(x / 9000 + 1.3) + .3 * Math.cos(z / 7000), u = x * Math.cos(a) + z * Math.sin(a), w = -x * Math.sin(a) + z * Math.cos(a), fi = Math.floor(u / 520), fj = Math.floor(w / 380);
         const hsh = Math.abs(Math.sin(fi * 127.1 + fj * 311.7 + W.seed) * 43758.5) % 1, F = FIELDS[Math.floor(hsh * FIELDS.length)]; if (hsh > .12) c.lerp(F, .55 * (1 - sstep(.05, .12, m))); }
       if (m > .08) c.lerp(C.forest, sstep(.08, .3, m) * (1 - sstep(.75, .95, m)));
-      if (m > .85) c.lerp(C.meadow, sstep(.85, .97, m)).lerp(C.lime, .25 * n);
+      if (m > .85) c.lerp(C.meadow, sstep(.85, .97, m)).lerp(C.lime, .12);
       if (sl > .45) c.lerp(C.cliff, sstep(.45, .9, sl));
       if (din < 150 && y < 12) c.lerp(C.sand, 1 - din / 150);
       for (const L of W.lakes) { const d = Math.hypot(x - L.x, z - L.z) / L.r; if (d < 1.6) c.lerp(C.salt, .6 * (1 - sstep(1, 1.6, d))); }
-      c.multiplyScalar(.93 + .14 * n); }
+      }
     c.convertLinearToSRGB(); const o = (oj * Nx + oi) * 4; data[o] = Math.max(0, Math.min(255, Math.round(c.r * 255))); data[o + 1] = Math.max(0, Math.min(255, Math.round(c.g * 255))); data[o + 2] = Math.max(0, Math.min(255, Math.round(c.b * 255))); data[o + 3] = 255; }
   const t = new THREE.DataTexture(data, Nx, Nz, THREE.RGBAFormat); t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.flipY = false; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true;
   return t;
@@ -412,7 +412,8 @@ function terrainMaterial() {
     sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 vWP; varying vec3 vWN;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.)).xyz; vWN = normal;");
     sh.fragmentShader = sh.fragmentShader.replace("#include <common>", `#include <common>
-varying vec3 vWP; varying vec3 vWN; uniform sampler2D uRoad; uniform sampler2D uTerCol; uniform sampler2D uNrm; uniform vec2 uOSz;
+varying vec3 vWP; varying vec3 vWN; uniform sampler2D uRoad; uniform sampler2D uTerCol; uniform sampler2D uNrm; uniform vec2 uOSz; uniform vec2 uTSz;
+vec4 smTex(sampler2D t, vec2 uv){ vec2 p = uv * uTSz - .5, i = floor(p), f = fract(p); f = f * f * f * (f * (f * 6. - 15.) + 10.); return texture2D(t, (i + .5 + f) / uTSz); }
 float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f); return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
 float fb(vec2 p, float k){ float s = 0., a = .5; for (int i = 0; i < 3; i++) { s += a * vn(p); p = p * 2.07 + 13.1; a *= .5 * k; } return s; }`)
@@ -424,17 +425,17 @@ float fb(vec2 p, float k){ float s = 0., a = .5; for (int i = 0; i < 3; i++) { s
     if (fa > 0.) { float e = .6, n0 = fb(q / 5., 1.), gx = fb((q + vec2(e, 0.)) / 5., 1.) - n0, gz = fb((q + vec2(0., e)) / 5., 1.) - n0; pw += vec3(-(gx / e) * .9 * fa, 0., -(gz / e) * .9 * fa); } }
   normal = normalize(normal + mat3(viewMatrix) * pw);`)
       .replace("#include <color_fragment>", `#include <color_fragment>
-  diffuseColor.rgb *= texture2D(uTerCol, vWP.xz / uOSz).rgb;
-  vec3 nT = normalize(texture2D(uNrm, vWP.xz / uOSz).xyz * 2. - 1.);
+  diffuseColor.rgb *= smTex(uTerCol, vWP.xz / uOSz).rgb;
+  vec3 nT = normalize(smTex(uNrm, vWP.xz / uOSz).xyz * 2. - 1.);
   { float fa = 1. - smoothstep(500., 2500., length(cameraPosition - vWP)); float c1 = fa > 0. ? fb(vWP.xz / 4., 1.) : .5, c2 = fb(vWP.xz / 31. + 7., 1.), c3 = fb(vWP.xz / 260. + 3., 1.);
     float v = .76 + .5 * c3 * (1. - .5 * fa) ; v *= mix(1., .82 + .36 * c2, .75 * (1. - smoothstep(4000., 14000., length(cameraPosition - vWP)))); v *= mix(1., .86 + .28 * c1, fa);
-    float steep = smoothstep(.42, .78, 1. - nT.y); float band = .5 + .5 * sin(vWP.y * .55 + c2 * 5.);
-    v *= 1. - steep * (.10 + .20 * band);
+    float steep = smoothstep(.5, .85, 1. - nT.y); float band = .5 + .5 * sin(vWP.y * .22 + c3 * 14. + c2 * 4.);
+    v *= 1. - steep * (.05 + .10 * band);
     diffuseColor.rgb *= v;
     /* поля: живая изгородь по границам, у некоторых — ряды (виноградники/сады), видны вблизи */
     if (vWP.y < 140. && nT.y > .97 && fa > 0.) { float a = .5 * sin(vWP.x / 9000. + 1.3) + .3 * cos(vWP.z / 7000.), u = vWP.x * cos(a) + vWP.z * sin(a), w = -vWP.x * sin(a) + vWP.z * cos(a), fi = floor(u / 520.), fj = floor(w / 380.);
       float hs = fract(sin(fi * 127.1 + fj * 311.7) * 43758.5), du = abs(fract(u / 520.) - .5) * 520., dw = abs(fract(w / 380.) - .5) * 380.;
-      float edge = 1. - smoothstep(0., 3.5, min(250. - du, 190. - dw)); diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(.55, .66, .45), edge * .55 * fa);
+      float edge = 1. - smoothstep(0., 6., min(250. - du, 190. - dw)); diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(.55, .66, .45), edge * .32 * fa);
       if (hs < .22) { float rows = smoothstep(.3, .7, abs(fract(u / 5.5) - .5) * 2.); diffuseColor.rgb *= 1. - .22 * rows * fa; } }
     vec4 rd = texture2D(uRoad, vWP.xz / uOSz); diffuseColor.rgb = mix(diffuseColor.rgb, rd.rgb / max(rd.a, .001), rd.a * (1. - .6 * smoothstep(3000., 12000., length(cameraPosition - vWP)))); }`);
   };
@@ -445,7 +446,7 @@ const TER = { chunks: [], mat: null };
 function buildTerrain() {
   for (const c of TER.chunks) for (const m of c.lod) { scene.remove(m); m.geometry.dispose(); } TER.chunks = [];
   const { nx, nz, h, cs } = W, CH = 50, hh = (i, j) => h[Math.max(0, Math.min(nz - 1, j)) * nx + Math.max(0, Math.min(nx - 1, i))];
-  TER.mat ??= terrainMaterial(); TER.tex?.dispose(); TER.tex = terrainColors(2); OV.uTerCol.value = TER.tex; TER.ntex?.dispose(); TER.ntex = terrainNormals(2); OV.uNrm.value = TER.ntex; OV.uOSz.value.set(W.W, W.H);
+  TER.mat ??= terrainMaterial(); TER.tex?.dispose(); TER.tex = terrainColors(2); OV.uTerCol.value = TER.tex; TER.ntex?.dispose(); TER.ntex = terrainNormals(2); OV.uNrm.value = TER.ntex; OV.uTSz.value.set((nx - 1) * 2 + 1, (nz - 1) * 2 + 1); OV.uOSz.value.set(W.W, W.H);
   for (let cz = 0; cz < nz - 1; cz += CH) for (let cx = 0; cx < nx - 1; cx += CH) {
     const ex = Math.min(CH, nx - 1 - cx), ez = Math.min(CH, nz - 1 - cz), lod = [];
     for (const s of [1, 2, 5]) { const st = ex % s || ez % s ? 1 : s, gx = ex / st + 1, gz = ez / st + 1, vid = new Map(), P = [], idx = [];

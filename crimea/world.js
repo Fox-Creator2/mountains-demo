@@ -90,9 +90,9 @@ export function genWorld(seed, opt = {}) {
       m = fx * p; y += fx * (Hp * p * (1 + .12 * N.fbm(x / 3000, z / 3000, 2)) + karst + cuesta) * (1 - .55 * valley);
     }
     /* мелкая структура: хребты и промоины на горах, бугры и балки в степи (всё процедурное, учитывается в высоте для столкновений) */
-    if (m > .02) { const rg = Math.max(0, 1 - Math.abs(N.fbm(x / 700 + 31, z / 700 - 7, 4)) * 2.4), gul = Math.abs(N.fbm(x / 260 - 5, z / 330 + 11, 3));
-      y += m * (95 * rg * rg - 38 * Math.min(1, gul * 2.2) + 14 * N.fbm(x / 90, z / 90, 3)); }
-    y += (1 - m) * (5 * N.fbm(x / 420 + 2, z / 420, 3) + 1.6 * N.fbm(x / 70, z / 70, 2));
+    if (m > .02) { const rg = Math.max(0, 1 - Math.abs(N.fbm(x / 700 + 31, z / 700 - 7, 4)) * 2.4), gul = Math.abs(N.fbm(x / 300 - 5, z / 380 + 11, 2));
+      y += m * (95 * rg * rg - 38 * Math.min(1, gul * 2.2) + 14 * N.fbm(x / 260, z / 260, 2)); }
+    y += (1 - m) * (5 * N.fbm(x / 420 + 2, z / 420, 3) + 2.2 * N.fbm(x / 200, z / 200, 2));
     // восточный выступ — невысокие холмы
     const ee = ell(x, z, east); if (ee > 0) y += 90 * sstep(0, 2500, ee) * (N.fbm(x / 1800, z / 1800, 3) * .5 + .5);
     // солёные озёра на севере
