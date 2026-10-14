@@ -40,9 +40,11 @@ function newRound(seed) {
     planIngress(b); G.bombers.push(b);
   }
   STATS.rounds++;
+  /* каждый третий раунд у ведущего вместо серии — одна МегаБомба */
+  if (STATS.rounds % 3 === 0 && G.bombers[0]) G.bombers[0].mega = 1;
   if (renderer) buildScene();
   ctl.steerMan = false; ctl.spdMan = false;
-  toast(`Раунд ${STATS.rounds}: ${tg.name}`, 2600);
+  toast(`Раунд ${STATS.rounds}: ${tg.name}`, 2600); if (G.bombers[0]?.mega) toast("Особое задание: на борту МегаБомба", 3500);
 }
 function addSams(w, k) { const r = rng(w.seed * 13 + 1); for (let t = 0; t < 3000 && k > 0; t++) { const x = 2000 + r() * (w.W - 4000), z = 2000 + r() * (w.H - 4000); if (w.isSea(x, z) || w.gnd(x, z) < 5) continue; if (w.sams.some(s => Math.hypot(s.x - x, s.z - z) < 5000)) continue; w.sams.push({ x, z, y: w.gnd(x, z), R: 12000, Rr: 22000, ammo: 6, next: 0, kind: "sam", hd: r() * 6 }); k--; } }
 function planIngress(b) {
@@ -137,7 +139,12 @@ function aiBomber(b, dt) {
 }
 
 /* ---------- оружие синих ---------- */
-function dropBomb(b) { if (b.bombs <= 0) return; b.bombs--; G.bombs.push({ pos: b.pos.clone().addScaledVector(b.u0, -2.5), vel: b.f.clone().multiplyScalar(b.v), owner: b, mesh: null, t: 0 }); }
+function dropBomb(b) { if (b.bombs <= 0) return;
+  if (b.mega) { b.mega = 0; b.bombs = 0; const B = { pos: b.pos.clone().addScaledVector(b.u0, -3.5), vel: b.f.clone().multiplyScalar(b.v), owner: b, mesh: null, t: 0, mega: true }; G.bombs.push(B);
+    if (b.id === G.me) { toast("МегаБомба сброшена", 2500); const I = impact(B.pos, B.vel); G.impactCam = { x: I.x, y: Math.max(0, W.gnd(I.x, I.z)), z: I.z, t0: tNow, hit: tNow + 60, until: tNow + 60, kills: 0, bomb: B, mega: true, cp: impactVantage(I.x, I.z, b, 2.6) }; G.adCam = null; G.dir = null; }
+    return; }
+  b.bombs--; G.bombs.push({ pos: b.pos.clone().addScaledVector(b.u0, -2.5), vel: b.f.clone().multiplyScalar(b.v), owner: b, mesh: null, t: 0 });
+  if (b.id === G.me && tNow - (b.lastDrop ?? -9) > 3 && camMode < 3 && !ctl.steerMan) G.dir = { kind: "belly", t0: tNow, until: tNow + 1.5 }; if (b.id === G.me) b.lastDrop = tNow; }
 function dropFlares(b) { if (b.flares <= 0) return; b.flares--; b.flT = tNow;
   for (const s of [-1, 0, 1]) G.flares.push({ pos: b.pos.clone().addScaledVector(b.u0, -2), vel: b.f.clone().multiplyScalar(b.v * .97).addScaledVector(b.r0, s * 24).add(_a.set(0, s ? -8 : -26, 0)), t0: tNow, mesh: null, trT: 0 });
   for (const m of G.missiles) if (m.alive && m.tgt === b && !m.decoy && m.pos.distanceTo(b.pos) < 3200 && rnd() < D().decoy) { m.decoy = G.flares[G.flares.length - 1]; }
@@ -179,6 +186,9 @@ function launchMissile(s, h, b) {
   if (b.id === G.me) warnT = tNow + 1.5;
   startAdCam(s, b, "ПВО: пуск ракеты — смотрим от расчёта", 6);
 }
+/* «на волосок»: разрыв рядом с ведущим — замедленный кадр сбоку, видно облако разрыва и самолёт, выходящий из него */
+function nearShot(b, at) { if (camMode >= 3 || ctl.steerMan || (G.impactCam && tNow < G.impactCam.until) || tNow < (G.nearNext ?? 0)) return; G.nearNext = tNow + 9; const side = _a.subVectors(at, b.pos).dot(b.r0) > 0 ? -1 : 1;
+  G.dir = { kind: "near", t0: tNow, until: tNow + 1.6, slow: true, cp: b.pos.clone().addScaledVector(b.r0, side * 70).addScaledVector(UP, 16).addScaledVector(b.f, 30), at: at.clone() }; G.adCam = null; }
 function missilesStep(dt) {
   const dif = D();
   for (const m of G.missiles) { if (!m.alive) continue; const age = tNow - m.t0, spd = m.vel.length();
@@ -198,8 +208,8 @@ function missilesStep(dt) {
     // неконтактный взрыватель: ближайшее сближение за шаг
     const tgts = m.decoy ? [] : [m.tgt];
     for (const b of tgts) { if (!b.alive || b.falling) continue; const seg = _a.subVectors(m.pos, prev), w = _b.subVectors(b.pos, prev), u = clamp(w.dot(seg) / Math.max(seg.lengthSq(), 1e-6), 0, 1), d = w.sub(seg.multiplyScalar(u)).length();
-      if (d < 22) { m.alive = false; boom(m.pos, 16, 0xffb060); if (d < 10) hitBomber(b, 4, "ракета ЗРК"); else hitBomber(b, d < 18 ? 2 : 1, "осколки ракеты"); } }
-    if (m.alive && m.decoy && m.pos.distanceTo(m.decoy.pos) < 25) { m.alive = false; boom(m.pos, 12, 0xffb060); }
+      if (d < 22) { m.alive = false; boom(m.pos, 16, 0xffb060); if (d < 10) hitBomber(b, 4, "ракета ЗРК"); else hitBomber(b, d < 18 ? 2 : 1, "осколки ракеты"); if (b.id === G.me && b.alive && !b.falling) nearShot(b, m.pos); } }
+    if (m.alive && m.decoy && m.pos.distanceTo(m.decoy.pos) < 25) { m.alive = false; boom(m.pos, 12, 0xffb060); const me = G.bombers[G.me]; if (me && m.tgt === me && me.alive && !me.falling && m.pos.distanceTo(me.pos) < 450) nearShot(me, m.pos); }
     if (m.alive && (m.pos.y < Math.max(0, W.gnd(m.pos.x, m.pos.z)) || age > 22 || (age > 6 && ns < 260))) { m.alive = false; boom(m.pos, 12, 0xffa050); }
   }
   G.missiles = G.missiles.filter(m => m.alive || (m.lineMesh && tNow - (m.deadT ??= tNow) < 3) || (!m.lineMesh && false));
@@ -216,15 +226,15 @@ function shellsStep(dt, prevPos) {
       if (d < B.r) { (B.hitSet ??= new Set()).add(b); hitBomber(b, 1, "зенитная артиллерия"); } } }
 }
 /* точка обзора попадания: сбоку от линии захода и чуть позади, выше цели — в кадре цель, падающие бомбы и уходящий самолёт */
-function impactVantage(lx, lz, o) { const f = _b.copy(o.f).setY(0).normalize(), side = (o.id % 2 ? -1 : 1);
-  const cp = new THREE.Vector3(lx, 0, lz).addScaledVector(f, -150).addScaledVector(_a.set(-f.z, 0, f.x), side * 320); cp.y = Math.max(Math.max(0, W.gnd(lx, lz)), Math.max(0, W.gnd(cp.x, cp.z))) + 125; return cp; }
+function impactVantage(lx, lz, o, k = 1) { const f = _b.copy(o.f).setY(0).normalize(), side = (o.id % 2 ? -1 : 1);
+  const cp = new THREE.Vector3(lx, 0, lz).addScaledVector(f, -150 * k).addScaledVector(_a.set(-f.z, 0, f.x), side * 320 * k); cp.y = Math.max(Math.max(0, W.gnd(lx, lz)), Math.max(0, W.gnd(cp.x, cp.z))) + 125 * k; return cp; }
 function bombsStep(dt) {
   for (const B of G.bombs) { if (B.done) continue; B.t += dt; B.vel.y -= 9.81 * dt; B.vel.multiplyScalar(1 - .015 * dt); B.pos.addScaledVector(B.vel, dt);
     /* за ~3 с до падения бомбы камера уходит на точку падения, чтобы увидеть разрыв */
-    if (B.owner.id === G.me && !B.owner.falling && !(G.impactCam && tNow < G.impactCam.until) && !ctl.steerMan) { const h = B.pos.y - Math.max(0, W.gnd(B.pos.x, B.pos.z)), tti = (B.vel.y + Math.sqrt(B.vel.y * B.vel.y + 19.62 * Math.max(0, h))) / 9.81;
+    if (!B.mega && B.owner.id === G.me && !B.owner.falling && !(G.impactCam && tNow < G.impactCam.until) && !ctl.steerMan) { const h = B.pos.y - Math.max(0, W.gnd(B.pos.x, B.pos.z)), tti = (B.vel.y + Math.sqrt(B.vel.y * B.vel.y + 19.62 * Math.max(0, h))) / 9.81;
       if (tti < 4.6) { const lx = B.pos.x + B.vel.x * tti, lz = B.pos.z + B.vel.z * tti, o = B.owner; G.impactCam = { x: lx, y: Math.max(0, W.gnd(lx, lz)), z: lz, t0: tNow, hit: tNow + tti, until: tNow + tti + 2.4, kills: 0, bomb: B, cp: impactVantage(lx, lz, o) }; G.adCam = null; } }
     const gy = Math.max(0, W.gnd(B.pos.x, B.pos.z)); if (B.pos.y > gy) continue;
-    B.done = true; B.pos.y = gy; const water = gy <= 0 && W.isSea(B.pos.x, B.pos.z); boom(B.pos, water ? 34 : 52, water ? 0xd8eaff : 0xffa040, water);
+    B.done = true; B.pos.y = gy; if (B.mega) { megaBlast(B); continue; } const water = gy <= 0 && W.isSea(B.pos.x, B.pos.z); boom(B.pos, water ? 34 : 52, water ? 0xd8eaff : 0xffa040, water);
     { const ap = B.owner.aimP; (G.imp ??= []).push(ap ? Math.round(Math.hypot(ap.x - B.pos.x, ap.z - B.pos.z)) : -1); }
     const R = 48; let hitN = 0, dMin = 1e9; for (const p of W.target.parts) { const d = Math.hypot(p.x - B.pos.x, p.z - B.pos.z); dMin = Math.min(dMin, d); if (p.hp <= 0) continue; if (W.target.type === "ship" ? d < 45 : d < R + p.sz * .4) { p.hp = 0; hitN++; G.fires.push({ x: p.x, y: p.y + 6, z: p.z, t0: tNow, big: true }); targetFx(p, false); } }
     /* показать результат: камера на месте попадания и подпись */
@@ -614,6 +624,20 @@ function crashFx(pos, b, sea) {
   const off = () => P.clone().add(_a.set((rnd() - .5) * 40, 4 + rnd() * 14, (rnd() - .5) * 40));
   G.sched.push([tNow + .16, () => boom(off(), 52, 0xff7a20, sea)], [tNow + .38, () => boom(off(), 44, 0xffc060, sea)], [tNow + .7, () => boom(off(), 58, 0xff5a10, sea)], [tNow + 1.2, () => boom(off(), 40, 0xff9030, sea)]);
 }
+/* МегаБомба: ослепительная вспышка, купол конденсации, ударная волна пылевым кольцом по земле, огненный шар уходит вверх, столб дыма; всё в радиусе ~260 м разрушено */
+function megaBlast(B) { const P = B.pos.clone(), sea = W.isSea(P.x, P.z) && P.y <= 0;
+  { const fe = $("flash"); fe.style.background = "#fff8e8"; flash(.92); setTimeout(() => fe.style.background = "", 700); } G.shake = { t0: tNow, until: tNow + 2.2, amp: 6 };
+  for (let i = 0; i < 5; i++) boom(_a.copy(P).add(_b.set((rnd() - .5) * 50, 8 + i * 14, (rnd() - .5) * 50)), 85 + i * 8, i < 2 ? 0xfff4d0 : 0xff8a30, sea);
+  (G.waves ??= []).push({ x: P.x, y: P.y, z: P.z, t0: tNow, mesh: null, dome: null });
+  for (let k = 1; k <= 8; k++) G.sched.push([tNow + k * .3, () => boom(_a.set(P.x + (rnd() - .5) * 50, P.y + 30 + k * 32, P.z + (rnd() - .5) * 50), 62 - k * 3, k < 5 ? 0xff7a20 : 0xffb050, false)]);
+  let hitN = 0; for (const p of W.target.parts) { if (p.hp <= 0) continue; if (Math.hypot(p.x - P.x, p.z - P.z) < 260) { p.hp = 0; hitN++; targetFx(p, false); } }
+  for (const L of [W.sams, W.aaa, W.ships]) for (const s of L) if (!s.dead && Math.hypot(s.x - P.x, s.z - P.z) < 320) { s.dead = true; STATS.defKilled++; G.fires.push({ x: s.x, y: (s.y || 0) + 4, z: s.z, t0: tNow }); }
+  if (G.fires.length < 34) G.fires.push({ x: P.x, y: P.y + 4, z: P.z, t0: tNow, big: true, huge: true }, { x: P.x + 40, y: P.y + 4, z: P.z - 30, t0: tNow, big: true, huge: true });
+  const ic = G.impactCam; if (ic && ic.mega) { ic.x = P.x; ic.y = P.y; ic.z = P.z; ic.hit = tNow; ic.until = tNow + 5.5; ic.kills = hitN; }
+  const tg = W.target, killed = tg.parts.filter(p => p.hp <= 0).length;
+  if (B.owner.id === G.me) G.hitMsg = { t: tNow, txt: hitN ? `МегаБомба: разрушено частей цели ${killed} из ${tg.parts.length}` : "МегаБомба легла мимо цели" };
+  if (!G.success && killed >= tg.need) { G.success = true; G.succT = tNow; toast(`Цель поражена: ${tg.name}`, 2600); }
+}
 /* разрушение части цели: вспышка, огненный шар, разлёт кусков (бетон, балки, листы кровли, горящие), вторичные взрывы, затем пожар с чёрным дымом */
 function targetFx(p, sea) {
   const P = new THREE.Vector3(p.x, p.y + 4, p.z), sc = Math.max(.8, (p.sz || 30) / 30);
@@ -668,7 +692,18 @@ function objectsDraw(dt) {
     const g = B.mesh; g.position.copy(B.pos); g.userData.f.visible = a < .3; g.userData.f.scale.setScalar(B.r * (.5 + 1.5 * a / .3)); g.userData.f.material.opacity = 1 - a / .3; g.userData.sm.scale.setScalar(B.r * (.5 + 1.1 * Math.sqrt(a / 2.4))); g.userData.sm.material.opacity = .7 * (1 - a / 2.4) * Math.min(1, B.pos.distanceTo(camera.position) / 80); }
   for (const sh of G.shells) { if (!sh.mesh) { sh.mesh = new THREE.Mesh(GEO.tracer, MAT.tracer); sh.mesh.frustumCulled = false; fxGroup.add(sh.mesh); }
     const k = clamp((tNow - sh.t0) / Math.max(1e-3, sh.tb - sh.t0), 0, 1); sh.mesh.position.lerpVectors(sh.from, sh.to, k); sh.mesh.lookAt(sh.to); const dc = sh.mesh.position.distanceTo(camera.position), wd = Math.max(.5, dc * .002); sh.mesh.scale.set(wd, wd, Math.max(25, dc * .03)); }
-  for (const B of G.bombs) { if (!B.mesh) { B.mesh = new THREE.Mesh(GEO.bomb, MAT.dark); fxGroup.add(B.mesh); } B.mesh.position.copy(B.pos); B.mesh.lookAt(_a.copy(B.pos).add(B.vel)); B.mesh.scale.setScalar(1.6); }
+  for (const B of G.bombs) { if (!B.mesh) { B.mesh = new THREE.Mesh(GEO.bomb, MAT.dark); fxGroup.add(B.mesh);
+      if (B.mega) { const ch = new THREE.Mesh(new THREE.SphereGeometry(1.6, 12, 6, 0, Math.PI * 2, 0, 1.4), new THREE.MeshLambertMaterial({ color: 0xf2efe6, side: THREE.DoubleSide })); ch.rotation.x = -Math.PI / 2; ch.position.z = -7; B.mesh.add(ch); B.chute = ch;
+        const st = new THREE.Mesh(new THREE.BoxGeometry(.06, .06, 4.5), MAT.white); st.position.z = -4.2; B.mesh.add(st); } }
+    B.mesh.position.copy(B.pos); B.mesh.lookAt(_a.copy(B.pos).add(B.vel)); B.mesh.scale.setScalar(B.mega ? 3.4 : 1.6); if (B.chute) { const o = Math.min(1, B.t / .6); B.chute.scale.set(o * (1 + .08 * Math.sin(tNow * 30)), o * (1 + .08 * Math.cos(tNow * 27)), o); } }
+  /* ударная волна МегаБомбы: пылевое кольцо по земле и белый купол конденсации */
+  for (const Wv of G.waves || []) { const a = tNow - Wv.t0;
+    if (!Wv.mesh) { Wv.mesh = new THREE.Mesh(new THREE.RingGeometry(.82, 1, 72).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xd8c8a8, transparent: true, depthWrite: false, side: THREE.DoubleSide })); Wv.mesh.renderOrder = 6; fxGroup.add(Wv.mesh);
+      Wv.dome = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, depthWrite: false })); fxGroup.add(Wv.dome); }
+    const R = 30 + 1100 * (1 - Math.exp(-a * 1.1)); Wv.mesh.position.set(Wv.x, Wv.y + 3 + R * .01, Wv.z); Wv.mesh.scale.setScalar(R); Wv.mesh.material.opacity = Math.max(0, .75 * (1 - a / 3.2));
+    const Rd = 40 + 260 * Math.min(1, a / .7); Wv.dome.position.set(Wv.x, Wv.y, Wv.z); Wv.dome.scale.set(Rd, Rd * .7, Rd); Wv.dome.material.opacity = Math.max(0, .55 * (1 - a / .9));
+    if (a > 3.3) { drop(Wv.mesh); drop(Wv.dome); Wv.dead = true; } }
+  if (G.waves) G.waves = G.waves.filter(w => !w.dead);
   if (!MAT.flareS) { const mk = (stops, c) => { const cv = document.createElement("canvas"); cv.width = cv.height = 64; const x = cv.getContext("2d"), gr = x.createRadialGradient(32, 32, 0, 32, 32, 32); stops.forEach(([o, col]) => gr.addColorStop(o, col)); x.fillStyle = gr; x.fillRect(0, 0, 64, 64); const t = new THREE.CanvasTexture(cv); return new THREE.SpriteMaterial({ map: t, color: c, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, sizeAttenuation: false, fog: false }); };
     MAT.flareS = mk([[0, "#ffffff"], [.25, "#fff2c0"], [.6, "#ffb050"], [1, "rgba(255,120,30,0)"]], 0xffffff); MAT.flareH = mk([[0, "rgba(255,190,90,.55)"], [.5, "rgba(255,140,40,.18)"], [1, "rgba(255,100,20,0)"]], 0xffffff); }
   /* ловушки: яркие точки постоянного экранного размера (видны с любой камеры) + белый дымный след */
@@ -682,9 +717,18 @@ function objectsDraw(dt) {
     F.mesh.position.copy(F.pos); F.halo.position.copy(F.pos); const s = .05 * (1 + .25 * Math.sin(tNow * 40 + F.t0 * 7)) * fade; F.mesh.scale.set(s, s, 1); F.halo.scale.set(s * 3.6, s * 3.6, 1);
     if (age < 3.4 && tNow - (F.trT || 0) > .06 && G.fx.length < 260) { F.trT = tNow; G.fx.push({ pos: F.pos.clone(), t0: tNow, r: 6.5, color: 0xffe0a0, mesh: null, smokeOnly: true, pale: true }); } }
   for (const m of G.missiles) {
-    if (!m.mesh) { m.mesh = new THREE.Group(); const body = new THREE.Mesh(GEO.missile, MAT.white), fl = new THREE.Mesh(GEO.ball, MAT.flash.clone()); fl.position.z = 4; fl.scale.set(.8, .8, 3); m.mesh.add(body, fl); m.mesh.userData.fl = fl; fxGroup.add(m.mesh);
+    if (!m.mesh) { m.mesh = new THREE.Group(); const body = new THREE.Mesh(GEO.missile, MAT.white), fl = new THREE.Mesh(GEO.ball, MAT.flash.clone()); fl.position.z = 4.2; fl.scale.set(.8, .8, 3); m.mesh.add(body, fl); m.mesh.userData.fl = fl; fxGroup.add(m.mesh);
+      /* сопло (тёмный раструб), стабилизаторы, белое ядро факела и «ромбы» скачков уплотнения — всё пульсирует */
+      GEO.nozzle ??= new THREE.CylinderGeometry(.22, .34, .7, 10, 1, true).rotateX(Math.PI / 2); GEO.fin ??= new THREE.BoxGeometry(.5, .04, .8);
+      const nz = new THREE.Mesh(GEO.nozzle, MAT.dark); nz.position.z = 3.3; m.mesh.add(nz);
+      for (let q = 0; q < 4; q++) { const fn = new THREE.Mesh(GEO.fin, MAT.grey || MAT.dark); fn.position.set(Math.cos(q * Math.PI / 2 + .785) * .45, Math.sin(q * Math.PI / 2 + .785) * .45, 2.5); fn.rotation.z = q * Math.PI / 2 + .785; m.mesh.add(fn); }
+      const core = new THREE.Mesh(GEO.ball, MAT.flash.clone()); core.material.color.set(0xffffff); core.position.z = 3.9; core.scale.set(.35, .35, 1.2); m.mesh.add(core);
+      const dia = []; for (let q = 0; q < 3; q++) { const d = new THREE.Mesh(GEO.ball, MAT.flash.clone()); d.material.color.set(0xfff0c0); d.position.z = 4.6 + q * 1.1; d.scale.setScalar(.22 - q * .04); m.mesh.add(d); dia.push(d); }
+      m.mesh.userData.core = core; m.mesh.userData.dia = dia;
       const n = 90, geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(n * 3), 3)); m.lineMesh = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xe8e4de, transparent: true, opacity: .7, depthWrite: false })); m.lineMesh.frustumCulled = false; fxGroup.add(m.lineMesh); }
-    m.mesh.visible = m.alive; if (m.alive) { m.mesh.position.copy(m.pos); m.mesh.lookAt(_a.copy(m.pos).sub(m.vel)); m.mesh.scale.setScalar(1.8); m.mesh.userData.fl.visible = tNow - m.t0 < 4.5;
+    m.mesh.visible = m.alive; if (m.alive) { m.mesh.position.copy(m.pos); m.mesh.lookAt(_a.copy(m.pos).sub(m.vel)); m.mesh.scale.setScalar(1.8); const burn = tNow - m.t0 < 4.5, U = m.mesh.userData, ph = tNow * 55 + m.t0 * 13, pu = 1 + .28 * Math.sin(ph) + .14 * Math.sin(ph * 2.3 + 1);
+      U.fl.visible = U.core.visible = burn; U.fl.scale.set(.8 * (.9 + .1 * pu), .8 * (.9 + .1 * pu), 3 * pu); U.fl.position.z = 3.6 + 1.5 * pu * .8; U.core.scale.set(.35, .35, 1.1 * pu);
+      U.dia.forEach((d, q) => { d.visible = burn; d.scale.setScalar((.22 - q * .04) * (.7 + .5 * Math.abs(Math.sin(ph * .5 + q)))); });
       if (tNow - (m.trT || 0) > .06) { m.trT = tNow; m.trail.unshift(m.pos.clone()); if (m.trail.length > 90) m.trail.pop(); } }
     const arr = m.lineMesh.geometry.attributes.position.array; for (let i = 0; i < 90; i++) { const q = m.trail[Math.min(i, m.trail.length - 1)] || m.pos; arr[3 * i] = q.x; arr[3 * i + 1] = q.y; arr[3 * i + 2] = q.z; } m.lineMesh.geometry.attributes.position.needsUpdate = true;
     if (!m.alive) { m.lineMesh.material.opacity = Math.max(0, .7 * (1 - (tNow - (m.deadT || tNow)) / 3)); if (tNow - (m.deadT || tNow) > 2.9) { drop(m.lineMesh); drop(m.mesh); } }
@@ -709,15 +753,48 @@ function bombersDraw(dt) {
 let camMode = +S.cam || 0;
 const cam = { f: new THREE.Vector3(1, 0, 0), up: new THREE.Vector3(0, 1, 0), off: null, pos: new THREE.Vector3() };
 const CAMN = ["Сзади", "Далеко", "Из кабины", "С земли у цели", "Сверху"];
+/* ---------- режиссёр: короткие постановочные планы в духе военного кино (только на автопилоте, камеры 0–2) ---------- */
+function camFov(f) { if (camera.fov !== f) { camera.fov = f; camera.updateProjectionMatrix(); } cam.zoom = true; cam.reset = true; }
+function shotGround(x, z) { return Math.max(0, W.gnd(x, z)); }
+function directorPick(b) {
+  if (tNow < (G.dirNext ?? 9) || G.done) return; const v = b.v, f = b.f, side = rnd() < .5 ? 1 : -1, low = agl(b.pos) < 170, wing = G.bombers.filter(w => w !== b && w.alive && !w.falling && w.pos.distanceTo(b.pos) < 1100), opts = [];
+  if (G.bombs.some(B => !B.done && B.owner === b)) return;
+  if (G.success && b.mode === "egress" && !G.didHero) opts.push("hero", "hero");
+  if (low && b.mode !== "dive" && b.mode !== "release") opts.push("lowpass", "lowpass");
+  if (wing.length) opts.push("formation");
+  if (b.mode === "ingress" || b.mode === "egress" || b.mode === "popup") opts.push("track");
+  if (window.__shot) { opts.length = 0; opts.push(window.__shot); window.__shot = null; }
+  if (!opts.length) return; const k = opts[Math.floor(rnd() * opts.length)];
+  if (k === "lowpass") { const ahead = v * 1.7, x = b.pos.x + f.x * ahead + b.r0.x * side * 45, z = b.pos.z + f.z * ahead + b.r0.z * side * 45; G.dir = { kind: k, t0: tNow, until: tNow + 3.4, cp: new THREE.Vector3(x, shotGround(x, z) + 3.5, z) }; }
+  else if (k === "formation" && !wing.length) return;
+  else if (k === "formation") G.dir = { kind: k, t0: tNow, until: tNow + 3.6, w: wing[Math.floor(rnd() * wing.length)], side };
+  else if (k === "track") G.dir = { kind: k, t0: tNow, until: tNow + 3.6, side };
+  else { G.didHero = true; G.dir = { kind: "hero", t0: tNow, until: tNow + 5, a0: rnd() * 6.28 }; }
+  if (G.dir) G.dirNext = G.dir.until + 12 + rnd() * 8;
+}
+function directorCam(b, dt) { const D_ = G.dir, p = b.pos, t = tNow - D_.t0;
+  if (D_.kind === "belly") { /* «из-под брюха»: бомбы отделяются, самолёт над головой */ camera.position.copy(p).addScaledVector(b.u, -34).addScaledVector(b.f, -70).addScaledVector(b.r, 18); { const gy = shotGround(camera.position.x, camera.position.z) + 5; if (camera.position.y < gy) camera.position.y = gy; } camera.up.copy(b.u).lerp(UP, .5).normalize(); camera.lookAt(_a.copy(p).addScaledVector(b.u, -10).addScaledVector(b.f, 10)); camFov(56); return; }
+  if (D_.kind === "near") { /* разрыв рядом: камера неподвижна сбоку, самолёт проходит сквозь облако */ camera.position.copy(D_.cp); camera.up.set(0, 1, 0); camera.lookAt(_a.copy(p).lerp(D_.at, .25)); camFov(48); return; }
+  if (D_.kind === "lowpass") { /* «Топ Ган»: камера у самой земли впереди, самолёт с рёвом проходит над ней и уходит */ camera.position.copy(D_.cp); camera.up.set(0, 1, 0); camera.lookAt(p); camFov(52); return; }
+  if (D_.kind === "formation") { const w = D_.w; if (!w || !w.alive || w.falling) { G.dir = null; return; } /* через плечо ведомого: его крыло на переднем плане, ведущий впереди */
+    camera.position.copy(w.pos).addScaledVector(w.f, -42).addScaledVector(w.u0, 9).addScaledVector(w.r0, D_.side * 16); { const gy = shotGround(camera.position.x, camera.position.z) + 6; if (camera.position.y < gy) camera.position.y = gy; } camera.up.set(0, 1, 0); camera.lookAt(_a.copy(p).lerp(w.pos, .35)); camFov(50); return; }
+  if (D_.kind === "track") { /* телеобъектив сбоку, параллельно курсу — земля несётся фоном */ camera.position.copy(p).addScaledVector(b.r0, D_.side * 150).addScaledVector(b.f, 14 - t * 8).addScaledVector(UP, 10); const gy = shotGround(camera.position.x, camera.position.z) + 6; if (camera.position.y < gy) camera.position.y = gy; camera.up.set(0, 1, 0); camera.lookAt(_a.copy(p).addScaledVector(b.f, 3)); camFov(camera.aspect < 1 ? 44 : 30); return; }
+  if (D_.kind === "hero") { /* облёт героя после удачного удара: высокий угол, на фоне дым над целью */ const a = D_.a0 + t * .45, R = 120, el = .55, fx = Math.cos(a), fz = Math.sin(a);
+    camera.position.set(p.x + fx * R * Math.cos(el), p.y + R * Math.sin(el), p.z + fz * R * Math.cos(el)); const gy = shotGround(camera.position.x, camera.position.z) + 10; if (camera.position.y < gy) camera.position.y = gy; camera.up.set(0, 1, 0); camera.lookAt(p); camFov(55); return; }
+}
 function cameraUpdate(dt) {
   const b = G.bombers[G.me] || G.bombers[0], p = b.pos;
+  const dirOK = G.dir && tNow < G.dir.until && camMode < 3 && b.alive && !b.falling && !ctl.steerMan;
+  if (G.dir && (G.dir.kind === "belly" || G.dir.kind === "near")) G.dirNext = Math.max(G.dirNext ?? 0, G.dir.until + 6);
+  if (G.dir && !dirOK && tNow >= G.dir.until) { G.dir = null; if (cam.zoom) { cam.zoom = false; resize(); } }
+  if (dirOK && (G.dir.kind === "belly" || G.dir.kind === "near")) { directorCam(b, dt); if (G.dir) return; }
   /* камера попадания: короткий план места разрыва сразу после сброса (только на автопилоте) */
   const ic = G.impactCam; if (ic && tNow < ic.until && camMode < 3 && b.alive && !b.falling && !ctl.steerMan) {
     /* вид сбоку и сверху под углом: до разрыва — кадр «цель + бомбы + самолёт», после — на цель (обломки, огонь), самолёт уходит из кадра */
     const L = _c.set(ic.x, ic.y + 10, ic.z), look = _a.copy(L);
     if (tNow < ic.hit) { const B = ic.bomb; if (B && !B.done) look.multiplyScalar(.82).addScaledVector(B.pos, .12); else look.multiplyScalar(.94);
       _b.copy(b.pos).sub(L); if (_b.length() > 450) _b.setLength(450); look.addScaledVector(_b.add(L), .06); }
-    else { _b.copy(b.pos).sub(L); if (_b.length() > 400) _b.setLength(400); look.addScaledVector(_b, .05); look.y += 12; }
+    else { _b.copy(b.pos).sub(L); if (_b.length() > 400) _b.setLength(400); look.addScaledVector(_b, .05); look.y += ic.mega ? 40 + Math.min(160, (tNow - ic.hit) * 45) : 12; }
     ic.lk ??= look.clone(); ic.lk.lerp(look, 1 - Math.exp(-dt * 3.5));
     camera.position.copy(ic.cp); camera.up.set(0, 1, 0); camera.lookAt(ic.lk); cam.reset = true; if (cam.zoom) { cam.zoom = false; resize(); } return; }
   const ad = G.adCam; if (ad && tNow < ad.until && camMode < 3 && b.alive && !b.falling && !ctl.steerMan && ad.tgt.alive && !ad.src.dead) {
@@ -736,12 +813,14 @@ function cameraUpdate(dt) {
   if (cam.zoom) { cam.zoom = false; resize(); }
   /* камера гибели: борт подбит или взорвался — смотрим со стороны, как он падает и взрывается */
   if ((b.falling || !b.alive) && camMode < 3) {
-    if (!cam.dc) { const o = _a.copy(camera.position).sub(p); if (o.length() < 140) o.copy(b.r0).multiplyScalar(170).addScaledVector(UP, 40); else o.setLength(Math.min(o.length(), 280)); cam.dc = { off: o.clone(), p: camera.position.clone() }; }
+    if (!cam.dc) { const o = _a.copy(camera.position).sub(p); if (o.length() < 140) o.copy(b.r0).multiplyScalar(170).addScaledVector(UP, 40); else o.setLength(Math.min(o.length(), 280)); { const L = o.length(); o.y = Math.max(o.y, L * .55); o.setLength(L); } /* облёт выше над землёй (~33°) */ cam.dc = { off: o.clone(), p: camera.position.clone() }; }
     const dc = cam.dc; if (b.alive) dc.p.addScaledVector(b.f, b.v * .6 * dt); // пока падает — камера немного сопровождает
     const ang = dt * .22, c = Math.cos(ang), s = Math.sin(ang), ox = dc.off.x * c - dc.off.z * s; dc.off.z = dc.off.x * s + dc.off.z * c; dc.off.x = ox;
     camera.position.copy(b.alive ? dc.p : _b.copy(p).add(dc.off)); const gyy = Math.max(0, W.gnd(camera.position.x, camera.position.z)) + 6; if (camera.position.y < gyy) camera.position.y = gyy;
     camera.up.set(0, 1, 0); camera.lookAt(p); return; }
   if (b.alive && !b.falling) cam.dc = null;
+  if (camMode < 3 && !ctl.steerMan && b.alive && !b.falling && !(G.impactCam && tNow < G.impactCam.until) && !(G.adCam && tNow < G.adCam.until)) { if (!G.dir) directorPick(b); if (G.dir && tNow < G.dir.until) { directorCam(b, dt); if (G.dir) return; } }
+  if (cam.zoom) { cam.zoom = false; resize(); }
   if (camMode === 3) { const tg = W.target, a = Math.atan2(W.start.z - tg.z, W.start.x - tg.x) + .6, cx = tg.x + Math.cos(a) * 700, cz = tg.z + Math.sin(a) * 700;
     camera.position.set(cx, Math.max(0, W.gnd(cx, cz)) + 25, cz); camera.up.set(0, 1, 0); camera.lookAt(p); return; }
   if (camMode === 4) { camera.position.set(p.x - b.f.x * 600, p.y + 1800, p.z - b.f.z * 600); camera.up.set(b.f.x, 0, b.f.z); camera.lookAt(p); return; }
@@ -785,7 +864,7 @@ function hud() {
   $("tgt").textContent = `${tg.name}: ${G.success ? "поражена" : `${Math.round(Math.hypot(tg.x - b.pos.x, tg.z - b.pos.z) / 100) / 10} км · разрушено ${tg.parts.length - left} из ${tg.need} нужных`}`;
   $("score").textContent = `раунд ${STATS.rounds} · успехов ${STATS.wins} · неудач ${STATS.losses}`;
   $("grp").innerHTML = G.bombers.map(q => `<div class="${q.id === G.me ? "me" : ""} ${q.alive && !q.falling ? "" : "dead"}">✈ Борт ${q.id + 1} · 💣${q.bombs} ✨${q.flares}${q.safe ? " · в море" : ""}</div>`).join("");
-  $("nBm").textContent = b.bombs; $("nFl").textContent = b.flares; $("nAb").textContent = b.abN; $("bAb").classList.toggle("on", b.abT > tNow); $("bAb").style.opacity = b.abN > 0 || b.abT > tNow ? 1 : .45;
+  $("nBm").textContent = b.mega ? "М" : b.bombs; $("nFl").textContent = b.flares; $("nAb").textContent = b.abN; $("bAb").classList.toggle("on", b.abT > tNow); $("bAb").style.opacity = b.abN > 0 || b.abT > tNow ? 1 : .45;
   $("chip").textContent = ctl.steerMan ? "РУЧНОЕ" : "АВТОПИЛОТ"; $("chip").className = ctl.steerMan ? "man" : "auto";
   $("thr").className = ctl.steerMan || ctl.spdMan ? "man" : ""; $("thrFill").style.height = (ctl.steerMan || ctl.spdMan ? ctl.thr : (b.v - 120) / (PL.VMAX - 120)) * 100 + "%";
   const mis = G.missiles.find(m => m.alive && m.tgt === b && !m.decoy), w = $("warn");
@@ -813,18 +892,21 @@ function showSummary() {
   $("sum").style.display = "block";
 }
 function hideSummary() { $("sum").style.display = "none"; }
-let toastT = null; function toast(s, ms) { const t = $("toast"); t.textContent = s; t.style.opacity = 1; clearTimeout(toastT); toastT = setTimeout(() => t.style.opacity = 0, ms || 1500); }
+/* сообщения — неброская лента в левом углу: до 4 строк, каждая гаснет сама */
+function toast(s, ms) { const f = $("feed"); if (!f) return; const d = document.createElement("div"); d.textContent = s; f.appendChild(d); while (f.children.length > 4) f.firstChild.remove();
+  setTimeout(() => { d.style.opacity = 0; setTimeout(() => d.remove(), 400); }, Math.max(1800, ms || 1500)); }
 function flash(o) { const f = $("flash"); f.style.opacity = o; setTimeout(() => f.style.opacity = 0, 90); }
 
 /* ---------- кадр ---------- */
 let lastT = 0, fEma = 0, qT = 0;
 function frame(ms) {
   const t = ms / 1000, dt = Math.min(.1, t - lastT || .016); lastT = t; if (!G) return;
-  let left = dt; const me0 = G.bombers[G.me], slow = me0 && ((G.impactCam && tNow < Math.min(G.impactCam.until, G.impactCam.hit + 1.3) && tNow > G.impactCam.hit - 1 && !ctl.steerMan && me0.alive && !me0.falling && camMode < 3) || (me0.falling && tNow - (me0.fallT || 0) < 2.2) || (!me0.alive && tNow - (me0.deadT ?? -99) < 2.2)); // замедление на гибели борта
+  let left = dt; const me0 = G.bombers[G.me], slow = me0 && ((G.impactCam && tNow < Math.min(G.impactCam.until, G.impactCam.hit + 1.3) && tNow > G.impactCam.hit - 1 && !ctl.steerMan && me0.alive && !me0.falling && camMode < 3) || (me0.falling && tNow - (me0.fallT || 0) < 2.2) || (!me0.alive && tNow - (me0.deadT ?? -99) < 2.2) || (G.dir && G.dir.slow && tNow < G.dir.until) || (G.impactCam && G.impactCam.mega && tNow > G.impactCam.hit - .2 && tNow < G.impactCam.hit + 1.6)); // замедление на гибели борта
   if (slow) left *= .45;
   while (left > 1e-6 && !window.__freeze) { const d = Math.min(1 / 60, left); simStep(d); left -= d; }
   if (G.hitMsg && !G.hitMsg.shown) { G.hitMsg.shown = true; toast(G.hitMsg.txt, 2800); }
-  cameraUpdate(dt); terrainLod(); sky.position.copy(camera.position); water.position.x = camera.position.x; water.position.z = camera.position.z;
+  cameraUpdate(dt); if (G.shake && tNow < G.shake.until) { const k = 1 - (tNow - G.shake.t0) / (G.shake.until - G.shake.t0), a = G.shake.amp * k * k; camera.position.x += (Math.random() - .5) * a; camera.position.y += (Math.random() - .5) * a; camera.position.z += (Math.random() - .5) * a; }
+  terrainLod(); sky.position.copy(camera.position); water.position.x = camera.position.x; water.position.z = camera.position.z;
   SM.uTime.value = tNow; SM.uPx.value = renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360)); WU.uTime.value = t; bombersDraw(dt); objectsDraw(dt); fxDraw(dt);
   renderer.render(scene, camera);
   /* авто-чёткость: если кадры тяжёлые — снижаем разрешение рендера (до 55 %), если быстрые — возвращаем */
@@ -871,6 +953,6 @@ setTimeout(() => { newRound(S.seed ? S.seed + 1 : 1 + Math.floor(Math.random() *
   $("hint").textContent = "правая часть экрана — стик · 💣 бомбы · ✨ ловушки · 🔥 форсаж (2 раза за вылет)"; setTimeout(() => $("hint").textContent = "", 6000); }, 30);
 
 /* тесты: симуляция без графики */
-window.__cr = { fns: { terrainColors, terrainNormals, buildWaterTex }, sim(sec, dt = 1 / 60) { for (let t = 0; t < sec; t += dt) simStep(dt); return this.state(); },
+window.__cr = { fns: { terrainColors, terrainNormals, buildWaterTex }, camUpd: dt => cameraUpdate(dt), sim(sec, dt = 1 / 60) { for (let t = 0; t < sec; t += dt) simStep(dt); return this.state(); },
   state() { return { round: STATS.rounds, t: +tNow.toFixed(1), done: G.done, success: G.success, causes: G.causes, bombers: G.bombers.map(b => ({ id: b.id, alive: b.alive && !b.falling, mode: b.mode, bombs: b.bombs, hp: b.hp, agl: Math.round(agl(b.pos)), v: Math.round(b.v) })), left: W.target.parts.filter(p => p.hp > 0).length, target: W.target.type, missiles: G.missiles.length }; },
   newRound, get W() { return W; }, get G() { return G; }, STATS, S, seedRnd, renderer: () => renderer, scene: () => scene, camera: () => camera, frame, setCam: m => { camMode = m; cam.reset = true; } };

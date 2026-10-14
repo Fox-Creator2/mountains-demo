@@ -27,7 +27,9 @@
   #mark { position:fixed; left:0; top:0; width:36px; height:36px; margin:-18px 0 0 -18px; pointer-events:none; display:none; }
   #mark svg { width:100%; height:100%; filter:drop-shadow(0 0 3px #000); }
   #mark span { position:absolute; left:50%; top:36px; transform:translateX(-50%); font-size:11px; white-space:nowrap; text-shadow:0 1px 3px #000; }
-  #toast { position:fixed; left:50%; top:36%; transform:translate(-50%,-50%); padding:9px 16px; border-radius:12px; background:var(--bg); font-size:17px; font-weight:600; opacity:0; transition:opacity .25s; pointer-events:none; text-align:center; max-width:90vw; }
+  #toast { display:none; }
+  #feed { position:fixed; left:10px; top:calc(env(safe-area-inset-top) + 200px); max-width:52vw; display:flex; flex-direction:column; gap:3px; pointer-events:none; z-index:12; }
+  #feed div { font-size:12px; line-height:1.25; padding:3px 8px; border-radius:7px; background:#0a142266; color:#e8eef8cc; text-shadow:0 1px 2px #000; transition:opacity .4s; width:fit-content; }
   #flash { position:fixed; inset:0; background:#f33; opacity:0; pointer-events:none; transition:opacity .5s; }
   #zoneL { position:fixed; left:0; bottom:0; width:22%; height:55%; }
   #zoneR { position:fixed; right:0; bottom:0; width:78%; height:55%; }
@@ -42,8 +44,8 @@
   #bBomb { bottom:calc(env(safe-area-inset-bottom) + 170px); } #bFlare { bottom:calc(env(safe-area-inset-bottom) + 244px); border-color:#ffd06090; }
   #bAb { bottom:calc(env(safe-area-inset-bottom) + 318px); border-color:#ff8a4090; } #bAb.on { background:#ff7a2088; box-shadow:0 0 18px #ffb060; }
   #hint { position:fixed; right:10px; bottom:calc(env(safe-area-inset-bottom) + 14px); font-size:12px; opacity:.7; text-align:right; pointer-events:none; text-shadow:0 1px 3px #000; max-width:60%; }
-  #sum { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); min-width:260px; max-width:92vw; padding:16px 20px; border-radius:14px; background:rgba(8,14,24,.85); border:1px solid #ffffff30; display:none; text-align:center; z-index:30; }
-  #sum h3 { margin:0 0 8px; font-size:20px; } #sum p { margin:4px 0; font-size:13px; opacity:.9; }
+  #sum { position:fixed; left:68px; bottom:calc(env(safe-area-inset-bottom) + 14px); max-width:min(300px, 60vw); padding:8px 12px; border-radius:10px; background:rgba(8,14,24,.55); border:1px solid #ffffff20; display:none; text-align:left; z-index:30; pointer-events:none; }
+  #sum h3 { margin:0 0 4px; font-size:14px; } #sum p { margin:2px 0; font-size:11px; opacity:.85; }
   #panel { position:fixed; inset:0; background:#0a1220; display:none; overflow:auto; padding:calc(env(safe-area-inset-top) + 12px) 14px 30px; touch-action:pan-y; z-index:50; }
   #panel h2 { margin:0 0 8px; font-size:18px; }
   #panel label { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid #ffffff18; }
@@ -55,6 +57,7 @@
     .hud { flex-wrap:wrap; } #mid { order:3; flex-basis:100%; margin-top:2px; } #phase { font-size:15px; }
     #grp { top:calc(env(safe-area-inset-top) + 126px); font-size:12px; }
     #map { top:calc(env(safe-area-inset-top) + 126px); width:132px; height:88px; }
+    #feed { top:calc(env(safe-area-inset-top) + 284px); max-width:62vw; }
     #chip { top:calc(env(safe-area-inset-top) + 222px); } #warn { top:calc(env(safe-area-inset-top) + 248px); font-size:15px; }
   }
   /* низкий экран (телефон горизонтально): кнопки бомб и ловушек — рядом внизу справа */
@@ -80,6 +83,7 @@
 <div id="mark"><svg viewBox="0 0 40 40"><path id="markArrow" d="M20 4 L32 30 L20 24 L8 30 Z" fill="#ffd54a" stroke="#000" stroke-width="1.5"/></svg><span id="markT"></span></div>
 <div id="pip" style="position:fixed;left:0;top:0;width:26px;height:26px;margin:-13px 0 0 -13px;border:2px solid #7dff9b;border-radius:50%;pointer-events:none;display:none;box-shadow:0 0 4px #000"></div>
 <div id="toast"></div>
+<div id="feed"></div>
 <div id="flash"></div>
 <div id="thr"><div id="thrFill"></div><span>ГАЗ</span></div>
 <div id="stick"><i></i></div>
@@ -106,7 +110,7 @@
   <small>Управление: правая часть экрана — стик, левая полоса — газ, 💣 — бомбы, ✨ — ловушки. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, B или Enter — бомбы, F — ловушки, Пробел — авто, C — камера, M — карта. Касание карты — увеличить.</small>
   <small>Все стороны, места и объекты вымышлены.</small>
   <div class="row"><a href="../race/" style="color:#9cf">🏁 Гонка в каньоне (race)</a></div>
-  <small id="ver">версия 1.17 · 14.10, 00:05</small>
+  <small id="ver">версия 1.18 · 14.10, 09:30</small>
 </div>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
 <script type="module" src="game.js"></script>
