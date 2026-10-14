@@ -146,7 +146,7 @@ function dropBomb(b) { if (b.bombs <= 0) return;
     if (b.id === G.me) { toast("МегаБомба сброшена", 2500); const I = impact(B.pos, B.vel); G.impactCam = { x: I.x, y: Math.max(0, W.gnd(I.x, I.z)), z: I.z, t0: tNow, hit: tNow + 60, until: tNow + 60, kills: 0, bomb: B, mega: true, cp: impactVantage(I.x, I.z, b, 2.6) }; G.adCam = null; G.dir = null; }
     return; }
   b.bombs--; G.bombs.push({ pos: b.pos.clone().addScaledVector(b.u0, -2.5), vel: b.f.clone().multiplyScalar(b.v), owner: b, mesh: null, t: 0 });
-  if (b.id === G.me && tNow - (b.lastDrop ?? -9) > 3 && camMode < 3 && !ctl.steerMan) G.dir = { kind: "belly", t0: tNow, until: tNow + 1.5 }; if (b.id === G.me) b.lastDrop = tNow; }
+  if (b.id === G.me && !G.carpet && tNow - (b.lastDrop ?? -9) > 3 && camMode < 3 && !ctl.steerMan) G.dir = { kind: "belly", t0: tNow, until: tNow + 1.5 }; if (b.id === G.me) b.lastDrop = tNow; }
 function dropFlares(b) { if (b.flares <= 0) return; b.flares--; b.flT = tNow;
   for (const s of [-1, 0, 1]) G.flares.push({ pos: b.pos.clone().addScaledVector(b.u0, -2), vel: b.f.clone().multiplyScalar(b.v * .97).addScaledVector(b.r0, s * 24).add(_a.set(0, s ? -8 : -26, 0)), t0: tNow, mesh: null, trT: 0 });
   for (const m of G.missiles) if (m.alive && m.tgt === b && !m.decoy && m.pos.distanceTo(b.pos) < 3200 && rnd() < D().decoy) { m.decoy = G.flares[G.flares.length - 1]; }
@@ -180,7 +180,7 @@ function defenseStep(dt) {
 }
 /* камера «от лица ПВО»: когда оно открывает огонь по нашему борту — на ~3 с кадр от позиции ЗРК/зенитки с длиннофокусным обзором */
 function startAdCam(src, tgt, txt, w = 1) { G.heat = (G.heat || 0) + w; /* «накал» огня: пуск ракеты весит 6, залп зениток по 1; решает суммарная плотность за ~2.5 с */
-  if (G.heat < 6 || ctl.steerMan || tNow < (G.adCool || 0) || (G.impactCam && tNow < G.impactCam.until) || G.done || !tgt.alive || tgt.falling) return;
+  if (G.carpet || G.heat < 6 || ctl.steerMan || tNow < (G.adCool || 0) || (G.impactCam && tNow < G.impactCam.until) || G.done || !tgt.alive || tgt.falling) return;
   G.adCam = { src, tgt, t0: tNow, until: tNow + (src.kind === "sam" || src.kind === "frigate" ? 4 : 4), m: src.kind === "sam" || src.kind === "frigate" ? G.missiles[G.missiles.length - 1] : null }; G.adCool = tNow + 10; G.heat = 0; toast(txt, 1800); }
 function launchMissile(s, h, b) {
   const pos = new THREE.Vector3(s.x, s.y + h, s.z), dir = new THREE.Vector3().subVectors(b.pos, pos).normalize(); dir.y = Math.max(dir.y, .5); dir.normalize();
@@ -189,7 +189,7 @@ function launchMissile(s, h, b) {
   startAdCam(s, b, "ПВО: пуск ракеты — смотрим от расчёта", 6);
 }
 /* «на волосок»: разрыв рядом с ведущим — замедленный кадр сбоку, видно облако разрыва и самолёт, выходящий из него */
-function nearShot(b, at) { if (camMode >= 3 || ctl.steerMan || (G.impactCam && tNow < G.impactCam.until) || tNow < (G.nearNext ?? 0)) return; G.nearNext = tNow + 9; const side = _a.subVectors(at, b.pos).dot(b.r0) > 0 ? -1 : 1;
+function nearShot(b, at) { if (G.carpet || camMode >= 3 || ctl.steerMan || (G.impactCam && tNow < G.impactCam.until) || tNow < (G.nearNext ?? 0)) return; G.nearNext = tNow + 9; const side = _a.subVectors(at, b.pos).dot(b.r0) > 0 ? -1 : 1;
   G.dir = { kind: "near", t0: tNow, until: tNow + 1.6, slow: true, cp: b.pos.clone().addScaledVector(b.r0, side * 70).addScaledVector(UP, 16).addScaledVector(b.f, 30), at: at.clone() }; G.adCam = null; }
 function missilesStep(dt) {
   const dif = D();
@@ -272,18 +272,28 @@ function carpetStep(dt) { const F = G.form, me = G.bombers[G.me];
   if (ctl.steerMan && me && me.alive && !me.falling && me.form) { /* игрок ведёт свой борт — строй держится вокруг него */ F.dir.copy(me.f).setY(0).normalize(); F.v = me.v; const s = me.slot, rx = -F.dir.z, rz = F.dir.x;
     F.pos.set(me.pos.x + F.dir.x * s.back - rx * s.side, me.pos.y - s.up, me.pos.z + F.dir.z * s.back - rz * s.side); return; }
   const ah = Math.max(0, W.gnd(F.pos.x + F.dir.x * 3000, F.pos.z + F.dir.z * 3000)) + 320; F.pos.y += clamp(Math.max(F.alt, ah) - F.pos.y, -15 * dt, 25 * dt);
-  F.pos.addScaledVector(F.dir, F.v * dt); }
+  /* после сброса — широкий разворот к ближайшему открытому морю */
+  const tg = W.target, live = G.bombers.filter(q => q.alive && !q.falling);
+  if (!F.out && (live.every(q => q.bombs <= 0) || (F.pos.x - tg.x) * F.dir.x + (F.pos.z - tg.z) * F.dir.z > 2500)) { F.out = true; F.hd = seaHeading(F.pos, Math.atan2(F.dir.z, F.dir.x)); toast("Армада уходит к морю", 2200); }
+  F.turn = 0; if (F.out) { const cur = Math.atan2(F.dir.z, F.dir.x), e = wrap(F.hd - cur), w = clamp(e, -.09 * dt, .09 * dt); F.turn = w / dt; F.dir.set(Math.cos(cur + w), 0, Math.sin(cur + w)); }
+  F.pos.addScaledVector(F.dir, F.v * dt);
+  /* ушли вглубь моря (~2,5 км от берега) — строй исчезает, ресурсы освобождаются, раунд завершается */
+  if (F.out && !F.gone && W.isSea(F.pos.x, F.pos.z) && W.at(W.dOut, F.pos.x, F.pos.z) > 2500) { F.gone = true;
+    for (const q of G.bombers) { if (!q.alive || q.falling) continue; q.alive = false; q.gone = true; q.safe = true; for (const o of [q.mesh, q.smoke, q.trail]) drop(o); q.mesh = q.smoke = q.trail = null; } } }
+function seaHeading(P, cur) { let best = cur, bc = 1e9;
+  for (let k = 0; k < 32; k++) { const a = k / 32 * Math.PI * 2, cx = Math.cos(a), cz = Math.sin(a); for (let d = 500; d <= 24000; d += 500) { const x = P.x + cx * d, z = P.z + cz * d;
+      if (x < 0 || z < 0 || x > W.W || z > W.H || (W.isSea(x, z) && W.at(W.dOut, x, z) > 2500)) { const c = d + 2600 * Math.abs(wrap(a - cur)); if (c < bc) { bc = c; best = a; } break; } } }
+  return best; }
 function carpetFly(b, dt) { const F = G.form, tg = W.target;
   if (b.id === G.me && ctl.steerMan) { const c = playerControl(b, [0, 0, F.v]); stepPlane(b, dt, c[0], c[1], c[2]); }
   else { const P = slotPos(b, _c), vel = _a.subVectors(P, b.pos); if (vel.length() > 400) b.pos.copy(P); else b.pos.lerp(P, 1 - Math.exp(-dt * 1.5)); b.f.copy(F.dir); b.f.y = clamp((P.y - b.pos.y) * .01, -.1, .1); b.f.normalize(); b.v = F.v;
-    b.roll = Math.sin(tNow * .9 + b.ph) * .05 + clamp(vel.dot(b.r0) * .004, -.25, .25); basis(b); }
+    b.roll = Math.sin(tNow * .9 + b.ph) * .05 + clamp(vel.dot(b.r0) * .004, -.25, .25) + clamp((F.turn || 0) * 3.2, -.45, .45); basis(b); }
   /* сброс «ковром»: начинаем, когда точка падения подошла к цели (−220 м по курсу), 10 бомб через 0,2 с — полоса ~450 м */
   if (b.bombs > 0) { if (tNow - b.iT > .25 && b.cT < 0) { b.iT = tNow; const I = impact(b.pos, _b.copy(b.f).multiplyScalar(b.v)), along = (I.x - tg.x) * F.dir.x + (I.z - tg.z) * F.dir.z;
       if (along > -220 || F.go) { b.cT = tNow - 1; b.mode = "carpetDrop"; if (!G.cc) { const h = b.pos.y - Math.max(0, W.gnd(tg.x, tg.z)), tf = Math.sqrt(2 * h / 9.81) * 1.04; G.cc = { start: tNow + tf - 3.2, until: tNow + tf + 7, a0: Math.atan2(F.dir.z, F.dir.x) + Math.PI * .6 }; toast("Сброс — ковёр пошёл", 2200); } } }
     if (b.cT >= 0 && tNow - b.cT >= .2) { b.cT = tNow; dropBomb(b); G.bombs[G.bombs.length - 1].carpet = true; } }
   if (b.bombs <= 0 && b.mode === "carpetDrop") b.mode = "carpetOut";
-  if (b.mode === "carpetOut" && (b.pos.x - tg.x) * F.dir.x + (b.pos.z - tg.z) * F.dir.z > 3500) b.mode = "egress";
-  if (b.mode === "egress" && (b.pos.x - tg.x) * F.dir.x + (b.pos.z - tg.z) * F.dir.z > 8000) b.safe = true;
+  if (F.out && b.mode !== "egress") b.mode = "egress";
 }
 let warnT = 0;
 function simStep(dt) {
@@ -310,11 +320,12 @@ function simStep(dt) {
   // конец раунда
   if (!G.done) { const flying = G.bombers.filter(b => b.alive && !b.falling), armed = flying.filter(b => b.bombs > 0);
     let end = null;
-    if (!flying.length) { if (tNow - Math.max(...G.bombers.map(q => q.deadT ?? q.fallT ?? -99)) > 4.5) end = G.success ? "win" : "lose"; }
+    if (G.carpet) { if (!flying.length && tNow - Math.max(...G.bombers.map(q => q.gone ? -99 : q.deadT ?? q.fallT ?? -99)) > 3) end = G.success ? "win" : "lose"; else if (tNow > 480) end = G.success ? "win" : "lose"; }
+    else if (!flying.length) { if (tNow - Math.max(...G.bombers.map(q => q.deadT ?? q.fallT ?? -99)) > 4.5) end = G.success ? "win" : "lose"; }
     else if (G.success && flying.every(b => b.safe || b.mode === "egress") && tNow - G.succT > 12) end = "win";
     else if (!G.success && !armed.length && flying.every(b => b.mode === "egress")) end = "lose";
     else if (tNow > 420) end = G.success ? "win" : "lose";
-    if (end) { G.done = true; G.endT = tNow; G.success = end === "win"; if (G.success) STATS.wins++; else STATS.losses++; showSummary(); } }
+    if (end) { G.done = true; if (G.carpet) G.msg.push(`Армада: вернулось ${G.bombers.filter(q => q.gone).length} из ${G.bombers.length}`); G.endT = tNow; G.success = end === "win"; if (G.success) STATS.wins++; else STATS.losses++; showSummary(); } }
   else if (tNow - G.endT > 6 && !window.__noLoop) { hideSummary(); newRound(); }
 }
 
@@ -793,7 +804,7 @@ const CAMN = ["Сзади", "Далеко", "Из кабины", "С земли 
 function camFov(f) { if (camera.fov !== f) { camera.fov = f; camera.updateProjectionMatrix(); } cam.zoom = true; cam.reset = true; }
 function shotGround(x, z) { return Math.max(0, W.gnd(x, z)); }
 function directorPick(b) {
-  if (tNow < (G.dirNext ?? 9) || G.done) return; const v = b.v, f = b.f, side = rnd() < .5 ? 1 : -1, low = agl(b.pos) < 170, wing = G.bombers.filter(w => w !== b && w.alive && !w.falling && w.pos.distanceTo(b.pos) < 1100), opts = [];
+  if (tNow < (G.dirNext ?? 9) || G.done || G.carpet) return; const v = b.v, f = b.f, side = rnd() < .5 ? 1 : -1, low = agl(b.pos) < 170, wing = G.bombers.filter(w => w !== b && w.alive && !w.falling && w.pos.distanceTo(b.pos) < 1100), opts = [];
   if (G.bombs.some(B => !B.done && B.owner === b)) return;
   if (G.success && b.mode === "egress" && !G.didHero) opts.push("hero", "hero");
   if (low && b.mode !== "dive" && b.mode !== "release") opts.push("lowpass", "lowpass");
@@ -822,15 +833,24 @@ function directorCam(b, dt) { const D_ = G.dir, p = b.pos, t = tNow - D_.t0;
   if (D_.kind === "hero") { /* облёт героя после удачного удара: высокий угол, на фоне дым над целью */ const a = D_.a0 + t * .45, R = 120, el = .55, fx = Math.cos(a), fz = Math.sin(a);
     camera.position.set(p.x + fx * R * Math.cos(el), p.y + R * Math.sin(el), p.z + fz * R * Math.cos(el)); const gy = shotGround(camera.position.x, camera.position.z) + 10; if (camera.position.y < gy) camera.position.y = gy; camera.up.set(0, 1, 0); camera.lookAt(p); camFov(55); return; }
 }
+function formCenter(out) { let n = 0; out.set(0, 0, 0); for (const q of G.bombers) if (q.alive && !q.falling) { out.add(q.pos); n++; } if (!n) return out.copy(G.form.pos); return out.multiplyScalar(1 / n); }
+function armadaCam(dt) { const F = G.form, tg = W.target, A = (G.ac ??= { a: Math.atan2(F.dir.z, F.dir.x) + 2.3, pos: null, lk: null, t0: tNow, pass: false }), t = tNow - A.t0;
+  const C = formCenter(_c), dTg = Math.hypot(tg.x - C.x, tg.z - C.z), cc = G.cc; let P, L, fov = 52;
+  if (cc && tNow >= cc.start && tNow < cc.until) { /* удар: облёт места цели — ковёр ложится на цель */ const gy = shotGround(tg.x, tg.z), a = cc.a0 + (tNow - cc.start) * .2;
+    P = _a.set(tg.x + Math.cos(a) * 720, gy + 300, tg.z + Math.sin(a) * 720); const g2 = shotGround(P.x, P.z) + 40; if (P.y < g2) P.y = g2; L = _b.set(tg.x, gy + 30, tg.z); fov = 56; A.pos = null; }
+  else if (F.gone || (F.out && W.isSea(C.x, C.z))) { /* проводы: камера остаётся над берегом, строй уходит вглубь моря */ A.fix ??= C.clone().addScaledVector(F.dir, -500).add(_b.set(-F.dir.z * 260, 140, F.dir.x * 260)); P = _a.copy(A.fix); L = _b.copy(F.gone ? A.lastC || C : C); if (!F.gone) A.lastC = C.clone(); fov = 44; A.pos = null; }
+  else if (!F.out && dTg < 9000 && dTg > 6200) { /* проход армады: строй надвигается на камеру впереди-сбоку */ A.pc ??= C.clone().addScaledVector(F.dir, 1300).add(_b.set(-F.dir.z * 520, -60, F.dir.x * 520)); { const g2 = shotGround(A.pc.x, A.pc.z) + 30; if (A.pc.y < g2) A.pc.y = g2; } P = _a.copy(A.pc); L = _b.copy(C).addScaledVector(F.dir, -120); fov = 40; A.pos = null; }
+  else { /* медленный облёт строя сверху-сбоку: видно и массу самолётов, и землю под ними */ A.a += dt * .075; const R = 560 + 120 * Math.sin(t * .045), h = 150 + 90 * Math.sin(t * .031 + 1);
+    P = _a.set(C.x + Math.cos(A.a) * R, C.y + h, C.z + Math.sin(A.a) * R); const g2 = shotGround(P.x, P.z) + 40; if (P.y < g2) P.y = g2; L = _b.copy(C).addScaledVector(F.dir, 90);
+    if (A.pos) { A.pos.lerp(P, 1 - Math.exp(-dt * 2.5)); P.copy(A.pos); } else A.pos = P.clone(); }
+  camera.position.copy(P); camera.up.set(0, 1, 0); camera.lookAt(L); camFov(fov); }
 function cameraUpdate(dt) {
   const b = G.bombers[G.me] || G.bombers[0], p = b.pos;
   const dirOK = G.dir && tNow < G.dir.until && camMode < 3 && b.alive && !b.falling && !ctl.steerMan;
   if (G.dir && (G.dir.kind === "belly" || G.dir.kind === "near")) G.dirNext = Math.max(G.dirNext ?? 0, G.dir.until + 6);
   if (G.dir && !dirOK && tNow >= G.dir.until) { G.dir = null; if (cam.zoom) { cam.zoom = false; resize(); } }
-  /* ковровая: облёт места цели — от ~3 с до первых разрывов и пока ковёр ложится, ещё ~3,5 с после последнего */
-  const cc = G.cc; if (cc && tNow >= cc.start && tNow < cc.until && camMode < 3 && !ctl.steerMan) { const tg = W.target, gy = shotGround(tg.x, tg.z), a = cc.a0 + (tNow - cc.start) * .2, R = 720;
-    camera.position.set(tg.x + Math.cos(a) * R, gy + 300, tg.z + Math.sin(a) * R); { const g2 = shotGround(camera.position.x, camera.position.z) + 40; if (camera.position.y < g2) camera.position.y = g2; }
-    camera.up.set(0, 1, 0); camera.lookAt(tg.x, gy + 30, tg.z); camFov(56); return; }
+  /* режим Армады: камера работает только на строй и ковёр — облёт строя, проход армады, облёт цели при ударе, проводы в море */
+  if (G.carpet && G.form && camMode < 3 && !ctl.steerMan) { armadaCam(dt); return; }
   if (dirOK && (G.dir.kind === "belly" || G.dir.kind === "near")) { directorCam(b, dt); if (G.dir) return; }
   /* камера попадания: короткий план места разрыва сразу после сброса (только на автопилоте) */
   const ic = G.impactCam; if (ic && tNow < ic.until && camMode < 3 && b.alive && !b.falling && !ctl.steerMan) {
@@ -930,7 +950,7 @@ function markUpdate() {
   el.style.display = "block"; el.style.transform = `translate(${x}px,${y}px)`; $("markT").textContent = `${(Math.hypot(tg.x - G.bombers[G.me].pos.x, tg.z - G.bombers[G.me].pos.z) / 1000).toFixed(1)} км`;
 }
 function showSummary() {
-  const c = Object.entries(G.causes).map(([k, v]) => `${k}: ${v}`).join(", ") || "без потерь", lost = G.bombers.filter(b => !b.alive || b.falling).length;
+  const c = Object.entries(G.causes).map(([k, v]) => `${k}: ${v}`).join(", ") || "без потерь", lost = G.bombers.filter(b => (!b.alive || b.falling) && !b.gone).length;
   const def = [...W.sams, ...W.aaa, ...W.ships].filter(s => s.dead).length;
   $("sum").innerHTML = `<h3>${G.success ? "✅ Цель поражена" : "❌ Задание сорвано"}</h3><p>${W.target.name}</p><p>Потеряно бортов: ${lost} из ${G.bombers.length} (${c})</p><p>Уничтожено средств ПВО: ${def}</p><p style="opacity:.6">Следующий раунд — новая карта…</p>`;
   $("sum").style.display = "block";
@@ -945,7 +965,7 @@ function flash(o) { const f = $("flash"); f.style.opacity = o; setTimeout(() => 
 let lastT = 0, fEma = 0, qT = 0;
 function frame(ms) {
   const t = ms / 1000, dt = Math.min(.1, t - lastT || .016); lastT = t; if (!G) return;
-  let left = dt; const me0 = G.bombers[G.me], slow = me0 && ((G.impactCam && tNow < Math.min(G.impactCam.until, G.impactCam.hit + 1.3) && tNow > G.impactCam.hit - 1 && !ctl.steerMan && me0.alive && !me0.falling && camMode < 3) || (me0.falling && tNow - (me0.fallT || 0) < 2.2) || (!me0.alive && tNow - (me0.deadT ?? -99) < 2.2) || (G.dir && G.dir.slow && tNow < G.dir.until) || (G.impactCam && G.impactCam.mega && tNow > G.impactCam.hit - .2 && tNow < G.impactCam.hit + 1.6)); // замедление на гибели борта
+  let left = dt; const me0 = G.bombers[G.me], slow = me0 && ((G.impactCam && tNow < Math.min(G.impactCam.until, G.impactCam.hit + 1.3) && tNow > G.impactCam.hit - 1 && !ctl.steerMan && me0.alive && !me0.falling && camMode < 3) || (!G.carpet && me0.falling && tNow - (me0.fallT || 0) < 2.2) || (!G.carpet && !me0.alive && !me0.gone && tNow - (me0.deadT ?? -99) < 2.2) || (G.dir && G.dir.slow && tNow < G.dir.until) || (G.impactCam && G.impactCam.mega && tNow > G.impactCam.hit - .2 && tNow < G.impactCam.hit + 1.6)); // замедление на гибели борта
   if (slow) left *= .45;
   while (left > 1e-6 && !window.__freeze) { const d = Math.min(1 / 60, left); simStep(d); left -= d; }
   if (G.hitMsg && !G.hitMsg.shown) { G.hitMsg.shown = true; toast(G.hitMsg.txt, 2800); }
