@@ -21,7 +21,7 @@ let W = null, G = null, TM = null, tNow = 0;
 const STATS = { rounds: 0, wins: 0, losses: 0, planesLost: 0, defKilled: 0 };
 
 /* ================= раунд ================= */
-function newRound(seed) {
+function newRound(seed, force) {
   if (seed == null) seed = (S.seed || 1) + 1; S.seed = seed; saveS();
   seedRnd(seed * 7 + 3);
   W = genWorld(seed);
@@ -31,7 +31,7 @@ function newRound(seed) {
   G = { seed, t: 0, bombers: [], missiles: [], shells: [], bursts: [], bombs: [], flares: [], fx: [], fires: [], debris: [], sched: [], done: false, endT: 0, success: false, me: 0, msg: [], causes: {} };
   tNow = 0;
   const tg = W.target, ang0 = Math.atan2(W.start.z - tg.z, W.start.x - tg.x), dir = Math.atan2(tg.z - W.start.z, tg.x - W.start.x);
-  G.carpet = (STATS.rounds + 1) % 4 === 0; const n = G.carpet ? 12 + Math.floor(rnd() * 8) : +S.wing || 3;
+  G.carpet = force === "carpet" || (!force && (STATS.rounds + 1) % 4 === 0); const n = G.carpet ? 12 + Math.floor(rnd() * 8) : +S.wing || 3;
   if (G.carpet) setupCarpet(dir, n);
   else for (let i = 0; i < n; i++) {
     const sector = ang0 + (i === 0 ? 0 : (i % 2 ? 1 : -1) * Math.ceil(i / 2) * .85);
@@ -908,7 +908,7 @@ function hud() {
   $("tgt").textContent = `${tg.name}: ${G.success ? "поражена" : `${Math.round(Math.hypot(tg.x - b.pos.x, tg.z - b.pos.z) / 100) / 10} км · разрушено ${tg.parts.length - left} из ${tg.need} нужных`}`;
   $("score").textContent = `раунд ${STATS.rounds} · успехов ${STATS.wins} · неудач ${STATS.losses}`;
   $("grp").innerHTML = G.carpet ? `<div class="me">✈ Строй: ${G.bombers.filter(q => q.alive && !q.falling).length} из ${G.bombers.length} · 💣${G.bombers.reduce((s_, q) => s_ + (q.alive && !q.falling ? q.bombs : 0), 0)}</div>` : G.bombers.map(q => `<div class="${q.id === G.me ? "me" : ""} ${q.alive && !q.falling ? "" : "dead"}">✈ Борт ${q.id + 1} · 💣${q.bombs} ✨${q.flares}${q.safe ? " · в море" : ""}</div>`).join("");
-  $("nBm").textContent = b.mega ? "М" : b.bombs; $("nFl").textContent = b.flares; $("nAb").textContent = b.abN; $("bAb").classList.toggle("on", b.abT > tNow); $("bAb").style.opacity = b.abN > 0 || b.abT > tNow ? 1 : .45;
+  $("bArm").style.display = G.carpet ? "none" : ""; $("nBm").textContent = b.mega ? "М" : b.bombs; $("nFl").textContent = b.flares; $("nAb").textContent = b.abN; $("bAb").classList.toggle("on", b.abT > tNow); $("bAb").style.opacity = b.abN > 0 || b.abT > tNow ? 1 : .45;
   $("chip").textContent = ctl.steerMan ? "РУЧНОЕ" : "АВТОПИЛОТ"; $("chip").className = ctl.steerMan ? "man" : "auto";
   $("thr").className = ctl.steerMan || ctl.spdMan ? "man" : ""; $("thrFill").style.height = (ctl.steerMan || ctl.spdMan ? ctl.thr : (b.v - 120) / (PL.VMAX - 120)) * 100 + "%";
   const mis = G.missiles.find(m => m.alive && m.tgt === b && !m.decoy), w = $("warn");
@@ -980,8 +980,11 @@ $("map").onclick = () => $("map").classList.toggle("big");
 $("bBomb").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); playerBomb(); });
 $("bFlare").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); playerFlare(); });
 $("bAb").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); playerBurner(); });
+/* Армада по кнопке: тот же остров и цель, сразу раунд ковровой бомбардировки */
+function launchArmada() { if (!G || G.carpet) return; hideSummary(); toast("Армада вылетает!", 3000); newRound(G.seed, "carpet"); }
+$("bArm").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); launchArmada(); });
 addEventListener("keydown", e => { const k = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase(); ctl.keys[k] = true; ctl.keys[e.key] = true;
-  if (e.key === " ") { $("bAuto").onclick(); e.preventDefault(); } if (k === "b" || k === "и" || k === "enter") playerBomb(); if (k === "f" || k === "а") playerFlare(); if (k === "n" || k === "т") playerBurner(); if (k === "c" || k === "с") $("bCam").onclick(); if (k === "m" || k === "ь") $("map").onclick(); if (k === "escape") $("panel").style.display = "none"; });
+  if (e.key === " ") { $("bAuto").onclick(); e.preventDefault(); } if (k === "b" || k === "и" || k === "enter") playerBomb(); if (k === "f" || k === "а") playerFlare(); if (k === "n" || k === "т") playerBurner(); if (k === "g" || k === "п") launchArmada(); if (k === "c" || k === "с") $("bCam").onclick(); if (k === "m" || k === "ь") $("map").onclick(); if (k === "escape") $("panel").style.display = "none"; });
 addEventListener("keyup", e => { const k = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase(); ctl.keys[k] = false; ctl.keys[e.key] = false; });
 /* панель */
 const sel = { sDiff: "diff", sWing: "wing", sAgl: "agl", sResume: "resume", sLife: "life", sQ: "q", sQa: "qa", sInv: "inv" };
@@ -994,7 +997,7 @@ $("bNew").onclick = () => { $("panel").style.display = "none"; hideSummary(); ne
 /* ---------- запуск ---------- */
 initGfx();
 setTimeout(() => { newRound(S.seed ? S.seed + 1 : 1 + Math.floor(Math.random() * 999)); $("loading").style.display = "none"; renderer.setAnimationLoop(frame);
-  $("hint").textContent = "правая часть экрана — стик · 💣 бомбы · ✨ ловушки · 🔥 форсаж (2 раза за вылет)"; setTimeout(() => $("hint").textContent = "", 6000); }, 30);
+  $("hint").textContent = "правая часть экрана — стик · 💣 бомбы · ✨ ловушки · 🔥 форсаж (2 раза за вылет) · 🛩 Армада"; setTimeout(() => $("hint").textContent = "", 6000); }, 30);
 
 /* тесты: симуляция без графики */
 window.__cr = { fns: { terrainColors, terrainNormals, buildWaterTex }, camUpd: dt => cameraUpdate(dt), sim(sec, dt = 1 / 60) { for (let t = 0; t < sec; t += dt) simStep(dt); return this.state(); },
