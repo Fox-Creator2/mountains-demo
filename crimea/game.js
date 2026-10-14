@@ -31,7 +31,7 @@ function newRound(seed) {
   G = { seed, t: 0, bombers: [], missiles: [], shells: [], bursts: [], bombs: [], flares: [], fx: [], fires: [], debris: [], sched: [], done: false, endT: 0, success: false, me: 0, msg: [], causes: {} };
   tNow = 0;
   const tg = W.target, ang0 = Math.atan2(W.start.z - tg.z, W.start.x - tg.x), dir = Math.atan2(tg.z - W.start.z, tg.x - W.start.x);
-  const armRound = (STATS.rounds + 1) % 4 === 0, n = +S.wing || 3;
+  const n = +S.wing || 3;
   for (let i = 0; i < n; i++) {
     const sector = ang0 + (i === 0 ? 0 : (i % 2 ? 1 : -1) * Math.ceil(i / 2) * .85);
     const back = i * 1500, side = (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 500;
@@ -42,10 +42,10 @@ function newRound(seed) {
   }
   STATS.rounds++;
   /* каждый третий раунд у ведущего вместо серии — одна МегаБомба */
-  if (STATS.rounds % 3 === 0 && G.bombers[0] && !armRound) G.bombers[0].mega = 1;
+  if (STATS.rounds % 3 === 0 && G.bombers[0]) G.bombers[0].mega = 1;
   if (renderer) buildScene();
   ctl.steerMan = false; ctl.spdMan = false;
-  toast(`Раунд ${STATS.rounds}: ${tg.name}`, 2600); if (G.bombers[0]?.mega) toast("Особое задание: на борту МегаБомба", 3500); if (armRound) spawnArmada();
+  toast(`Раунд ${STATS.rounds}: ${tg.name}`, 2600); if (G.bombers[0]?.mega) toast("Особое задание: на борту МегаБомба", 3500);
 }
 function addSams(w, k) { const r = rng(w.seed * 13 + 1); for (let t = 0; t < 3000 && k > 0; t++) { const x = 2000 + r() * (w.W - 4000), z = 2000 + r() * (w.H - 4000); if (w.isSea(x, z) || w.gnd(x, z) < 5) continue; if (w.sams.some(s => Math.hypot(s.x - x, s.z - z) < 5000)) continue; w.sams.push({ x, z, y: w.gnd(x, z), R: 12000, Rr: 22000, ammo: 6, next: 0, kind: "sam", hd: r() * 6 }); k--; } }
 function planIngress(b) {
@@ -290,10 +290,13 @@ function carpetFly(b, dt) { const F = G.form, tg = W.target;
     if (b.cT >= 0 && tNow >= b.cT) { b.cT = tNow + b.gap * (.85 + rnd() * .3); dropBomb(b); const B = G.bombs[G.bombs.length - 1]; B.carpet = true; B.vel.x += (rnd() - .5) * 12 - F.dir.z * (rnd() - .5) * 10; B.vel.z += (rnd() - .5) * 12 + F.dir.x * (rnd() - .5) * 10; } }
   if (b.bombs <= 0 && b.mode === "carpetDrop") b.mode = "carpetOut";
 }
+/* Армада прилетает сама, независимо от раундов: часы идут через все раунды, интервал случайный 2,5–5 мин */
+let armClock = 0, armNext = 150 + Math.random() * 150;
 let warnT = 0;
 function simStep(dt) {
   if (!G) return; tNow += dt; G.t = tNow; G.heat = (G.heat || 0) * Math.exp(-dt / 2.5);
   const prevPos = new Map();
+  armClock += dt; if (armClock >= armNext && !G.armOn && !G.done && !G.success && tNow > 8 && !window.__noArm) { spawnArmada(); armNext = armClock + 150 + Math.random() * 150; }
   if (G.armOn) carpetStep(dt);
   for (const b of G.bombers) { if (!b.alive) continue; prevPos.set(b, b.pos.clone());
     if (b.falling) { // подбит: падает, крутится, дымит
@@ -995,7 +998,7 @@ $("bBomb").addEventListener("pointerdown", e => { e.stopPropagation(); e.prevent
 $("bFlare").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); playerFlare(); });
 $("bAb").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); playerBurner(); });
 /* Армада по кнопке: тот же остров и цель, сразу раунд ковровой бомбардировки */
-function launchArmada() { if (!G || G.armOn || G.done) return; spawnArmada(); }
+function launchArmada() { if (!G || G.armOn || G.done) return; spawnArmada(); armNext = Math.max(armNext, armClock + 120); }
 $("bArm").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); launchArmada(); });
 addEventListener("keydown", e => { const k = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase(); ctl.keys[k] = true; ctl.keys[e.key] = true;
   if (e.key === " ") { $("bAuto").onclick(); e.preventDefault(); } if (k === "b" || k === "и" || k === "enter") playerBomb(); if (k === "f" || k === "а") playerFlare(); if (k === "n" || k === "т") playerBurner(); if (k === "g" || k === "п") launchArmada(); if (k === "c" || k === "с") $("bCam").onclick(); if (k === "m" || k === "ь") $("map").onclick(); if (k === "escape") $("panel").style.display = "none"; });
@@ -1014,6 +1017,6 @@ setTimeout(() => { newRound(S.seed ? S.seed + 1 : 1 + Math.floor(Math.random() *
   $("hint").textContent = "правая часть экрана — стик · 💣 бомбы · ✨ ловушки · 🔥 форсаж (2 раза за вылет) · 🛩 Армада"; setTimeout(() => $("hint").textContent = "", 6000); }, 30);
 
 /* тесты: симуляция без графики */
-window.__cr = { fns: { terrainColors, terrainNormals, buildWaterTex }, camUpd: dt => cameraUpdate(dt), sim(sec, dt = 1 / 60) { for (let t = 0; t < sec; t += dt) simStep(dt); return this.state(); },
+window.__cr = { armIn: v => { armNext = armClock + v; }, fns: { terrainColors, terrainNormals, buildWaterTex }, camUpd: dt => cameraUpdate(dt), sim(sec, dt = 1 / 60) { for (let t = 0; t < sec; t += dt) simStep(dt); return this.state(); },
   state() { return { round: STATS.rounds, t: +tNow.toFixed(1), done: G.done, success: G.success, causes: G.causes, bombers: G.bombers.map(b => ({ id: b.id, alive: b.alive && !b.falling, mode: b.mode, bombs: b.bombs, hp: b.hp, agl: Math.round(agl(b.pos)), v: Math.round(b.v) })), left: W.target.parts.filter(p => p.hp > 0).length, target: W.target.type, missiles: G.missiles.length }; },
   newRound, get W() { return W; }, get G() { return G; }, STATS, S, seedRnd, renderer: () => renderer, scene: () => scene, camera: () => camera, frame, setCam: m => { camMode = m; cam.reset = true; } };
