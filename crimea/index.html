@@ -44,6 +44,7 @@
   #bBomb { bottom:calc(env(safe-area-inset-bottom) + 170px); } #bFlare { bottom:calc(env(safe-area-inset-bottom) + 244px); border-color:#ffd06090; }
   #bAb { bottom:calc(env(safe-area-inset-bottom) + 318px); border-color:#ff8a4090; } #bAb.on { background:#ff7a2088; box-shadow:0 0 18px #ffb060; }
   #bArm { bottom:calc(env(safe-area-inset-bottom) + 392px); border-color:#8ab4ff90; font-size:24px; }
+  #bUfo { bottom:calc(env(safe-area-inset-bottom) + 466px); border-color:#7fffd090; font-size:24px; }
   #hint { position:fixed; right:10px; bottom:calc(env(safe-area-inset-bottom) + 14px); font-size:12px; opacity:.7; text-align:right; pointer-events:none; text-shadow:0 1px 3px #000; max-width:60%; }
   #sum { position:fixed; left:68px; bottom:calc(env(safe-area-inset-bottom) + 14px); max-width:min(300px, 60vw); padding:8px 12px; border-radius:10px; background:rgba(8,14,24,.55); border:1px solid #ffffff20; display:none; text-align:left; z-index:30; pointer-events:none; }
   #sum h3 { margin:0 0 4px; font-size:14px; } #sum p { margin:2px 0; font-size:11px; opacity:.85; }
@@ -63,7 +64,7 @@
   }
   /* низкий экран (телефон горизонтально): кнопки бомб и ловушек — рядом внизу справа */
   @media (max-height: 520px) {
-    #bBomb { bottom:calc(env(safe-area-inset-bottom) + 14px); right:92px; } #bFlare { bottom:calc(env(safe-area-inset-bottom) + 14px); right:18px; } #bAb { bottom:calc(env(safe-area-inset-bottom) + 14px); right:166px; } #bArm { bottom:calc(env(safe-area-inset-bottom) + 14px); right:240px; }
+    #bBomb { bottom:calc(env(safe-area-inset-bottom) + 14px); right:92px; } #bFlare { bottom:calc(env(safe-area-inset-bottom) + 14px); right:18px; } #bAb { bottom:calc(env(safe-area-inset-bottom) + 14px); right:166px; } #bArm { bottom:calc(env(safe-area-inset-bottom) + 14px); right:240px; } #bUfo { bottom:calc(env(safe-area-inset-bottom) + 14px); right:314px; }
     #hint { display:none; } #thr { height:110px; } #map { width:126px; height:84px; }
   }
   #loading { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#0a1220; z-index:60; font-size:16px; }
@@ -90,6 +91,7 @@
 <div id="stick"><i></i></div>
 <div id="zoneL"></div><div id="zoneR"></div>
 <button class="rb" id="bArm" title="Выпустить Армаду">🛩</button>
+<button class="rb" id="bUfo" title="Вызвать НЛО">🛸</button>
 <button class="rb" id="bAb">🔥<small id="nAb">2</small></button>
 <button class="rb" id="bFlare">✨<small id="nFl">8</small></button>
 <button class="rb" id="bBomb">💣<small id="nBm">4</small></button>
@@ -112,7 +114,7 @@
   <small>Управление: правая часть экрана — стик, левая полоса — газ, 💣 — бомбы, ✨ — ловушки. Клавиатура: стрелки/WASD, Shift/Ctrl — газ, B или Enter — бомбы, F — ловушки, Пробел — авто, C — камера, M — карта. Касание карты — увеличить.</small>
   <small>Все стороны, места и объекты вымышлены.</small>
   <div class="row"><a href="../race/" style="color:#9cf">🏁 Гонка в каньоне (race)</a></div>
-  <small id="ver">версия 1.23 · 14.10, 12:45</small>
+  <small id="ver">версия 1.24 · 15.10, 09:00</small>
 </div>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
 <script type="module" src="game.js"></script>

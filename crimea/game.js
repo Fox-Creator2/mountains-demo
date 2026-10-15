@@ -257,7 +257,7 @@ function bombsStep(dt) {
 /* ================= шаг симуляции ================= */
 /* ================= Армада: событие поверх обычного раунда — строй 12–19 бортов идёт прямо через цель и кладёт «ковёр».
    Своя группа продолжает задание. Через 15 с после конца сброса Армада исчезает (модели, дым, следы удаляются), режим отключается. ================= */
-function spawnArmada() { if (G.armOn || G.done) return; const tg = W.target, dir = Math.atan2(tg.z - W.start.z, tg.x - W.start.x), fx = Math.cos(dir), fz = Math.sin(dir), n = 12 + Math.floor(rnd() * 8);
+function spawnArmada() { if (G.armOn || G.done) return; if (G.ufo) removeUfo(); const tg = W.target, dir = Math.atan2(tg.z - W.start.z, tg.x - W.start.x), fx = Math.cos(dir), fz = Math.sin(dir), n = 12 + Math.floor(rnd() * 8);
   const gT = Math.max(0, W.gnd(tg.x, tg.z)), d0 = Math.min(15000, Math.hypot(W.start.x - tg.x, W.start.z - tg.z) + 2500);
   G.form = { pos: new THREE.Vector3(tg.x - fx * d0, gT + 480 + 300, tg.z - fz * d0), dir: new THREE.Vector3(fx, 0, fz), v: 215, alt: gT + 480, go: false, n, lost: 0, relEnd: null, t0: tNow };
   G.armOn = true; G.ac = null; G.dir = null; G.adCam = null; G.impactCam = null;
@@ -290,13 +290,101 @@ function carpetFly(b, dt) { const F = G.form, tg = W.target;
     if (b.cT >= 0 && tNow >= b.cT) { b.cT = tNow + b.gap * (.85 + rnd() * .3); dropBomb(b); const B = G.bombs[G.bombs.length - 1]; B.carpet = true; B.vel.x += (rnd() - .5) * 12 - F.dir.z * (rnd() - .5) * 10; B.vel.z += (rnd() - .5) * 12 + F.dir.x * (rnd() - .5) * 10; } }
   if (b.bombs <= 0 && b.mode === "carpetDrop") b.mode = "carpetOut";
 }
+/* ================= НЛО: редкое тихое событие, на бой не влияет (ракеты, снаряды и бомбы его не замечают).
+   Два сценария. «Сопровождение»: диск возникает сбоку от ведущего борта, идёт рядом, делает два мгновенных рывка и уходит вертикально.
+   «Сканирование»: диск возникает высоко над землёй впереди по курсу, спускается, кружит и водит лучом по земле, затем уходит вверх.
+   Камера снимает весь эпизод (кроме момента попадания бомб) и возвращается к обычной. Все случайности — Math.random, чтобы не сдвигать сид раунда. ================= */
+let ufoClock = 0, ufoNext = 170 + Math.random() * 130, UFOTEX = null;
+const ufoEase = s => 1 - Math.pow(1 - clamp(s, 0, 1), 3);
+function ufoTarget(U, out) { const L = U.lead, h = Math.hypot(L.f.x, L.f.z) || 1, ux = L.f.x / h, uz = L.f.z / h, R = U.rel; /* точка в системе ведущего: вперёд / вправо / вверх */
+  out.set(L.pos.x + ux * R.a - uz * R.b * U.side, 0, L.pos.z + uz * R.a + ux * R.b * U.side); out.y = Math.max(L.pos.y + R.c, shotGround(out.x, out.z) + 170); return out; }
+/* ракурс для сканирования: из 16 направлений берём то, откуда луч и диск не закрыты рельефом (линия взгляда над землёй с запасом) */
+function ufoPickAngle(Q, hy) { let best = 0, bs = -1e9;
+  for (let i = 0; i < 16; i++) { const a = i / 16 * 6.283, px = Q.x + Math.cos(a) * 600, pz = Q.z + Math.sin(a) * 600, py = Math.max(shotGround(px, pz) + 40, hy - 110); let m = 1e9;
+    for (let k = 1; k < 14; k++) { const f = k / 14; m = Math.min(m, py + (hy - 60 - py) * f - Math.max(0, W.gnd(px + (Q.x - px) * f, pz + (Q.z - pz) * f))); }
+    if (m > bs) { bs = m; best = a; } }
+  return best; }
+function spawnUfo(kind) {
+  if (!G || G.ufo || G.armOn || G.done) return; const lead = G.bombers.find(q => q.alive && !q.falling && !q.arm); if (!lead) return;
+  kind ??= window.__ufoKind || (Math.random() < .5 ? "escort" : "scan"); window.__ufoKind = null;
+  const U = { kind, t0: tNow, lead, side: Math.random() < .5 ? 1 : -1, pos: new THREE.Vector3(), vel: new THREE.Vector3(), vs: new THREE.Vector3(), dep: null, dv: null, gone: null, fls: [], step: 0, rate: .75, rel: { a: 700, b: -800, c: 200 }, camUsed: false, dT: 0, beam: 0 };
+  if (kind === "scan") { const h = Math.hypot(lead.f.x, lead.f.z) || 1, ux = lead.f.x / h, uz = lead.f.z / h; let q = null;
+    for (let i = 0; i < 10 && !q; i++) { const ah = 2400 + Math.random() * 1400, lat = (Math.random() < .5 ? -1 : 1) * (450 + Math.random() * 450), x = lead.pos.x + ux * ah - uz * lat, z = lead.pos.z + uz * ah + ux * lat;
+      if (x > 500 && z > 500 && x < W.W - 500 && z < W.H - 500 && !W.isSea(x, z) && W.gnd(x, z) > 4) q = { x, z, g: W.gnd(x, z) }; }
+    if (q) { U.Q = q; U.hy = q.g + 260; U.a = Math.random() * 6.28; U.ca = ufoPickAngle(q, U.hy); U.pos.set(q.x, U.hy + 700, q.z); } else U.kind = kind = "escort"; }
+  if (kind === "escort") ufoTarget(U, U.pos);
+  G.ufo = U; G.dir = null; U.fls.push({ p: U.pos.clone(), t0: tNow }); G.msg.push("Над островом замечен неопознанный объект");
+  toast(kind === "escort" ? `Борт ${lead.id + 1}: рядом неопознанный объект` : "Неопознанный объект впереди по курсу", 3200); }
+function ufoStep(dt) { const U = G.ufo; if (!U) return; if (G.done || G.armOn) { removeUfo(); return; }
+  G.dirNext = Math.max(G.dirNext ?? 0, tNow + 3);
+  if (U.gone != null) { if (tNow - U.gone > 1.8) removeUfo(); return; }
+  const t = tNow - U.t0, prev = _c.copy(U.pos);
+  if (U.kind === "escort" && U.dep == null && (!U.lead.alive || U.lead.falling)) { const q = G.bombers.find(q => q.alive && !q.falling && !q.arm); if (q) U.lead = q; else U.dep = t; }
+  if (U.dep == null) {
+    if (U.kind === "escort") { /* пружина к точке в системе ведущего: большая жёсткость даёт мгновенный рывок и резкую остановку */
+      if (U.step === 0 && t > .5) { U.step = 1; U.rel = { a: 130, b: 300, c: 75 }; U.rate = .75; }
+      if (U.step === 1 && t > 5.5) { U.step = 2; U.rel = { a: 560, b: -430, c: 100 }; U.rate = 5.5; }
+      if (U.step === 2 && t > 6.5) { U.step = 3; U.rate = 1.2; }
+      if (U.step === 3 && t > 9.5) { U.step = 4; U.rel = { a: 30, b: 190, c: 45 }; U.rate = 6.5; }
+      if (U.step === 4 && t > 10.5) { U.step = 5; U.rate = 1.2; }
+      if (t > 13.5) U.dep = t; else U.pos.lerp(ufoTarget(U, _b), 1 - Math.exp(-dt * U.rate)); }
+    else { const k = ufoEase(t / 3), R = 95 * k, a = U.a + t * .5; U.pos.set(U.Q.x + Math.cos(a) * R, U.hy + 700 * (1 - k), U.Q.z + Math.sin(a) * R); U.beam = clamp(t - 3, 0, 1);
+      if (!U.msg2 && t > 3.2) { U.msg2 = 1; toast("Объект водит лучом по земле", 2600); }
+      if (U.beam > .95 && renderer && G.dsm && tNow - U.dT > .1) { U.dT = tNow; const g0 = Math.max(0, W.gnd(U.pos.x, U.pos.z)), ra = Math.random() * 6.28, rr = 8 + Math.random() * 30; putPuff(G.dsm, U.pos.x + Math.cos(ra) * rr, g0 + 2, U.pos.z + Math.sin(ra) * rr, .12, 16 + Math.random() * 10); }
+      if (t > 12.5) U.dep = t; }
+    if (U.dep != null) { const L = U.lead, h = Math.hypot(L.f.x, L.f.z) || 1, a = Math.random() * 6.28; /* уход: рывок вверх с нарастающим ускорением */
+      U.dv = U.kind === "escort" ? new THREE.Vector3(L.f.x / h * .3 + L.f.z / h * U.side * .45, .85, L.f.z / h * .3 - L.f.x / h * U.side * .45).normalize() : new THREE.Vector3(Math.cos(a) * .25, 1, Math.sin(a) * .25).normalize(); } }
+  else { const td = t - U.dep; U.pos.addScaledVector(U.dv, (160 + 11000 * td * td) * dt); if (U.kind === "scan") U.beam = Math.max(0, 1 - td / .3);
+    if (td > 1.2) { U.gone = tNow; U.beam = 0; U.fls.push({ p: U.pos.clone(), t0: tNow, big: 1 }); toast("Контакт потерян", 2400); } }
+  U.vel.copy(U.pos).sub(prev).divideScalar(dt); }
+function removeUfo() { const U = G.ufo; if (!U) return; if (U.m) { for (const o of [U.m.g, U.m.beam, U.m.gring, U.m.streak]) drop(o); U.m = null; } for (const f of U.fls) if (f.sp) drop(f.sp);
+  if (U.camUsed) { cam.reset = true; if (cam.zoom) { cam.zoom = false; resize(); } } G.ufo = null; }
+/* камера НЛО. Сопровождение: сзади НЛО на линии «ведущий → НЛО», в кадре оба, медленно уходит вбок. Сканирование: с земли на расстоянии, виден весь луч */
+function ufoCam(dt) { const U = G.ufo, A = (U.cam ??= { pos: null, lk: null, a: Math.random() * 6.28 }), p = U.pos, t = tNow - U.t0, P = _a, L = _b; U.camUsed = true;
+  if (U.kind === "escort") { const Ld = U.lead, h = Math.hypot(Ld.f.x, Ld.f.z) || 1, ux = Ld.f.x / h, uz = Ld.f.z / h, lp = Ld.pos; /* камера жёстко в системе ведущего: сбоку и выше, НЛО между ней и бортом; рывки НЛО проходят поперёк кадра */
+    P.set(lp.x - ux * 80 - uz * 470 * U.side, 0, lp.z - uz * 80 + ux * 470 * U.side); P.y = Math.max(lp.y + 150, shotGround(P.x, P.z) + 40); L.copy(p).lerp(lp, U.dep != null ? 0 : .3); }
+  else { const Q = U.Q, a = U.ca + Math.sin(t * .25) * .3; P.set(Q.x + Math.cos(a) * 600, 0, Q.z + Math.sin(a) * 600); P.y = Math.max(shotGround(P.x, P.z) + 40, U.hy - 110); const gy = shotGround(p.x, p.z); L.set(p.x, U.dep != null ? p.y : gy + (p.y - gy) * .62 + 15, p.z); }
+  P.y = Math.max(P.y, shotGround(P.x, P.z) + 25);
+  if (A.pos) { A.pos.lerp(P, 1 - Math.exp(-dt * (U.kind === "escort" ? 5 : 2.2))); P.copy(A.pos); } else A.pos = P.clone();
+  if (A.lk) { A.lk.lerp(L, 1 - Math.exp(-dt * 6)); L.copy(A.lk); } else A.lk = L.clone();
+  camera.position.copy(P); camera.up.set(0, 1, 0); camera.lookAt(L); camFov(U.kind === "escort" ? (camera.aspect < 1 ? 60 : 46) : (camera.aspect < 1 ? 62 : 52)); }
+function ufoTex() { return UFOTEX ??= (() => { const mk = (w, h, f) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = h; f(cv.getContext("2d")); return new THREE.CanvasTexture(cv); };
+  return { glow: mk(64, 64, x => { const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, "rgba(255,255,255,1)"); gr.addColorStop(.25, "rgba(170,235,255,.55)"); gr.addColorStop(1, "rgba(80,170,255,0)"); x.fillStyle = gr; x.fillRect(0, 0, 64, 64); }),
+    beam: mk(4, 64, x => { const gr = x.createLinearGradient(0, 0, 0, 64); gr.addColorStop(0, "#d8d8d8"); gr.addColorStop(.45, "#666"); gr.addColorStop(1, "#e8e8e8"); x.fillStyle = gr; x.fillRect(0, 0, 4, 64); }) }; })(); }
+function ufoBuild(U) { const T = ufoTex(), g = new THREE.Group(), add = { transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false };
+  const hull = new THREE.Mesh(new THREE.LatheGeometry([[.01, -3.6], [6, -3.7], [11, -3], [16.5, -1.4], [19, 0], [16.5, 1.3], [9, 2.3], [.01, 2.5]].map(([r, y]) => new THREE.Vector2(r, y)), 48), new THREE.MeshPhongMaterial({ color: 0x9fabb8, specular: 0xffffff, shininess: 90, emissive: 0x141a22 }));
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(8, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshPhongMaterial({ color: 0x7fe6ff, emissive: 0x2aa8d8, specular: 0xffffff, shininess: 120, transparent: true, opacity: .62 })); dome.scale.y = .8; dome.position.y = 2.3;
+  const ring = new THREE.Group(), mA = new THREE.MeshBasicMaterial({ color: 0xcff3ff }), mB = new THREE.MeshBasicMaterial({ color: 0xffb060 }), lg = new THREE.SphereGeometry(1, 8, 6);
+  for (let i = 0; i < 16; i++) { const m = new THREE.Mesh(lg, i % 2 ? mA : mB), a = i / 16 * 6.283; m.position.set(Math.cos(a) * 17.8, .1, Math.sin(a) * 17.8); ring.add(m); }
+  const under = new THREE.Sprite(new THREE.SpriteMaterial({ map: T.glow, color: 0x9ae4ff, ...add })); under.scale.set(110, 110, 1); under.position.y = -4;
+  g.add(hull, dome, ring, under); fxGroup.add(g);
+  const bg = new THREE.CylinderGeometry(5, 38, 1, 36, 1, true); bg.translate(0, -.5, 0);
+  const beam = new THREE.Mesh(bg, new THREE.MeshBasicMaterial({ color: 0x9fe9ff, opacity: .3, side: THREE.DoubleSide, alphaMap: T.beam, ...add })); beam.visible = false; beam.renderOrder = 8; fxGroup.add(beam);
+  const gring = new THREE.Group(); gring.add(new THREE.Mesh(new THREE.RingGeometry(.78, 1, 56).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xbff4ff, opacity: .8, side: THREE.DoubleSide, ...add })), new THREE.Mesh(new THREE.CircleGeometry(1, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x7fd8ff, opacity: .2, side: THREE.DoubleSide, ...add }))); gring.visible = false; gring.renderOrder = 8; fxGroup.add(gring);
+  const streak = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 1, 8, 1, true), new THREE.MeshBasicMaterial({ color: 0xcdf3ff, opacity: .6, ...add })); streak.visible = false; fxGroup.add(streak);
+  return U.m = { g, ring, mA, mB, beam, gring, streak }; }
+function ufoDraw(dt) { const U = G.ufo; if (!U || !renderer) return; const m = U.m || ufoBuild(U), T = ufoTex(), t = tNow - U.t0, vis = U.gone == null, s = ufoEase(t / .45), p = U.pos;
+  m.g.visible = vis && s > .01; m.g.position.copy(p); const K = 1.4; m.g.scale.set(K * s * (1 + (1 - s) * 1.5), K * Math.max(.02, s * s), K * s * (1 + (1 - s) * 1.5)); /* «материализация»: сначала плоская вспышка, потом объём */
+  U.vs.lerp(U.vel, 1 - Math.exp(-dt * 6)); const kk = Math.min(1, dt * 6);
+  m.g.rotation.z += (clamp(-U.vs.x * .0014, -.55, .55) - m.g.rotation.z) * kk; m.g.rotation.x += (clamp(U.vs.z * .0014, -.55, .55) - m.g.rotation.x) * kk;
+  m.ring.rotation.y = tNow * 1.7; const w = .5 + .5 * Math.sin(tNow * 8); m.mA.color.setRGB(.35 + .65 * w, .55 + .45 * w, 1); m.mB.color.setRGB(1, .45 + .3 * (1 - w), .15 + .2 * (1 - w));
+  const bk = vis ? U.beam || 0 : 0; m.beam.visible = bk > .01; m.gring.visible = bk > .85;
+  if (bk > .01) { const g0 = Math.max(0, W.gnd(p.x, p.z)), len = Math.max(10, p.y - 3 - g0), rk = .35 + .65 * bk; m.beam.position.set(p.x, p.y - 3, p.z); m.beam.scale.set(rk, len * bk, rk); m.beam.material.opacity = .3 * (.85 + .15 * Math.sin(tNow * 23)) * Math.min(1, bk * 1.5);
+    const rr = 38 * rk * (1 + .05 * Math.sin(tNow * 5)); m.gring.position.set(p.x, g0 + 4, p.z); m.gring.scale.set(rr, 1, rr); m.gring.children[0].material.opacity = .55 + .35 * Math.sin(tNow * 6); }
+  const sp = U.vel.length(); if (vis && sp > 380) { const len = Math.min(520, sp * .05); _c.copy(U.vel).multiplyScalar(1 / sp); m.streak.visible = true; m.streak.scale.set(1, len, 1); m.streak.quaternion.setFromUnitVectors(UP, _c); m.streak.position.copy(p).addScaledVector(_c, -len / 2); m.streak.material.opacity = Math.min(.7, (sp - 380) / 900); } else m.streak.visible = false;
+  for (const f of U.fls) { if (!f.sp) { f.sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: T.glow, color: 0xdff8ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false })); fxGroup.add(f.sp); } const a = (tNow - f.t0) / .9;
+    if (a >= 1) { drop(f.sp); f.sp = null; f.dead = true; continue; } f.sp.position.copy(f.p); const sz = (f.big ? 160 : 110) * (.3 + 2.2 * Math.sqrt(a)); f.sp.scale.set(sz, sz, 1); f.sp.material.opacity = (1 - a) * (1 - a); }
+  U.fls = U.fls.filter(f => !f.dead); }
 /* Армада прилетает сама, независимо от раундов: часы идут через все раунды, интервал случайный 2,5–5 мин */
 let armClock = 0, armNext = 150 + Math.random() * 150;
 let warnT = 0;
 function simStep(dt) {
   if (!G) return; tNow += dt; G.t = tNow; G.heat = (G.heat || 0) * Math.exp(-dt / 2.5);
   const prevPos = new Map();
-  armClock += dt; if (armClock >= armNext && !G.armOn && !G.done && !G.success && tNow > 8 && !window.__noArm) { spawnArmada(); armNext = armClock + 150 + Math.random() * 150; }
+  armClock += dt; if (armClock >= armNext && !G.armOn && !G.ufo && !G.done && !G.success && tNow > 8 && !window.__noArm) { spawnArmada(); armNext = armClock + 150 + Math.random() * 150; }
+  /* НЛО: сам появляется раз в 4–8 минут игрового времени, не в момент попадания бомб и не во время Армады */
+  ufoClock += dt; if (ufoClock >= ufoNext && !G.ufo && !G.armOn && !G.done && tNow > 10 && !window.__noArm && !(G.impactCam && tNow < G.impactCam.until + 2) && !(G.adCam && tNow < G.adCam.until)) { spawnUfo(); ufoNext = ufoClock + 240 + Math.random() * 240; }
+  if (G.ufo) ufoStep(dt);
   if (G.armOn) carpetStep(dt);
   for (const b of G.bombers) { if (!b.alive) continue; prevPos.set(b, b.pos.clone());
     if (b.falling) { // подбит: падает, крутится, дымит
@@ -801,7 +889,7 @@ const CAMN = ["Сзади", "Далеко", "Из кабины", "С земли 
 function camFov(f) { if (camera.fov !== f) { camera.fov = f; camera.updateProjectionMatrix(); } cam.zoom = true; cam.reset = true; }
 function shotGround(x, z) { return Math.max(0, W.gnd(x, z)); }
 function directorPick(b) {
-  if (tNow < (G.dirNext ?? 9) || G.done || G.armOn) return; const v = b.v, f = b.f, side = rnd() < .5 ? 1 : -1, low = agl(b.pos) < 170, wing = G.bombers.filter(w => w !== b && w.alive && !w.falling && w.pos.distanceTo(b.pos) < 1100), opts = [];
+  if (tNow < (G.dirNext ?? 9) || G.done || G.armOn || G.ufo) return; const v = b.v, f = b.f, side = rnd() < .5 ? 1 : -1, low = agl(b.pos) < 170, wing = G.bombers.filter(w => w !== b && w.alive && !w.falling && w.pos.distanceTo(b.pos) < 1100), opts = [];
   if (G.bombs.some(B => !B.done && B.owner === b)) return;
   if (G.success && b.mode === "egress" && !G.didHero) opts.push("hero", "hero");
   if (low && b.mode !== "dive" && b.mode !== "release") opts.push("lowpass", "lowpass");
@@ -858,6 +946,8 @@ function cameraUpdate(dt) {
     else { _b.copy(b.pos).sub(L); if (_b.length() > 400) _b.setLength(400); look.addScaledVector(_b, .05); look.y += ic.mega ? 40 + Math.min(160, (tNow - ic.hit) * 45) : 12; }
     ic.lk ??= look.clone(); ic.lk.lerp(look, 1 - Math.exp(-dt * 3.5));
     camera.position.copy(ic.cp); camera.up.set(0, 1, 0); camera.lookAt(ic.lk); cam.reset = true; if (cam.zoom) { cam.zoom = false; resize(); } return; }
+  /* НЛО: пока идёт эпизод, камера снимает его (кроме момента попадания бомб — тот план выше важнее) */
+  if (G.ufo && !G.done && camMode < 3 && !ctl.steerMan) { ufoCam(dt); return; }
   const ad = G.adCam; if (ad && tNow < ad.until && camMode < 3 && b.alive && !b.falling && !ctl.steerMan && ad.tgt.alive && !ad.src.dead) {
     const tb = ad.tgt, s = ad.src, ex = tb.pos.x - s.x, ez = tb.pos.z - s.z, el = Math.hypot(ex, ez) || 1, sy = (s.y || 0) + 14;
     /* камера сбоку и чуть позади установки — сама она в кадр не лезет; сначала смотрим на ракету/трассы, потом на цель */
@@ -925,7 +1015,7 @@ function hud() {
   $("tgt").textContent = `${tg.name}: ${G.success ? "поражена" : `${Math.round(Math.hypot(tg.x - b.pos.x, tg.z - b.pos.z) / 100) / 10} км · разрушено ${tg.parts.length - left} из ${tg.need} нужных`}`;
   $("score").textContent = `раунд ${STATS.rounds} · успехов ${STATS.wins} · неудач ${STATS.losses}`;
   $("grp").innerHTML = (G.armOn ? `<div>🛩 Армада: ${G.bombers.filter(q => q.arm && q.alive && !q.falling).length} из ${G.form.n} · 💣${G.bombers.reduce((s_, q) => s_ + (q.arm && q.alive && !q.falling ? q.bombs : 0), 0)}</div>` : "") + G.bombers.filter(q => !q.arm).map(q => `<div class="${q.id === G.me ? "me" : ""} ${q.alive && !q.falling ? "" : "dead"}">✈ Борт ${q.id + 1} · 💣${q.bombs} ✨${q.flares}${q.safe ? " · в море" : ""}</div>`).join("");
-  $("bArm").style.display = G.armOn ? "none" : ""; $("nBm").textContent = b.mega ? "М" : b.bombs; $("nFl").textContent = b.flares; $("nAb").textContent = b.abN; $("bAb").classList.toggle("on", b.abT > tNow); $("bAb").style.opacity = b.abN > 0 || b.abT > tNow ? 1 : .45;
+  $("bArm").style.display = $("bUfo").style.display = G.armOn || G.ufo ? "none" : ""; $("nBm").textContent = b.mega ? "М" : b.bombs; $("nFl").textContent = b.flares; $("nAb").textContent = b.abN; $("bAb").classList.toggle("on", b.abT > tNow); $("bAb").style.opacity = b.abN > 0 || b.abT > tNow ? 1 : .45;
   $("chip").textContent = ctl.steerMan ? "РУЧНОЕ" : "АВТОПИЛОТ"; $("chip").className = ctl.steerMan ? "man" : "auto";
   $("thr").className = ctl.steerMan || ctl.spdMan ? "man" : ""; $("thrFill").style.height = (ctl.steerMan || ctl.spdMan ? ctl.thr : (b.v - 120) / (PL.VMAX - 120)) * 100 + "%";
   const mis = G.missiles.find(m => m.alive && m.tgt === b && !m.decoy), w = $("warn");
@@ -968,7 +1058,7 @@ function frame(ms) {
   if (G.hitMsg && !G.hitMsg.shown) { G.hitMsg.shown = true; toast(G.hitMsg.txt, 2800); }
   cameraUpdate(dt); if (G.shake && tNow < G.shake.until) { const k = 1 - (tNow - G.shake.t0) / (G.shake.until - G.shake.t0), a = G.shake.amp * k * k; camera.position.x += (Math.random() - .5) * a; camera.position.y += (Math.random() - .5) * a; camera.position.z += (Math.random() - .5) * a; }
   terrainLod(); sky.position.copy(camera.position); water.position.x = camera.position.x; water.position.z = camera.position.z;
-  SM.uTime.value = tNow; SM.uPx.value = renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360)); WU.uTime.value = t; bombersDraw(dt); objectsDraw(dt); fxDraw(dt);
+  SM.uTime.value = tNow; SM.uPx.value = renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360)); WU.uTime.value = t; bombersDraw(dt); objectsDraw(dt); fxDraw(dt); ufoDraw(dt);
   renderer.render(scene, camera);
   /* авто-чёткость: если кадры тяжёлые — снижаем разрешение рендера (до 55 %), если быстрые — возвращаем */
   { const ft = Math.min(.1, dt); fEma = fEma ? fEma + (ft - fEma) * .08 : ft; if (!+S.qa && qAuto !== 1) { qAuto = 1; resize(); } if (+S.qa && t - qT > 1.5 && !window.__noLoop) { qT = t; const want = fEma > .042 ? Math.max(.75, qAuto * .88) : fEma < .024 ? Math.min(1, qAuto * 1.08) : qAuto; if (Math.abs(want - qAuto) > .04) { qAuto = want; resize(); } } }
@@ -1000,8 +1090,11 @@ $("bAb").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDe
 /* Армада по кнопке: тот же остров и цель, сразу раунд ковровой бомбардировки */
 function launchArmada() { if (!G || G.armOn || G.done) return; spawnArmada(); armNext = Math.max(armNext, armClock + 120); }
 $("bArm").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); launchArmada(); });
+/* НЛО по кнопке: следующее само появится не раньше чем через 2 минуты */
+function launchUfo() { if (!G || G.ufo || G.armOn || G.done) return; spawnUfo(); ufoNext = Math.max(ufoNext, ufoClock + 120); }
+$("bUfo").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); launchUfo(); });
 addEventListener("keydown", e => { const k = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase(); ctl.keys[k] = true; ctl.keys[e.key] = true;
-  if (e.key === " ") { $("bAuto").onclick(); e.preventDefault(); } if (k === "b" || k === "и" || k === "enter") playerBomb(); if (k === "f" || k === "а") playerFlare(); if (k === "n" || k === "т") playerBurner(); if (k === "g" || k === "п") launchArmada(); if (k === "c" || k === "с") $("bCam").onclick(); if (k === "m" || k === "ь") $("map").onclick(); if (k === "escape") $("panel").style.display = "none"; });
+  if (e.key === " ") { $("bAuto").onclick(); e.preventDefault(); } if (k === "b" || k === "и" || k === "enter") playerBomb(); if (k === "f" || k === "а") playerFlare(); if (k === "n" || k === "т") playerBurner(); if (k === "g" || k === "п") launchArmada(); if (k === "u" || k === "г") launchUfo(); if (k === "c" || k === "с") $("bCam").onclick(); if (k === "m" || k === "ь") $("map").onclick(); if (k === "escape") $("panel").style.display = "none"; });
 addEventListener("keyup", e => { const k = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase(); ctl.keys[k] = false; ctl.keys[e.key] = false; });
 /* панель */
 const sel = { sDiff: "diff", sWing: "wing", sAgl: "agl", sResume: "resume", sLife: "life", sQ: "q", sQa: "qa", sInv: "inv" };
@@ -1014,9 +1107,9 @@ $("bNew").onclick = () => { $("panel").style.display = "none"; hideSummary(); ne
 /* ---------- запуск ---------- */
 initGfx();
 setTimeout(() => { newRound(S.seed ? S.seed + 1 : 1 + Math.floor(Math.random() * 999)); $("loading").style.display = "none"; renderer.setAnimationLoop(frame);
-  $("hint").textContent = "правая часть экрана — стик · 💣 бомбы · ✨ ловушки · 🔥 форсаж (2 раза за вылет) · 🛩 Армада"; setTimeout(() => $("hint").textContent = "", 6000); }, 30);
+  $("hint").textContent = "правая часть экрана — стик · 💣 бомбы · ✨ ловушки · 🔥 форсаж (2 раза за вылет) · 🛩 Армада · 🛸 НЛО"; setTimeout(() => $("hint").textContent = "", 6000); }, 30);
 
 /* тесты: симуляция без графики */
-window.__cr = { armIn: v => { armNext = armClock + v; }, fns: { terrainColors, terrainNormals, buildWaterTex }, camUpd: dt => cameraUpdate(dt), sim(sec, dt = 1 / 60) { for (let t = 0; t < sec; t += dt) simStep(dt); return this.state(); },
+window.__cr = { ufoIn: v => { ufoNext = ufoClock + v; }, ufo: kind => { spawnUfo(kind); return G.ufo ? G.ufo.kind : null; }, armIn: v => { armNext = armClock + v; }, fns: { terrainColors, terrainNormals, buildWaterTex }, camUpd: dt => cameraUpdate(dt), sim(sec, dt = 1 / 60) { for (let t = 0; t < sec; t += dt) simStep(dt); return this.state(); },
   state() { return { round: STATS.rounds, t: +tNow.toFixed(1), done: G.done, success: G.success, causes: G.causes, bombers: G.bombers.map(b => ({ id: b.id, alive: b.alive && !b.falling, mode: b.mode, bombs: b.bombs, hp: b.hp, agl: Math.round(agl(b.pos)), v: Math.round(b.v) })), left: W.target.parts.filter(p => p.hp > 0).length, target: W.target.type, missiles: G.missiles.length }; },
   newRound, get W() { return W; }, get G() { return G; }, STATS, S, seedRnd, renderer: () => renderer, scene: () => scene, camera: () => camera, frame, setCam: m => { camMode = m; cam.reset = true; } };
